@@ -50,10 +50,18 @@ impl ZApp {
 
             // self.paint_bezier.ui_content(ui);
 
-            Frame::canvas(ui.style()).show(ui, |ui| {
-                main_color_picker(ui, &mut self.main_color_picker_data);
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    Frame::canvas(ui.style()).show(ui, |ui| {
+                        main_color_picker(ui, &mut self.main_color_picker_data);
+                    });
+                });
 
-                // self.paint_bezier.ui_content(ui);
+                ui.vertical(|ui| {
+                    Frame::canvas(ui.style()).show(ui, |ui| {
+                        main_color_picker(ui, &mut self.main_color_picker_data);
+                    });
+                });
             });
         });
     }

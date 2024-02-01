@@ -1,7 +1,12 @@
+use std::{
+    borrow::{Borrow, BorrowMut},
+    sync::Arc,
+};
+
 use eframe::{
     egui::{
         color_picker::{show_color, Alpha},
-        Painter, Response, Sense, Ui,
+        Label, Painter, Response, Sense, TextStyle, Ui, Widget,
     },
     emath::{lerp, remap_clamp},
     epaint::{self, pos2, vec2, Color32, HsvaGamma, Mesh, Pos2, Rect, Rgba, Shape, Stroke, Vec2},
@@ -82,12 +87,7 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) {
         color_slider_1d(ui, v, |v| HsvaGamma { v, ..opaque }.into()).on_hover_text("Value");
     }
 
-    // ui.put(max_rect, widget)
-
     let slider_2d_reponse = color_slider_2d(ui, s, v, |s, v| HsvaGamma { s, v, ..opaque }.into());
-
-    let rect = slider_2d_reponse.rect;
-    ui.painter().debug_rect(rect, Color32::DARK_RED, "asd");
 
     data.paint_bezier
         .ui_content_with_painter(ui, &slider_2d_reponse, &ui.painter());
@@ -263,6 +263,34 @@ fn color_text_ui(ui: &mut Ui, color: impl Into<Color32>, alpha: Alpha) {
             }
         }
 
+        // if alpha == Alpha::Opaque {
+        //     ui.put(
+        //         Rect {
+        //             min: Pos2 { x: 0.0, y: 0.0 },
+        //             max: Pos2 {
+        //                 x: ui.available_size().x,
+        //                 y: ui.available_size().y,
+        //             },
+        //         },
+        //         Label::new(format!("rgb({}, {}, {})", r, g, b)),
+        //     )
+        //     .on_hover_text("Red Green Blue");
+        // } else {
+        //     ui.put(
+        //         ui.available_rect_before_wrap(),
+        //         Label::new(format!("rgba({}, {}, {}, {})", r, g, b, a)),
+        //     )
+        //     .on_hover_text("Red Green Blue with premultiplied Alpha");
+        // }
+
+        let old_style = Arc::as_ref(ui.style()).clone();
+
+        ui.style_mut()
+            .text_styles
+            .get_mut(&TextStyle::Body)
+            .unwrap()
+            .size = 8.0;
+
         if alpha == Alpha::Opaque {
             ui.label(format!("rgb({}, {}, {})", r, g, b))
                 .on_hover_text("Red Green Blue");
@@ -270,5 +298,7 @@ fn color_text_ui(ui: &mut Ui, color: impl Into<Color32>, alpha: Alpha) {
             ui.label(format!("rgba({}, {}, {}, {})", r, g, b, a))
                 .on_hover_text("Red Green Blue with premultiplied Alpha");
         }
+
+        *ui.style_mut() = old_style;
     });
 }
