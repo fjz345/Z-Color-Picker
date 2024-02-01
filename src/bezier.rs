@@ -13,6 +13,8 @@ pub struct PaintBezier {
     /// The control points. The [`Self::degree`] first of them are used.
     control_points: [Pos2; 4],
 
+    hue: [f32; 4],
+
     /// Stroke for Bézier curve.
     stroke: Stroke,
 
@@ -39,6 +41,7 @@ impl Default for PaintBezier {
             fill: Color32::from_rgb(50, 100, 150).linear_multiply(0.25),
             aux_stroke: Stroke::new(1.0, Color32::RED.linear_multiply(0.25)),
             bounding_box_stroke: Stroke::new(0.0, Color32::LIGHT_GREEN.linear_multiply(0.25)),
+            hue: [0.0; 4],
         }
     }
 }
@@ -57,6 +60,18 @@ impl PaintBezier {
             .collect();
 
         points_in_screen
+    }
+
+    pub fn set_hue(&mut self, index: usize, val: f32) {
+        self.hue[index] = val;
+    }
+
+    pub fn get_hue(&self, index: usize) -> f32 {
+        self.hue[index]
+    }
+
+    pub fn get_hue_mut(&mut self, index: usize) -> &mut f32 {
+        &mut self.hue[index]
     }
 
     pub fn ui_content_with_painter(

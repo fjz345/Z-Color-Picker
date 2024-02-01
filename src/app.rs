@@ -32,6 +32,7 @@ impl Default for ZApp {
                 hsva: HsvaGamma::default(),
                 alpha: egui::color_picker::Alpha::Opaque,
                 paint_bezier: PaintBezier::default(),
+                modifying_bezier_index: None,
             },
         }
     }

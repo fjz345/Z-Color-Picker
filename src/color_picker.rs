@@ -12,23 +12,37 @@ use eframe::{
     epaint::{self, pos2, vec2, Color32, HsvaGamma, Mesh, Pos2, Rect, Rgba, Shape, Stroke, Vec2},
 };
 
-use crate::bezier::PaintBezier;
+use crate::{
+    bezier::{self, PaintBezier},
+    ui_common::{color_slider_2d, contrast_color},
+};
 
 pub struct MainColorPickerData {
     pub hsva: HsvaGamma,
     pub alpha: Alpha,
     pub paint_bezier: PaintBezier,
+    pub modifying_bezier_index: Option<usize>,
 }
 
 pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
-    let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
-    show_color(ui, data.hsva, current_color_size).on_hover_text("Selected color");
+    let desired_size_slider_2d = Vec2::splat(ui.spacing().slider_width);
 
-    color_text_ui(ui, data.hsva, data.alpha);
+    // let bezier_index = data.modifying_bezier_index.unwrap_or(0);
+    let bezier_index = 1;
+    let mut color_to_show: HsvaGamma = main_color_picker_color_at(
+        data.hsva,
+        &data.paint_bezier.control_points(desired_size_slider_2d)[bezier_index],
+    )
+    .into();
+
+    let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
+    show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
+
+    color_text_ui(ui, color_to_show, data.alpha);
 
     if data.alpha == Alpha::BlendOrAdditive {
         // We signal additive blending by storing a negative alpha (a bit ironic).
-        let a = &mut data.hsva.a;
+        let a = &mut color_to_show.a;
         let mut additive = *a < 0.0;
         ui.horizontal(|ui| {
             ui.label("Blending:");
@@ -44,17 +58,17 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
             }
         });
     }
-    let additive = data.hsva.a < 0.0;
+    let additive = color_to_show.a < 0.0;
 
     let opaque = HsvaGamma {
         a: 1.0,
-        ..data.hsva
+        ..color_to_show
     };
 
     if data.alpha == Alpha::Opaque {
-        data.hsva.a = 1.0;
+        color_to_show.a = 1.0;
     } else {
-        let a = &mut data.hsva.a;
+        let a = &mut color_to_show.a;
 
         if data.alpha == Alpha::OnlyBlend {
             if *a < 0.0 {
@@ -66,9 +80,20 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
         }
     }
 
-    let HsvaGamma { h, s, v, a: _ } = &mut data.hsva;
+    let mut dummy_hsva = HsvaGamma::default();
+    let HsvaGamma { h, s, v, a: _ } = if data.modifying_bezier_index.is_some() {
+        &mut color_to_show
+    } else {
+        &mut dummy_hsva
+    };
 
-    color_slider_1d(ui, h, |h| {
+    let h_mut_ref = if data.modifying_bezier_index.is_some() {
+        data.paint_bezier.get_hue_mut(bezier_index)
+    } else {
+        h
+    };
+
+    color_slider_1d(ui, h_mut_ref, |h| {
         HsvaGamma {
             h,
             s: 1.0,
@@ -87,13 +112,14 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
         color_slider_1d(ui, v, |v| HsvaGamma { v, ..opaque }.into()).on_hover_text("Value");
     }
 
-    let slider_2d_reponse: Response = color_slider_2d(
+    let slider_2d_reponse: Response = main_color_slider_2d(
         ui,
+        desired_size_slider_2d,
         s,
         v,
         main_color_picker_color_at_function(
             HsvaGamma {
-                h: *h,
+                h: *h_mut_ref,
                 s: *s,
                 v: *v,
                 a: 1.0,
@@ -175,25 +201,24 @@ fn color_slider_1d(ui: &mut Ui, value: &mut f32, color_at: impl Fn(f32) -> Color
     response
 }
 
-pub fn main_color_picker_color_at(hsva: HsvaGamma, pos: &Vec2) -> Color32 {
-    let color = main_color_picker_color_at_function(hsva, pos[0], pos[1])(pos[0], 1.0 - pos[1]);
-    color
-}
-
+/// Number of vertices per dimension in the color sliders.
+/// We need at least 6 for hues, and more for smooth 2D areas.
+/// Should always be a multiple of 6 to hit the peak hues in HSV/HSL (every 60°).
+const N: u32 = 6 * 6;
 /// # Arguments
 /// * `x_value` - X axis, either saturation or value (0.0-1.0).
 /// * `y_value` - Y axis, either saturation or value (0.0-1.0).
 /// * `color_at` - A function that dictates how the mix of saturation and value will be displayed in the 2d slider.
 /// E.g.: `|x_value, y_value| HsvaGamma { h: 1.0, s: x_value, v: y_value, a: 1.0 }.into()` displays the colors as follows: top-left: white \[s: 0.0, v: 1.0], top-right: fully saturated color \[s: 1.0, v: 1.0], bottom-right: black \[s: 0.0, v: 1.0].
 ///
-fn color_slider_2d(
+fn main_color_slider_2d(
     ui: &mut Ui,
+    desiered_size: Vec2,
     x_value: &mut f32,
     y_value: &mut f32,
     color_at: impl Fn(f32, f32) -> Color32,
 ) -> Response {
-    let desired_size = Vec2::splat(ui.spacing().slider_width);
-    let (rect, response) = ui.allocate_at_least(desired_size, Sense::click_and_drag());
+    let (rect, response) = ui.allocate_at_least(desiered_size, Sense::focusable_noninteractive());
 
     if let Some(mpos) = response.interact_pointer_pos() {
         *x_value = remap_clamp(mpos.x, rect.left()..=rect.right(), 0.0..=1.0);
@@ -241,18 +266,10 @@ fn color_slider_2d(
     response
 }
 
-fn contrast_color(color: impl Into<Rgba>) -> Color32 {
-    if color.into().intensity() < 0.5 {
-        Color32::WHITE
-    } else {
-        Color32::BLACK
-    }
+pub fn main_color_picker_color_at(hsva: HsvaGamma, pos: &Vec2) -> Color32 {
+    let color = main_color_picker_color_at_function(hsva, pos[0], pos[1])(pos[0], 1.0 - pos[1]);
+    color
 }
-
-/// Number of vertices per dimension in the color sliders.
-/// We need at least 6 for hues, and more for smooth 2D areas.
-/// Should always be a multiple of 6 to hit the peak hues in HSV/HSL (every 60°).
-const N: u32 = 6 * 6;
 
 fn color_text_ui(ui: &mut Ui, color: impl Into<Color32>, alpha: Alpha) {
     let color = color.into();

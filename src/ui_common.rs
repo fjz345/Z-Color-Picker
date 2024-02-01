@@ -1,7 +1,7 @@
 use eframe::{
     egui::{Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
-    emath::lerp,
-    epaint::{pos2, Color32, Mesh, Rect, Shape, Vec2},
+    emath::{lerp, remap_clamp},
+    epaint::{self, pos2, Color32, Mesh, Rect, Rgba, Shape, Stroke, Vec2},
 };
 
 pub fn background_checkers(painter: &Painter, rect: Rect) {
@@ -71,5 +71,78 @@ pub fn show_color_at(painter: &Painter, color: Color32, rect: Rect) {
             painter.rect_filled(left, 0.0, color);
             painter.rect_filled(right, 0.0, color.to_opaque());
         }
+    }
+}
+
+/// Number of vertices per dimension in the color sliders.
+/// We need at least 6 for hues, and more for smooth 2D areas.
+/// Should always be a multiple of 6 to hit the peak hues in HSV/HSL (every 60°).
+const N: u32 = 6 * 6;
+/// # Arguments
+/// * `x_value` - X axis, either saturation or value (0.0-1.0).
+/// * `y_value` - Y axis, either saturation or value (0.0-1.0).
+/// * `color_at` - A function that dictates how the mix of saturation and value will be displayed in the 2d slider.
+/// E.g.: `|x_value, y_value| HsvaGamma { h: 1.0, s: x_value, v: y_value, a: 1.0 }.into()` displays the colors as follows: top-left: white \[s: 0.0, v: 1.0], top-right: fully saturated color \[s: 1.0, v: 1.0], bottom-right: black \[s: 0.0, v: 1.0].
+///
+pub fn color_slider_2d(
+    ui: &mut Ui,
+    x_value: &mut f32,
+    y_value: &mut f32,
+    color_at: impl Fn(f32, f32) -> Color32,
+) -> Response {
+    let desired_size = Vec2::splat(ui.spacing().slider_width);
+    let (rect, response) = ui.allocate_at_least(desired_size, Sense::click_and_drag());
+
+    if let Some(mpos) = response.interact_pointer_pos() {
+        *x_value = remap_clamp(mpos.x, rect.left()..=rect.right(), 0.0..=1.0);
+        *y_value = remap_clamp(mpos.y, rect.bottom()..=rect.top(), 0.0..=1.0);
+    }
+
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        let mut mesh = Mesh::default();
+
+        for xi in 0..=N {
+            for yi in 0..=N {
+                let xt = xi as f32 / (N as f32);
+                let yt: f32 = yi as f32 / (N as f32);
+                let color = color_at(xt, yt);
+                let x = lerp(rect.left()..=rect.right(), xt);
+                let y = lerp(rect.bottom()..=rect.top(), yt);
+                mesh.colored_vertex(pos2(x, y), color);
+
+                if xi < N && yi < N {
+                    let x_offset = 1;
+                    let y_offset = N + 1;
+                    let tl = yi * y_offset + xi;
+                    mesh.add_triangle(tl, tl + x_offset, tl + y_offset);
+                    mesh.add_triangle(tl + x_offset, tl + y_offset, tl + y_offset + x_offset);
+                }
+            }
+        }
+        ui.painter().add(Shape::mesh(mesh)); // fill
+
+        ui.painter().rect_stroke(rect, 0.0, visuals.bg_stroke); // outline
+
+        // Show where the slider is at:
+        let x = lerp(rect.left()..=rect.right(), *x_value);
+        let y = lerp(rect.bottom()..=rect.top(), *y_value);
+        let picked_color = color_at(*x_value, *y_value);
+        ui.painter().add(epaint::CircleShape {
+            center: pos2(x, y),
+            radius: rect.width() / 12.0,
+            fill: picked_color,
+            stroke: Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
+        });
+    }
+
+    response
+}
+
+pub fn contrast_color(color: impl Into<Rgba>) -> Color32 {
+    if color.into().intensity() < 0.5 {
+        Color32::WHITE
+    } else {
+        Color32::BLACK
     }
 }
