@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 eframe = "0.22.0"
 env_logger = "0.10"
+palette = "0.7.4"

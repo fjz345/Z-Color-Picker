@@ -3,12 +3,14 @@ use eframe::egui;
 use crate::app::ZApp;
 
 mod app;
+mod bezier;
+mod color_picker;
 
 fn main() {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(1400.0, 1000.0)),
+        initial_window_size: Some(egui::vec2(800.0, 600.0)),
         ..Default::default()
     };
 
