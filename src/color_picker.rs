@@ -22,13 +22,15 @@ pub struct MainColorPickerData {
     pub alpha: Alpha,
     pub paint_bezier: PaintBezier,
     pub modifying_bezier_index: Option<usize>,
+    pub last_modifying_bezier_index: usize,
 }
 
 pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
     let desired_size_slider_2d = Vec2::splat(ui.spacing().slider_width);
 
-    // let bezier_index = data.modifying_bezier_index.unwrap_or(0);
-    let bezier_index = 1;
+    let bezier_index = data
+        .modifying_bezier_index
+        .unwrap_or(data.last_modifying_bezier_index);
     let mut color_to_show: HsvaGamma = main_color_picker_color_at(
         data.hsva,
         &data.paint_bezier.control_points(desired_size_slider_2d)[bezier_index],
@@ -129,9 +131,15 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
         ),
     );
 
-    let bezier_response =
+    let (bezier_response, selected_index) =
         data.paint_bezier
             .ui_content_with_painter(ui, &slider_2d_reponse, &ui.painter());
+
+    data.modifying_bezier_index = selected_index;
+    match selected_index {
+        Some(a) => data.last_modifying_bezier_index = a,
+        _ => {}
+    }
 
     bezier_response.rect.size()
 }

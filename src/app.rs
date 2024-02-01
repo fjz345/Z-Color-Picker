@@ -33,6 +33,7 @@ impl Default for ZApp {
                 alpha: egui::color_picker::Alpha::Opaque,
                 paint_bezier: PaintBezier::default(),
                 modifying_bezier_index: None,
+                last_modifying_bezier_index: 0,
             },
         }
     }

@@ -79,7 +79,7 @@ impl PaintBezier {
         ui: &Ui,
         response: &egui::Response,
         painter: &Painter,
-    ) -> egui::Response {
+    ) -> (egui::Response, Option<usize>) {
         let to_screen = emath::RectTransform::from_to(
             Rect::from_min_size(Pos2::ZERO, response.rect.size()),
             response.rect,
@@ -87,6 +87,7 @@ impl PaintBezier {
 
         let control_point_radius = 8.0;
 
+        let mut selected_index = None;
         let control_point_shapes: Vec<Shape> = self
             .control_points
             .iter_mut()
@@ -95,12 +96,16 @@ impl PaintBezier {
             .map(|(i, point)| {
                 let size = Vec2::splat(2.0 * control_point_radius);
 
-                let point_in_screen = to_screen.transform_pos(*point);
+                let point_in_screen: Pos2 = to_screen.transform_pos(*point);
                 let point_rect = Rect::from_center_size(point_in_screen, size);
                 let point_id = response.id.with(i);
                 let point_response = ui.interact(point_rect, point_id, Sense::drag());
 
-                *point += point_response.drag_delta();
+                if point_response.dragged() {
+                    *point += point_response.drag_delta();
+                    selected_index = Some(i);
+                }
+
                 *point = to_screen.from().clamp(*point);
 
                 let point_in_screen = to_screen.transform_pos(*point);
@@ -148,10 +153,10 @@ impl PaintBezier {
         painter.add(PathShape::line(points_in_screen, self.aux_stroke));
         painter.extend(control_point_shapes);
 
-        response.clone()
+        (response.clone(), selected_index)
     }
 
-    pub fn ui_content(&mut self, ui: &mut Ui) -> egui::Response {
+    pub fn ui_content(&mut self, ui: &mut Ui) -> (egui::Response, Option<usize>) {
         let (response, painter) = ui.allocate_painter(
             Vec2::new(ui.available_width(), ui.available_height()),
             Sense::hover(),
