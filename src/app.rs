@@ -1,7 +1,7 @@
 use std::default;
 
 use eframe::{
-    egui::{self, Frame, Id, LayerId, Painter, Response, Widget},
+    egui::{self, Frame, Id, LayerId, Painter, Response, Ui, Widget},
     epaint::{Color32, Hsva, HsvaGamma, Pos2, Rect, Rounding, Vec2},
 };
 use env_logger::fmt::Color;
@@ -32,7 +32,7 @@ impl Default for ZApp {
                 hsva: HsvaGamma::default(),
                 alpha: egui::color_picker::Alpha::Opaque,
                 paint_bezier: PaintBezier::default(),
-                modifying_bezier_index: None,
+                dragging_bezier_index: None,
                 last_modifying_bezier_index: 0,
             },
         }
@@ -49,10 +49,6 @@ impl ZApp {
 
     fn draw_ui_menu(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            // ui.color_edit_button_srgba(&mut color_picker_val);
-
-            // self.paint_bezier.ui_content(ui);
-
             let mut bezier_draw_size = Vec2::default();
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
@@ -61,35 +57,34 @@ impl ZApp {
                     });
                 });
 
-                ui.vertical(|ui| {
-                    // let size = ui.spacing().interact_size;
-
-                    ui.horizontal_centered(|ui| {
-                        ui.visuals_mut().widgets.open.rounding = Rounding::default();
-                        ui.visuals_mut().widgets.open.expansion = 0.0;
-                        ui.spacing_mut().button_padding = Vec2::ZERO;
-                        ui.spacing_mut().combo_width = 0.0;
-                        ui.spacing_mut().icon_width = 0.0;
-                        ui.spacing_mut().item_spacing = Vec2::ZERO;
-                        ui.spacing_mut().icon_spacing = 0.0;
-
-                        let bezier = &self.main_color_picker_data.paint_bezier;
-                        let num_colors: usize = bezier.degree();
-                        let size = ui.available_size();
-                        let size_per_color_x = size.x / (num_colors as f32);
-                        let size_per_color = Vec2::new(size_per_color_x, size.y);
-
-                        let points = bezier.control_points(bezier_draw_size);
-                        for i in 0..num_colors {
-                            let color_at_point: Color32 = main_color_picker_color_at(
-                                self.main_color_picker_data.hsva,
-                                &points[i],
-                            );
-                            color_button(ui, size_per_color, color_at_point, true);
-                        }
-                    });
-                });
+                ui.vertical(|ui| self.draw_ui_previewer(ui, bezier_draw_size));
             });
+        });
+    }
+
+    fn draw_ui_previewer(&mut self, ui: &mut Ui, bezier_draw_size: Vec2) {
+        ui.horizontal_centered(|ui| {
+            ui.visuals_mut().widgets.open.rounding = Rounding::default();
+            ui.visuals_mut().widgets.open.expansion = 0.0;
+            ui.spacing_mut().button_padding = Vec2::ZERO;
+            ui.spacing_mut().combo_width = 0.0;
+            ui.spacing_mut().icon_width = 0.0;
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            ui.spacing_mut().icon_spacing = 0.0;
+
+            let bezier = &self.main_color_picker_data.paint_bezier;
+            let num_colors: usize = bezier.degree();
+            let size = ui.available_size();
+            let size_per_color_x = size.x / (num_colors as f32);
+            let size_per_color = Vec2::new(size_per_color_x, size.y);
+
+            let points = bezier.control_points(bezier_draw_size);
+            for i in 0..num_colors {
+                let mut color_at_point: HsvaGamma =
+                    main_color_picker_color_at(self.main_color_picker_data.hsva, &points[i]).into();
+                color_at_point.h = bezier.get_hue(i);
+                color_button(ui, size_per_color, color_at_point.into(), true);
+            }
         });
     }
 }

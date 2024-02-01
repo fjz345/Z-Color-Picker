@@ -21,7 +21,7 @@ pub struct MainColorPickerData {
     pub hsva: HsvaGamma,
     pub alpha: Alpha,
     pub paint_bezier: PaintBezier,
-    pub modifying_bezier_index: Option<usize>,
+    pub dragging_bezier_index: Option<usize>,
     pub last_modifying_bezier_index: usize,
 }
 
@@ -29,13 +29,14 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
     let desired_size_slider_2d = Vec2::splat(ui.spacing().slider_width);
 
     let bezier_index = data
-        .modifying_bezier_index
+        .dragging_bezier_index
         .unwrap_or(data.last_modifying_bezier_index);
     let mut color_to_show: HsvaGamma = main_color_picker_color_at(
         data.hsva,
         &data.paint_bezier.control_points(desired_size_slider_2d)[bezier_index],
     )
     .into();
+    color_to_show.h = data.paint_bezier.get_hue(bezier_index);
 
     let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
     show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
@@ -82,19 +83,7 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
         }
     }
 
-    let mut dummy_hsva = HsvaGamma::default();
-    let HsvaGamma { h, s, v, a: _ } = if data.modifying_bezier_index.is_some() {
-        &mut color_to_show
-    } else {
-        &mut dummy_hsva
-    };
-
-    let h_mut_ref = if data.modifying_bezier_index.is_some() {
-        data.paint_bezier.get_hue_mut(bezier_index)
-    } else {
-        h
-    };
-
+    let h_mut_ref = data.paint_bezier.get_hue_mut(bezier_index);
     color_slider_1d(ui, h_mut_ref, |h| {
         HsvaGamma {
             h,
@@ -105,6 +94,8 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
         .into()
     })
     .on_hover_text("Hue");
+
+    let HsvaGamma { h, s, v, a: _ } = &mut color_to_show;
 
     if false {
         color_slider_1d(ui, s, |s| HsvaGamma { s, ..opaque }.into()).on_hover_text("Saturation");
@@ -121,7 +112,7 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
         v,
         main_color_picker_color_at_function(
             HsvaGamma {
-                h: *h_mut_ref,
+                h: *h,
                 s: *s,
                 v: *v,
                 a: 1.0,
@@ -135,7 +126,7 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
         data.paint_bezier
             .ui_content_with_painter(ui, &slider_2d_reponse, &ui.painter());
 
-    data.modifying_bezier_index = selected_index;
+    data.dragging_bezier_index = selected_index;
     match selected_index {
         Some(a) => data.last_modifying_bezier_index = a,
         _ => {}
