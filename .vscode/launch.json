@@ -1,0 +1,45 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'Z-Color-Picker'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=Z-Color-Picker",
+                    "--package=Z-Color-Picker"
+                ],
+                "filter": {
+                    "name": "Z-Color-Picker",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'Z-Color-Picker'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=Z-Color-Picker",
+                    "--package=Z-Color-Picker"
+                ],
+                "filter": {
+                    "name": "Z-Color-Picker",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

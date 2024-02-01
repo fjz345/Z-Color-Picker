@@ -1,14 +1,14 @@
 use std::default;
 
 use eframe::{
-    egui::{self, Frame, Id, LayerId, Painter},
+    egui::{self, Frame, Id, LayerId, Painter, Response, Widget},
     epaint::{Color32, Hsva, HsvaGamma, Pos2, Rect, Rounding, Vec2},
 };
 use env_logger::fmt::Color;
 
 use crate::{
     bezier::PaintBezier,
-    color_picker::{self, main_color_picker, MainColorPickerData},
+    color_picker::{self, main_color_picker, main_color_picker_color_at, MainColorPickerData},
     ui_common::color_button,
 };
 
@@ -51,10 +51,11 @@ impl ZApp {
 
             // self.paint_bezier.ui_content(ui);
 
+            let mut bezier_draw_size = Vec2::default();
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     Frame::canvas(ui.style()).show(ui, |ui| {
-                        main_color_picker(ui, &mut self.main_color_picker_data);
+                        bezier_draw_size = main_color_picker(ui, &mut self.main_color_picker_data);
                     });
                 });
 
@@ -70,14 +71,20 @@ impl ZApp {
                         ui.spacing_mut().item_spacing = Vec2::ZERO;
                         ui.spacing_mut().icon_spacing = 0.0;
 
-                        const num_colors: i32 = 4;
+                        let bezier = &self.main_color_picker_data.paint_bezier;
+                        let num_colors: usize = bezier.degree();
                         let size = ui.available_size();
                         let size_per_color_x = size.x / (num_colors as f32);
                         let size_per_color = Vec2::new(size_per_color_x, size.y);
-                        color_button(ui, size_per_color, Color32::DARK_GREEN, true);
-                        color_button(ui, size_per_color, Color32::DARK_RED, true);
-                        color_button(ui, size_per_color, Color32::DARK_BLUE, true);
-                        color_button(ui, size_per_color, Color32::DARK_GRAY, true);
+
+                        let points = bezier.control_points(bezier_draw_size);
+                        for i in 0..num_colors {
+                            let color_at_point: Color32 = main_color_picker_color_at(
+                                self.main_color_picker_data.hsva,
+                                &points[i],
+                            );
+                            color_button(ui, size_per_color, color_at_point, true);
+                        }
                     });
                 });
             });

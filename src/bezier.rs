@@ -44,6 +44,21 @@ impl Default for PaintBezier {
 }
 
 impl PaintBezier {
+    pub fn degree(&self) -> usize {
+        self.degree
+    }
+
+    pub fn control_points(&self, bezier_draw_size: Vec2) -> Vec<Vec2> {
+        let points_in_screen: Vec<Vec2> = self
+            .control_points
+            .iter()
+            .take(self.degree)
+            .map(|p| Vec2::new(p.x, p.y) / bezier_draw_size)
+            .collect();
+
+        points_in_screen
+    }
+
     pub fn ui_content_with_painter(
         &mut self,
         ui: &Ui,

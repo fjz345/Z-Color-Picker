@@ -20,7 +20,7 @@ pub struct MainColorPickerData {
     pub paint_bezier: PaintBezier,
 }
 
-pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) {
+pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
     let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
     show_color(ui, data.hsva, current_color_size).on_hover_text("Selected color");
 
@@ -87,11 +87,38 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) {
         color_slider_1d(ui, v, |v| HsvaGamma { v, ..opaque }.into()).on_hover_text("Value");
     }
 
-    let slider_2d_reponse: Response =
-        color_slider_2d(ui, s, v, |s, v| HsvaGamma { s, v, ..opaque }.into());
+    let slider_2d_reponse: Response = color_slider_2d(
+        ui,
+        s,
+        v,
+        main_color_picker_color_at_function(
+            HsvaGamma {
+                h: *h,
+                s: *s,
+                v: *v,
+                a: 1.0,
+            },
+            *s,
+            *v,
+        ),
+    );
 
-    data.paint_bezier
-        .ui_content_with_painter(ui, &slider_2d_reponse, &ui.painter());
+    let bezier_response =
+        data.paint_bezier
+            .ui_content_with_painter(ui, &slider_2d_reponse, &ui.painter());
+
+    bezier_response.rect.size()
+}
+
+fn main_color_picker_color_at_function(
+    hsva: HsvaGamma,
+    x: f32,
+    y: f32,
+) -> impl Fn(f32, f32) -> Color32 {
+    let opaque = HsvaGamma { a: 1.0, ..hsva };
+    let HsvaGamma { h, s, v, a: _ } = hsva;
+
+    return move |s, v| HsvaGamma { s, v, ..opaque }.into();
 }
 
 fn color_slider_1d(ui: &mut Ui, value: &mut f32, color_at: impl Fn(f32) -> Color32) -> Response {
@@ -146,6 +173,11 @@ fn color_slider_1d(ui: &mut Ui, value: &mut f32, color_at: impl Fn(f32) -> Color
     }
 
     response
+}
+
+pub fn main_color_picker_color_at(hsva: HsvaGamma, pos: &Vec2) -> Color32 {
+    let color = main_color_picker_color_at_function(hsva, pos[0], pos[1])(pos[0], 1.0 - pos[1]);
+    color
 }
 
 /// # Arguments
