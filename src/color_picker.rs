@@ -87,7 +87,8 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) {
         color_slider_1d(ui, v, |v| HsvaGamma { v, ..opaque }.into()).on_hover_text("Value");
     }
 
-    let slider_2d_reponse = color_slider_2d(ui, s, v, |s, v| HsvaGamma { s, v, ..opaque }.into());
+    let slider_2d_reponse: Response =
+        color_slider_2d(ui, s, v, |s, v| HsvaGamma { s, v, ..opaque }.into());
 
     data.paint_bezier
         .ui_content_with_painter(ui, &slider_2d_reponse, &ui.painter());
@@ -174,7 +175,7 @@ fn color_slider_2d(
         for xi in 0..=N {
             for yi in 0..=N {
                 let xt = xi as f32 / (N as f32);
-                let yt = yi as f32 / (N as f32);
+                let yt: f32 = yi as f32 / (N as f32);
                 let color = color_at(xt, yt);
                 let x = lerp(rect.left()..=rect.right(), xt);
                 let y = lerp(rect.bottom()..=rect.top(), yt);
@@ -220,35 +221,6 @@ fn contrast_color(color: impl Into<Rgba>) -> Color32 {
 /// We need at least 6 for hues, and more for smooth 2D areas.
 /// Should always be a multiple of 6 to hit the peak hues in HSV/HSL (every 60°).
 const N: u32 = 6 * 6;
-
-fn background_checkers(painter: &Painter, rect: Rect) {
-    let rect = rect.shrink(0.5); // Small hack to avoid the checkers from peeking through the sides
-    if !rect.is_positive() {
-        return;
-    }
-
-    let dark_color = Color32::from_gray(32);
-    let bright_color = Color32::from_gray(128);
-
-    let checker_size = Vec2::splat(rect.height() / 2.0);
-    let n = (rect.width() / checker_size.x).round() as u32;
-
-    let mut mesh = Mesh::default();
-    mesh.add_colored_rect(rect, dark_color);
-
-    let mut top = true;
-    for i in 0..n {
-        let x = lerp(rect.left()..=rect.right(), i as f32 / (n as f32));
-        let small_rect = if top {
-            Rect::from_min_size(pos2(x, rect.top()), checker_size)
-        } else {
-            Rect::from_min_size(pos2(x, rect.center().y), checker_size)
-        };
-        mesh.add_colored_rect(small_rect, bright_color);
-        top = !top;
-    }
-    painter.add(Shape::mesh(mesh));
-}
 
 fn color_text_ui(ui: &mut Ui, color: impl Into<Color32>, alpha: Alpha) {
     let color = color.into();

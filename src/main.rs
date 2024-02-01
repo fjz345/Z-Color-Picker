@@ -5,6 +5,8 @@ use crate::app::ZApp;
 mod app;
 mod bezier;
 mod color_picker;
+mod previewer;
+mod ui_common;
 
 fn main() {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
