@@ -3,6 +3,7 @@ use std::default;
 use eframe::{
     egui::{self, Frame, Id, LayerId, Painter, Response, Ui, Widget},
     epaint::{Color32, Hsva, HsvaGamma, Pos2, Rect, Rounding, Vec2},
+    CreationContext,
 };
 use env_logger::fmt::Color;
 
@@ -20,13 +21,18 @@ enum AppState {
 }
 
 pub struct ZApp {
+    scale_factor: f32,
     state: AppState,
     main_color_picker_data: MainColorPickerData,
 }
 
-impl Default for ZApp {
-    fn default() -> Self {
+impl ZApp {
+    pub fn new(cc: &CreationContext<'_>) -> Self {
+        let monitor_size = cc.integration_info.window_info.monitor_size.unwrap();
+        const RESOLUTION_REF: f32 = 1080.0;
+        let scale_factor = monitor_size.x.min(monitor_size.y) / RESOLUTION_REF;
         Self {
+            scale_factor: scale_factor,
             state: AppState::Startup,
             main_color_picker_data: MainColorPickerData {
                 hsva: HsvaGamma::default(),
@@ -37,14 +43,12 @@ impl Default for ZApp {
             },
         }
     }
-}
 
-impl ZApp {
     fn startup(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let mut visuals: egui::Visuals = egui::Visuals::dark();
         // visuals.panel_fill = Color32::from_rgba_unmultiplied(24, 36, 41, 255);
         ctx.set_visuals(visuals);
-        ctx.set_pixels_per_point(3.0);
+        ctx.set_pixels_per_point(self.scale_factor);
     }
 
     fn draw_ui_menu(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {

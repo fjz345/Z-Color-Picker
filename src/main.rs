@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use eframe::egui;
 
 use crate::app::ZApp;
@@ -22,12 +24,13 @@ FEATURES
 * Sample along bezier
 * Different curves
 * Number of points in curve (double click add, right click remove)
-* translate all curve points
-* change hue all curve points
+* Translate all curve points
+* Change hue all curve points
 * Preview colors, change preview cell sizes by sliding
 * Preset save/load
-* beginning/end of curve visuals
+* Beginning/end of curve visuals
 * Preset hue with stepping for points
+* Different color spaces
 =============================================================
 */
 fn main() {
@@ -41,7 +44,7 @@ fn main() {
     let eframe_result = eframe::run_native(
         "Z Color Picker",
         options,
-        Box::new(|_cc| Box::<ZApp>::default()),
+        Box::new(|cc| Box::<ZApp>::new(ZApp::new(cc))),
     );
 
     match eframe_result {
