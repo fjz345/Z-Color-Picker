@@ -1,3 +1,5 @@
+// #![windows_subsystem = "windows"]
+
 use eframe::egui;
 
 use crate::app::ZApp;
@@ -14,19 +16,13 @@ mod ui_common;
 =============================================================
 TODO:
 
-ISSUES
-* remove console from release binary
-* fix preview cell spacing
-
 FEATURES
 * Hex Copy Selected color
 * Hex Copy Gradient color
-* Sample along bezier
 * Different curves
 * Number of points in curve (double click add, right click remove)
 * Translate all curve points
 * Change hue all curve points
-* Preview colors, change preview cell sizes by sliding
 * Preset save/load
 * Beginning/end of curve visuals
 * Preset hue with stepping for points

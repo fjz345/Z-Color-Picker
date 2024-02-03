@@ -62,17 +62,15 @@ impl ZApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             let color_picker_desired_size = Vec2 {
                 x: ui.available_width() * 0.5,
-                y: ui.available_height(),
+                y: ui.available_height().min(ui.available_width()),
             };
 
             let mut bezier_draw_size = Vec2::default();
 
-            ui.horizontal(|ui| {
-                ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
-                    ui.spacing_mut().slider_width =
-                        color_picker_desired_size.x.min(color_picker_desired_size.y);
-                    bezier_draw_size = main_color_picker(ui, &mut self.main_color_picker_data);
-                });
+            ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui| {
+                ui.spacing_mut().slider_width =
+                    color_picker_desired_size.x.min(color_picker_desired_size.y);
+                bezier_draw_size = main_color_picker(ui, &mut self.main_color_picker_data);
 
                 self.draw_ui_previewer(ui, bezier_draw_size);
             });
