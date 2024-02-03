@@ -122,7 +122,8 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
         }
 
         let h_mut_ref = data.paint_bezier.get_hue_mut(bezier_index);
-        color_slider_1d(ui, h_mut_ref, |h| {
+        let prev_hue = *h_mut_ref;
+        let hue_response = color_slider_1d(ui, h_mut_ref, |h| {
             HsvaGamma {
                 h,
                 s: 1.0,
@@ -132,6 +133,26 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
             .into()
         })
         .on_hover_text("Hue");
+
+        if data.is_curve_locked {
+            let mut delta_hue: f32 = 0.0;
+
+            match hue_response.interact_pointer_pos() {
+                Some(Pos) => {
+                    delta_hue = *h_mut_ref - prev_hue;
+                }
+                _ => {}
+            }
+
+            // Move all other points
+            for i in 0..data.paint_bezier.control_points.len() {
+                if (i == bezier_index) {
+                    continue;
+                }
+                let hue_ref = data.paint_bezier.get_hue_mut(i);
+                *hue_ref += delta_hue;
+            }
+        }
 
         let HsvaGamma { h, s, v, a: _ } = &mut color_to_show;
 
