@@ -83,11 +83,13 @@ impl PaintBezier {
         ui: &Ui,
         response: &egui::Response,
         painter: &Painter,
-    ) -> (egui::Response, Option<usize>) {
+    ) -> (egui::Response, Option<egui::Response>, Option<usize>) {
         let to_screen = emath::RectTransform::from_to(
             Rect::from_min_size(Pos2::ZERO, response.rect.size()),
             response.rect,
         );
+
+        let mut dragged_point_response = None;
 
         let control_point_radius = 8.0;
 
@@ -108,6 +110,7 @@ impl PaintBezier {
                 if point_response.dragged() {
                     *point += point_response.drag_delta();
                     selected_index = Some(i);
+                    dragged_point_response = Some(point_response.clone());
                 }
 
                 *point = to_screen.from().clamp(*point);
@@ -157,10 +160,13 @@ impl PaintBezier {
         painter.add(PathShape::line(points_in_screen, self.aux_stroke));
         painter.extend(control_point_shapes);
 
-        (response.clone(), selected_index)
+        (response.clone(), dragged_point_response, selected_index)
     }
 
-    pub fn ui_content(&mut self, ui: &mut Ui) -> (egui::Response, Option<usize>) {
+    pub fn ui_content(
+        &mut self,
+        ui: &mut Ui,
+    ) -> (egui::Response, Option<egui::Response>, Option<usize>) {
         let (response, painter) = ui.allocate_painter(
             Vec2::new(ui.available_width(), ui.available_height()),
             Sense::hover(),

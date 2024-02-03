@@ -45,6 +45,7 @@ impl ZApp {
                 paint_bezier: PaintBezier::default(),
                 dragging_bezier_index: None,
                 last_modifying_bezier_index: 0,
+                is_curve_locked: false,
             },
             previewer_data: PreviewerData::default(),
             num_control_points: 4,

@@ -51,6 +51,7 @@ pub struct MainColorPickerData {
     pub paint_bezier: PaintBezier,
     pub dragging_bezier_index: Option<usize>,
     pub last_modifying_bezier_index: usize,
+    pub is_curve_locked: bool,
 }
 
 pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
@@ -160,9 +161,9 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
             ),
         );
 
-        let (bezier_response, selected_index) =
-            data.paint_bezier
-                .ui_content_with_painter(ui, &slider_2d_reponse, &ui.painter());
+        let (bezier_response, dragged_points_response, selected_index) = data
+            .paint_bezier
+            .ui_content_with_painter(ui, &slider_2d_reponse, &ui.painter());
 
         data.dragging_bezier_index = selected_index;
         match selected_index {
@@ -171,6 +172,22 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
         }
 
         bezier_response_size = bezier_response.rect.size();
+
+        match dragged_points_response {
+            Some(R) => {
+                if R.dragged() {
+                    if data.is_curve_locked {
+                        // Move all other points
+                        for point_ref in &mut data.paint_bezier.control_points {
+                            *point_ref += R.drag_delta();
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        ui.checkbox(&mut data.is_curve_locked, "🔒");
     });
 
     return bezier_response_size;
