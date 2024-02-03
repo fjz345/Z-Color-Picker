@@ -1,5 +1,3 @@
-#![windows_subsystem = "windows"]
-
 use eframe::egui;
 
 use crate::app::ZApp;

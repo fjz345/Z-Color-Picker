@@ -29,6 +29,14 @@ impl<const D: usize> Default for PreviewerData<D> {
     }
 }
 
+impl<const D: usize> PreviewerData<D> {
+    pub fn reset_preview_sizes(&mut self) {
+        for val in self.points_preview_sizes.iter_mut() {
+            *val = 1.0;
+        }
+    }
+}
+
 pub struct MainColorPickerData {
     pub hsva: HsvaGamma,
     pub alpha: Alpha,

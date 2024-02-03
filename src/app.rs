@@ -1,7 +1,7 @@
 use std::default;
 
 use eframe::{
-    egui::{self, Frame, Id, LayerId, Painter, Response, Ui, Widget},
+    egui::{self, Frame, Id, LayerId, Layout, Painter, Response, Ui, Widget},
     epaint::{Color32, Hsva, HsvaGamma, Pos2, Rect, Rounding, Vec2},
     CreationContext,
 };
@@ -60,74 +60,78 @@ impl ZApp {
 
     fn draw_ui_menu(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            let color_picker_desired_size = Vec2 {
+                x: ui.available_width() * 0.5,
+                y: ui.available_height(),
+            };
+
             let mut bezier_draw_size = Vec2::default();
+
             ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    Frame::canvas(ui.style()).show(ui, |ui| {
-                        bezier_draw_size = main_color_picker(ui, &mut self.main_color_picker_data);
-                    });
+                ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
+                    ui.spacing_mut().slider_width =
+                        color_picker_desired_size.x.min(color_picker_desired_size.y);
+                    bezier_draw_size = main_color_picker(ui, &mut self.main_color_picker_data);
                 });
 
-                ui.vertical(|ui| self.draw_ui_previewer(ui, bezier_draw_size));
+                self.draw_ui_previewer(ui, bezier_draw_size);
             });
         });
     }
 
     fn draw_ui_previewer(&mut self, ui: &mut Ui, bezier_draw_size: Vec2) {
-        ui.horizontal_centered(|mut ui| {
-            ui.visuals_mut().widgets.open.rounding = Rounding::default();
-            ui.visuals_mut().widgets.open.expansion = 0.0;
-            ui.visuals_mut().widgets.noninteractive.rounding = Rounding::default();
-            ui.visuals_mut().widgets.noninteractive.expansion = 0.0;
-            ui.spacing_mut().button_padding = Vec2::ZERO;
-            ui.spacing_mut().combo_width = 0.0;
-            ui.spacing_mut().icon_width = 0.0;
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            ui.spacing_mut().icon_spacing = 0.0;
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
 
-            let bezier = &self.main_color_picker_data.paint_bezier;
-            let num_colors: usize = bezier.degree();
-            let size: Vec2 = ui.available_size();
-            let size_per_color_x = size.x / (num_colors as f32);
-            let size_per_color = Vec2::new(size_per_color_x, size.y);
-            let previewer_sizes_sum: f32 = self.previewer_data.points_preview_sizes.iter().sum();
+        let bezier = &self.main_color_picker_data.paint_bezier;
+        let num_colors: usize = bezier.degree();
+        let total_size: Vec2 = ui.available_size();
 
-            ui.allocate_ui(size, |ui| {
-                let points = bezier.control_points(bezier_draw_size);
-                for i in 0..num_colors {
-                    let mut color_at_point: HsvaGamma =
-                        main_color_picker_color_at(self.main_color_picker_data.hsva, &points[i])
-                            .into();
-                    color_at_point.h = bezier.get_hue(i);
+        let size_per_color_x = total_size.x / (num_colors as f32);
+        let size_per_color_y = total_size.y;
+        let previewer_sizes_sum: f32 = self.previewer_data.points_preview_sizes.iter().sum();
 
-                    let size_weight: f32 =
-                        self.previewer_data.points_preview_sizes[i] / previewer_sizes_sum;
-                    let response: Response = color_button(
-                        ui,
-                        Vec2 {
-                            x: size_weight * size_per_color_x,
-                            y: size_per_color.y,
-                        },
-                        color_at_point.into(),
-                        true,
-                    );
-                    if response.dragged() {
-                        const SENSITIVITY: f32 = 0.04;
-                        self.previewer_data.points_preview_sizes[i] +=
-                            response.drag_delta().x * SENSITIVITY;
-                        self.previewer_data.points_preview_sizes[i] =
-                            self.previewer_data.points_preview_sizes[i].max(1.0);
+        let points = bezier.control_points(bezier_draw_size);
+        for i in 0..num_colors {
+            let mut color_at_point: HsvaGamma =
+                main_color_picker_color_at(self.main_color_picker_data.hsva, &points[i]).into();
+            color_at_point.h = bezier.get_hue(i);
 
-                        // self.num_control_points
-                        let min_percentage_x = (1.0 / 4 as f32);
-                        let min_preview_size = min_percentage_x * (size_weight * size_per_color_x)
-                            / previewer_sizes_sum;
-                        self.previewer_data.points_preview_sizes[i] =
-                            self.previewer_data.points_preview_sizes[i].min(min_preview_size);
-                    }
-                }
-            });
-        });
+            let size_weight: f32 = self.previewer_data.points_preview_sizes[i] * num_colors as f32
+                / previewer_sizes_sum;
+            let response: Response = color_button(
+                ui,
+                Vec2 {
+                    x: size_weight * size_per_color_x,
+                    y: size_per_color_y,
+                },
+                color_at_point.into(),
+                true,
+            );
+            if response.dragged() {
+                const SENSITIVITY: f32 = 0.02;
+                self.previewer_data.points_preview_sizes[i] +=
+                    response.drag_delta().x * SENSITIVITY;
+                self.previewer_data.points_preview_sizes[i] =
+                    self.previewer_data.points_preview_sizes[i].max(1.0);
+
+                // self.num_control_points
+                let min_percentage_x = 1.0 / num_colors as f32;
+                let min_preview_size =
+                    min_percentage_x * (size_weight * size_per_color_x) / previewer_sizes_sum;
+                self.previewer_data.points_preview_sizes[i] =
+                    self.previewer_data.points_preview_sizes[i].min(min_preview_size);
+            }
+        }
+
+        let reset_button = egui::Button::new("❌").small().wrap(false).frame(false);
+        const RESET_BUTTON_PERCENT_SIZE: f32 = 0.09;
+        let mut reset_button_rect = ui.max_rect();
+        reset_button_rect.set_width(reset_button_rect.width() * RESET_BUTTON_PERCENT_SIZE);
+        reset_button_rect.set_height(reset_button_rect.height() * RESET_BUTTON_PERCENT_SIZE);
+
+        if ui.put(reset_button_rect, reset_button).clicked() {
+            self.previewer_data.reset_preview_sizes();
+        }
     }
 }
 
