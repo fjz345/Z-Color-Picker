@@ -1,8 +1,12 @@
 //https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
 
+use std::ops::Mul;
+
 use eframe::egui;
 use egui::epaint::{CubicBezierShape, PathShape, QuadraticBezierShape};
 use egui::*;
+
+use crate::math::{add_array, add_array_array, combination, mul_array};
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(default))]
@@ -11,7 +15,7 @@ pub struct PaintBezier {
     degree: usize,
 
     /// The control points. The [`Self::degree`] first of them are used.
-    control_points: [Pos2; 4],
+    pub control_points: [Pos2; 4],
 
     hue: [f32; 4],
 
@@ -163,5 +167,32 @@ impl PaintBezier {
         );
 
         self.ui_content_with_painter(ui, &response, &painter)
+    }
+}
+
+pub struct Bezier<const D: usize, const N: usize> {
+    pub control_points: [[f32; D]; N],
+}
+
+impl<const D: usize, const N: usize> Bezier<D, N> {
+    pub fn new() -> Self {
+        Self {
+            control_points: [[0.0; D]; N],
+        }
+    }
+
+    pub fn get_at(&self, t: f32) -> [f32; D] {
+        // https://en.wikipedia.org/wiki/B%C3%A9zier_curve
+        let mut outer_sum: [f32; D] = [0.0; D];
+
+        for i in 0..N {
+            let inner_prod = num_integer::binomial(N as u64, i as u64) as f32
+                * (1.0 - t).powi(N as i32 - i as i32)
+                * t.powi(i as i32);
+            let inner = mul_array(self.control_points[i].clone(), inner_prod);
+            outer_sum = add_array_array(outer_sum, inner);
+        }
+
+        outer_sum
     }
 }

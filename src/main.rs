@@ -7,6 +7,8 @@ use crate::app::ZApp;
 mod app;
 mod bezier;
 mod color_picker;
+mod curve;
+mod math;
 mod previewer;
 mod ui_common;
 

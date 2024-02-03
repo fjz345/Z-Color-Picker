@@ -34,7 +34,7 @@ pub fn background_checkers(painter: &Painter, rect: Rect) {
 }
 
 pub fn color_button(ui: &mut Ui, size: Vec2, color: Color32, open: bool) -> Response {
-    let (rect, response) = ui.allocate_exact_size(size, Sense::focusable_noninteractive());
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     response.widget_info(|| WidgetInfo::new(WidgetType::ColorButton));
 
     if ui.is_rect_visible(rect) {
@@ -46,10 +46,6 @@ pub fn color_button(ui: &mut Ui, size: Vec2, color: Color32, open: bool) -> Resp
         let rect = rect.expand(visuals.expansion);
 
         show_color_at(ui.painter(), color, rect);
-
-        let rounding = visuals.rounding.at_most(2.0);
-        ui.painter()
-            .rect_stroke(rect, rounding, (2.0, visuals.bg_fill)); // fill is intentional, because default style has no border
     }
 
     response

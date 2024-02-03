@@ -13,9 +13,21 @@ use eframe::{
 };
 
 use crate::{
-    bezier::{self, PaintBezier},
+    bezier::{self, Bezier, PaintBezier},
     ui_common::{color_slider_2d, contrast_color},
 };
+
+pub struct PreviewerData<const D: usize> {
+    pub points_preview_sizes: [f32; D],
+}
+
+impl<const D: usize> Default for PreviewerData<D> {
+    fn default() -> Self {
+        Self {
+            points_preview_sizes: [1.0; D],
+        }
+    }
+}
 
 pub struct MainColorPickerData {
     pub hsva: HsvaGamma,
@@ -26,6 +38,13 @@ pub struct MainColorPickerData {
 }
 
 pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
+    // // Test copy
+    // for i in 0..4 {
+    //     data.paint_bezier.control_points[i].x = data.bezier.control_points[i][0];
+    //     data.paint_bezier.control_points[i].y = data.bezier.control_points[i][1];
+    //     *data.paint_bezier.get_hue_mut(i) = data.bezier.control_points[i][2];
+    // }
+
     let desired_size_slider_2d = Vec2::splat(ui.spacing().slider_width);
 
     let bezier_index = data
