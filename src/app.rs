@@ -106,24 +106,24 @@ impl ZApp {
                 true,
             );
             if response.dragged() {
-                const SENSITIVITY: f32 = 0.02;
+                const PREVIEWER_DRAG_SENSITIVITY: f32 = 0.6;
                 self.previewer_data.points_preview_sizes[i] +=
-                    response.drag_delta().x * SENSITIVITY;
+                    response.drag_delta().x * PREVIEWER_DRAG_SENSITIVITY;
                 self.previewer_data.points_preview_sizes[i] =
-                    self.previewer_data.points_preview_sizes[i].max(1.0);
+                    self.previewer_data.points_preview_sizes[i].max(0.0);
 
                 // self.num_control_points
-                let min_percentage_x = 1.0 / num_colors as f32;
-                let min_preview_size =
-                    min_percentage_x * (size_weight * size_per_color_x) / previewer_sizes_sum;
-                self.previewer_data.points_preview_sizes[i] =
-                    self.previewer_data.points_preview_sizes[i].min(min_preview_size);
+                let min_percentage_x = 0.5 * (1.0 / num_colors as f32);
+                let min_preview_size: f32 = min_percentage_x * previewer_sizes_sum;
+
+                // TODO: loop over all and set min_preview_size
+                self.previewer_data.enforce_min_size(min_preview_size);
             }
         }
 
         let reset_button = egui::Button::new("❌").small().wrap(false).frame(false);
         const RESET_BUTTON_PERCENT_SIZE: f32 = 0.09;
-        let mut reset_button_rect = ui.max_rect();
+        let mut reset_button_rect: Rect = ui.max_rect();
         reset_button_rect.set_width(reset_button_rect.width() * RESET_BUTTON_PERCENT_SIZE);
         reset_button_rect.set_height(reset_button_rect.height() * RESET_BUTTON_PERCENT_SIZE);
 

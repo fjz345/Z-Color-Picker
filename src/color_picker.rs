@@ -18,6 +18,7 @@ use crate::{
     ui_common::{color_slider_2d, contrast_color},
 };
 
+const PREVIEWER_DEFAULT_VALUE: f32 = 100.0;
 pub struct PreviewerData<const D: usize> {
     pub points_preview_sizes: [f32; D],
 }
@@ -25,7 +26,7 @@ pub struct PreviewerData<const D: usize> {
 impl<const D: usize> Default for PreviewerData<D> {
     fn default() -> Self {
         Self {
-            points_preview_sizes: [1.0; D],
+            points_preview_sizes: [PREVIEWER_DEFAULT_VALUE; D],
         }
     }
 }
@@ -33,7 +34,13 @@ impl<const D: usize> Default for PreviewerData<D> {
 impl<const D: usize> PreviewerData<D> {
     pub fn reset_preview_sizes(&mut self) {
         for val in self.points_preview_sizes.iter_mut() {
-            *val = 1.0;
+            *val = PREVIEWER_DEFAULT_VALUE;
+        }
+    }
+
+    pub fn enforce_min_size(&mut self, min_size: f32) {
+        for point_ref in &mut self.points_preview_sizes {
+            *point_ref = point_ref.max(min_size);
         }
     }
 }
