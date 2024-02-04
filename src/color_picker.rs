@@ -199,7 +199,11 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
                 if R.dragged() {
                     if data.is_curve_locked {
                         // Move all other points
-                        for point_ref in &mut data.paint_bezier.control_points {
+                        for i in 0..data.paint_bezier.control_points.len() {
+                            if i == bezier_index {
+                                continue;
+                            }
+                            let point_ref = &mut data.paint_bezier.control_points[i];
                             *point_ref += R.drag_delta();
                         }
                     }
