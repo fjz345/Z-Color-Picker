@@ -349,38 +349,25 @@ pub fn main_color_picker_color_at(hsva: HsvaGamma, pos: &Vec2) -> Color32 {
     color
 }
 
+pub fn color_button_copy(ui: &mut Ui, color: impl Into<Color32>, alpha: Alpha) {
+    let [r, g, b, a] = color.into().to_array();
+
+    let button_response = ui.button("📋").on_hover_text("Copy HEX");
+    if button_response.clicked() {
+        if alpha == Alpha::Opaque {
+            ui.output_mut(|o| o.copied_text = format!("{}, {}, {}", r, g, b));
+        } else {
+            ui.output_mut(|o| o.copied_text = format!("{}, {}, {}, {}", r, g, b, a));
+        }
+    }
+}
+
 fn color_text_ui(ui: &mut Ui, color: impl Into<Color32>, alpha: Alpha) {
     let color = color.into();
+    let [r, g, b, a] = color.to_array();
+
     ui.horizontal(|ui| {
-        let [r, g, b, a] = color.to_array();
-
-        if ui.button("📋").on_hover_text("Click to copy").clicked() {
-            if alpha == Alpha::Opaque {
-                ui.output_mut(|o| o.copied_text = format!("{}, {}, {}", r, g, b));
-            } else {
-                ui.output_mut(|o| o.copied_text = format!("{}, {}, {}, {}", r, g, b, a));
-            }
-        }
-
-        // if alpha == Alpha::Opaque {
-        //     ui.put(
-        //         Rect {
-        //             min: Pos2 { x: 0.0, y: 0.0 },
-        //             max: Pos2 {
-        //                 x: ui.available_size().x,
-        //                 y: ui.available_size().y,
-        //             },
-        //         },
-        //         Label::new(format!("rgb({}, {}, {})", r, g, b)),
-        //     )
-        //     .on_hover_text("Red Green Blue");
-        // } else {
-        //     ui.put(
-        //         ui.available_rect_before_wrap(),
-        //         Label::new(format!("rgba({}, {}, {}, {})", r, g, b, a)),
-        //     )
-        //     .on_hover_text("Red Green Blue with premultiplied Alpha");
-        // }
+        color_button_copy(ui, color, alpha);
 
         let old_style = Arc::as_ref(ui.style()).clone();
 

@@ -1,7 +1,7 @@
 use std::default;
 
 use eframe::{
-    egui::{self, Frame, Id, LayerId, Layout, Painter, Response, Ui, Widget},
+    egui::{self, Frame, Id, LayerId, Layout, Painter, Response, Sense, Ui, Widget},
     epaint::{Color32, Hsva, HsvaGamma, Pos2, Rect, Rounding, Vec2},
     CreationContext,
 };
@@ -10,7 +10,7 @@ use env_logger::fmt::Color;
 use crate::{
     bezier::{Bezier, PaintBezier},
     color_picker::{
-        self, main_color_picker, main_color_picker_color_at, MainColorPickerData, PreviewerData,
+        main_color_picker, main_color_picker_color_at, MainColorPickerData, PreviewerData,
     },
     ui_common::color_button,
 };
@@ -79,17 +79,21 @@ impl ZApp {
     }
 
     fn draw_ui_previewer(&mut self, ui: &mut Ui, bezier_draw_size: Vec2) {
-        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        let previewer_rect = ui.available_rect_before_wrap();
+        let mut previewer_ui = ui.child_ui(previewer_rect, Layout::left_to_right(egui::Align::Min));
+        previewer_ui.spacing_mut().item_spacing = Vec2::ZERO;
 
         let bezier = &self.main_color_picker_data.paint_bezier;
         let num_colors: usize = bezier.degree();
-        let total_size: Vec2 = ui.available_size();
+        let total_size: Vec2 = previewer_ui.available_size();
 
         let size_per_color_x = total_size.x / (num_colors as f32);
         let size_per_color_y = total_size.y;
         let previewer_sizes_sum: f32 = self.previewer_data.points_preview_sizes.iter().sum();
 
-        let points = bezier.control_points(bezier_draw_size);
+        let mut previewer_color_button_min: Pos2 = Pos2::new(99999999.0, 99999999.0);
+        let mut previewer_color_button_max: Pos2 = Pos2::new(-99999999.0, -99999999.0);
+        let points: Vec<Vec2> = bezier.control_points(bezier_draw_size);
         for i in 0..num_colors {
             let mut color_at_point: HsvaGamma =
                 main_color_picker_color_at(self.main_color_picker_data.hsva, &points[i]).into();
@@ -98,7 +102,7 @@ impl ZApp {
             let size_weight: f32 = self.previewer_data.points_preview_sizes[i] * num_colors as f32
                 / previewer_sizes_sum;
             let response: Response = color_button(
-                ui,
+                &mut previewer_ui,
                 Vec2 {
                     x: size_weight * size_per_color_x,
                     y: size_per_color_y,
@@ -120,13 +124,16 @@ impl ZApp {
                 // TODO: loop over all and set min_preview_size
                 self.previewer_data.enforce_min_size(min_preview_size);
             }
+
+            let color_response_rect = response.ctx.screen_rect();
         }
 
-        let reset_button = egui::Button::new("❌").small().wrap(false).frame(false);
-        const RESET_BUTTON_PERCENT_SIZE: f32 = 0.09;
-        let mut reset_button_rect: Rect = ui.max_rect();
-        reset_button_rect.set_width(reset_button_rect.width() * RESET_BUTTON_PERCENT_SIZE);
-        reset_button_rect.set_height(reset_button_rect.height() * RESET_BUTTON_PERCENT_SIZE);
+        let reset_button = egui::Button::new("❌").small().wrap(true).frame(true);
+        let reset_button_size: Vec2 = Vec2::new(25.0, 25.0);
+        let mut reset_button_rect: Rect = Rect {
+            min: previewer_rect.min,
+            max: previewer_rect.min + reset_button_size,
+        };
 
         if ui.put(reset_button_rect, reset_button).clicked() {
             self.previewer_data.reset_preview_sizes();

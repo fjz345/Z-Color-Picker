@@ -21,8 +21,6 @@ FEATURES
 * Hex Copy Gradient color
 * Different curves
 * Number of points in curve (double click add, right click remove)
-* Translate all curve points
-* Change hue all curve points
 * Preset save/load
 * Beginning/end of curve visuals
 * Preset hue with stepping for points
