@@ -56,7 +56,7 @@ pub struct MainColorPickerData {
 
 pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
     let mut bezier_response_size = Vec2::default();
-    ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
+    ui.with_layout(Layout::top_down(egui::Align::Min), |mut ui| {
         // // Test copy
         // for i in 0..4 {
         //     data.paint_bezier.control_points[i].x = data.bezier.control_points[i][0];
@@ -184,7 +184,7 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
 
         let (bezier_response, dragged_points_response, selected_index) = data
             .paint_bezier
-            .ui_content_with_painter(ui, &slider_2d_reponse, &ui.painter());
+            .ui_content_with_painter(&mut ui, &slider_2d_reponse);
 
         data.dragging_bezier_index = selected_index;
         match selected_index {
@@ -224,7 +224,6 @@ fn main_color_picker_color_at_function(
     y: f32,
 ) -> impl Fn(f32, f32) -> Color32 {
     let opaque = HsvaGamma { a: 1.0, ..hsva };
-    let HsvaGamma { h, s, v, a: _ } = hsva;
 
     return move |s, v| HsvaGamma { s, v, ..opaque }.into();
 }
@@ -349,7 +348,10 @@ fn main_color_slider_2d(
 }
 
 pub fn main_color_picker_color_at(hsva: HsvaGamma, pos: &Vec2) -> Color32 {
-    let color = main_color_picker_color_at_function(hsva, pos[0], pos[1])(pos[0], 1.0 - pos[1]);
+    let color = main_color_picker_color_at_function(HsvaGamma::default(), pos[0], pos[1])(
+        pos[0],
+        1.0 - pos[1],
+    );
     color
 }
 

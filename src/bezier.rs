@@ -80,9 +80,8 @@ impl PaintBezier {
 
     pub fn ui_content_with_painter(
         &mut self,
-        ui: &Ui,
+        ui: &mut Ui,
         response: &egui::Response,
-        painter: &Painter,
     ) -> (egui::Response, Option<egui::Response>, Option<usize>) {
         let to_screen = emath::RectTransform::from_to(
             Rect::from_min_size(Pos2::ZERO, response.rect.size()),
@@ -93,8 +92,9 @@ impl PaintBezier {
 
         let control_point_radius = 8.0;
 
+        // Fill Circle
         let mut selected_index = None;
-        let control_point_shapes: Vec<Shape> = self
+        let mut control_point_shapes_fill: Vec<Shape> = self
             .control_points
             .iter_mut()
             .enumerate()
@@ -116,11 +116,52 @@ impl PaintBezier {
                 *point = to_screen.from().clamp(*point);
 
                 let point_in_screen = to_screen.transform_pos(*point);
-                let stroke = ui.style().interact(&point_response).fg_stroke;
+
+                //let points: Vec<Vec2> = self.control_points(response.);
+                // let mut color_at_point: HsvaGamma =
+                //     main_color_picker_color_at(self.main_color_picker_data.hsva, point_in_screen)
+                //         .into();
+                // color_at_point.h = bezier.get_hue(i);
+
+                Shape::circle_filled(point_in_screen, control_point_radius, Color32::BLUE)
+            })
+            .collect();
+
+        // Circle Stroke
+        let control_point_shapes: Vec<Shape> = self
+            .control_points
+            .iter_mut()
+            .enumerate()
+            .take(self.degree)
+            .map(|(i, point)| {
+                let size = Vec2::splat(2.0 * control_point_radius);
+
+                *point = to_screen.from().clamp(*point);
+
+                let point_in_screen = to_screen.transform_pos(*point);
+                let stroke: Stroke = ui.style().interact(response).fg_stroke;
 
                 Shape::circle_stroke(point_in_screen, control_point_radius, stroke)
             })
             .collect();
+
+        let selected_shape = if (selected_index.is_some()) {
+            let mut point = self.control_points[selected_index.unwrap()];
+
+            point = to_screen.from().clamp(point);
+
+            let point_in_screen = to_screen.transform_pos(point);
+
+            let stroke: Stroke = ui.style().interact(response).fg_stroke;
+
+            Some(Shape::circle_stroke(
+                point_in_screen,
+                1.6 * control_point_radius,
+                stroke,
+            ))
+        } else {
+            None
+        };
 
         let points_in_screen: Vec<Pos2> = self
             .control_points
@@ -134,31 +175,42 @@ impl PaintBezier {
                 let points = points_in_screen.clone().try_into().unwrap();
                 let shape =
                     QuadraticBezierShape::from_points_stroke(points, true, self.fill, self.stroke);
-                painter.add(epaint::RectShape::stroke(
+                ui.painter().add(epaint::RectShape::stroke(
                     shape.visual_bounding_rect(),
                     0.0,
                     self.bounding_box_stroke,
                 ));
-                painter.add(shape);
+                ui.painter().add(shape);
             }
             4 => {
                 let points = points_in_screen.clone().try_into().unwrap();
                 let shape =
                     CubicBezierShape::from_points_stroke(points, true, self.fill, self.stroke);
-                painter.add(epaint::RectShape::stroke(
+                ui.painter().add(epaint::RectShape::stroke(
                     shape.visual_bounding_rect(),
                     0.0,
                     self.bounding_box_stroke,
                 ));
-                painter.add(shape);
+                ui.painter().add(shape);
             }
             _ => {
                 unreachable!();
             }
         };
 
-        painter.add(PathShape::line(points_in_screen, self.aux_stroke));
-        painter.extend(control_point_shapes);
+        ui.painter()
+            .add(PathShape::line(points_in_screen, self.aux_stroke));
+
+        ui.painter().extend(control_point_shapes_fill);
+
+        ui.painter().extend(control_point_shapes);
+
+        match selected_shape {
+            Some(s) => {
+                ui.painter().add(s);
+            }
+            _ => {}
+        }
 
         (response.clone(), dragged_point_response, selected_index)
     }
@@ -172,7 +224,7 @@ impl PaintBezier {
             Sense::hover(),
         );
 
-        self.ui_content_with_painter(ui, &response, &painter)
+        self.ui_content_with_painter(ui, &response)
     }
 }
 

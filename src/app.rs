@@ -91,8 +91,6 @@ impl ZApp {
         let size_per_color_y = total_size.y;
         let previewer_sizes_sum: f32 = self.previewer_data.points_preview_sizes.iter().sum();
 
-        let mut previewer_color_button_min: Pos2 = Pos2::new(99999999.0, 99999999.0);
-        let mut previewer_color_button_max: Pos2 = Pos2::new(-99999999.0, -99999999.0);
         let points: Vec<Vec2> = bezier.control_points(bezier_draw_size);
         for i in 0..num_colors {
             let mut color_at_point: HsvaGamma =

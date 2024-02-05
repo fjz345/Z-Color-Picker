@@ -17,8 +17,9 @@ mod ui_common;
 TODO:
 
 FEATURES
-* Number of points in curve (double click add, right click remove)
 * Write colored circles on spline points identifiers
+* Number of points in curve (double click add, right click remove)
+* Hue multiple points
 * Flip Gradient button
 * Hex Copy Selected color
 * Hex Copy Gradient color
