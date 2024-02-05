@@ -54,6 +54,28 @@ pub struct MainColorPickerData {
     pub is_curve_locked: bool,
 }
 
+pub fn xyz_to_hsva(x: f32, y: f32, z: f32) -> HsvaGamma {
+    HsvaGamma {
+        h: x,
+        s: y,
+        v: 1.0 - z.clamp(0.0, 1.0),
+        a: 1.0,
+    }
+}
+
+pub fn slice_to_hsva(xyz: &[f32]) -> HsvaGamma {
+    if (xyz.len() < 3) {
+        panic!("dim need to be larger than 3");
+    }
+    let alpha = if xyz.len() >= 4 { xyz[3] } else { 1.0 };
+    HsvaGamma {
+        h: xyz[0],
+        s: xyz[1],
+        v: 1.0 - xyz[2].clamp(0.0, 1.0),
+        a: alpha,
+    }
+}
+
 pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
     let mut bezier_response_size = Vec2::default();
     ui.with_layout(Layout::top_down(egui::Align::Min), |mut ui| {
@@ -182,9 +204,8 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
             ),
         );
 
-        let (bezier_response, dragged_points_response, selected_index) = data
-            .paint_bezier
-            .ui_content_with_painter(&mut ui, &slider_2d_reponse);
+        let (bezier_response, dragged_points_response, selected_index) =
+            data.paint_bezier.ui_content(&mut ui, &slider_2d_reponse);
 
         data.dragging_bezier_index = selected_index;
         match selected_index {
@@ -348,10 +369,7 @@ fn main_color_slider_2d(
 }
 
 pub fn main_color_picker_color_at(hsva: HsvaGamma, pos: &Vec2) -> Color32 {
-    let color = main_color_picker_color_at_function(HsvaGamma::default(), pos[0], pos[1])(
-        pos[0],
-        1.0 - pos[1],
-    );
+    let color = main_color_picker_color_at_function(hsva, pos[0], pos[1])(pos[0], 1.0 - pos[1]);
     color
 }
 

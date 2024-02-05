@@ -2,11 +2,15 @@
 
 use std::ops::Mul;
 
+use ecolor::HsvaGamma;
 use eframe::egui;
+use eframe::egui::color_picker::show_color;
 use egui::epaint::{CubicBezierShape, PathShape, QuadraticBezierShape};
 use egui::*;
 
+use crate::color_picker::{main_color_picker_color_at, xyz_to_hsva};
 use crate::math::{add_array, add_array_array, combination, mul_array};
+use crate::ui_common::contrast_color;
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(default))]
@@ -78,7 +82,7 @@ impl PaintBezier {
         &mut self.hue[index]
     }
 
-    pub fn ui_content_with_painter(
+    pub fn ui_content(
         &mut self,
         ui: &mut Ui,
         response: &egui::Response,
@@ -88,19 +92,24 @@ impl PaintBezier {
             response.rect,
         );
 
+        let visuals = ui.style().interact(&response);
+
         let mut dragged_point_response = None;
 
         let control_point_radius = 8.0;
 
         // Fill Circle
         let mut selected_index = None;
+        let hues = self.hue;
         let mut control_point_shapes_fill: Vec<Shape> = self
             .control_points
             .iter_mut()
             .enumerate()
             .take(self.degree)
             .map(|(i, point)| {
-                let size = Vec2::splat(2.0 * control_point_radius);
+                let size: Vec2 = Vec2::splat(2.0 * control_point_radius);
+
+                let unmodified_point = point.clone();
 
                 let point_in_screen: Pos2 = to_screen.transform_pos(*point);
                 let point_rect = Rect::from_center_size(point_in_screen, size);
@@ -113,17 +122,32 @@ impl PaintBezier {
                     dragged_point_response = Some(point_response.clone());
                 }
 
+                let current_color_size =
+                    vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
+
                 *point = to_screen.from().clamp(*point);
 
                 let point_in_screen = to_screen.transform_pos(*point);
 
-                //let points: Vec<Vec2> = self.control_points(response.);
-                // let mut color_at_point: HsvaGamma =
-                //     main_color_picker_color_at(self.main_color_picker_data.hsva, point_in_screen)
-                //         .into();
-                // color_at_point.h = bezier.get_hue(i);
+                let mut color_to_show = HsvaGamma::default();
+                color_to_show.h = hues[i];
+                color_to_show.s = (unmodified_point.x / response.rect.size().x);
+                color_to_show.v = 1.0 - (unmodified_point.y / response.rect.size().y);
+                color_to_show.a = 1.0;
 
-                Shape::circle_filled(point_in_screen, control_point_radius, Color32::BLUE)
+                let mut color_to_show = xyz_to_hsva(
+                    hues[i],
+                    (unmodified_point.x / response.rect.size().x),
+                    (unmodified_point.y / response.rect.size().y),
+                );
+
+                ui.painter().add(epaint::CircleShape {
+                    center: point_in_screen,
+                    radius: point_rect.width() / 6.0,
+                    fill: color_to_show.into(),
+                    stroke: Stroke::new(visuals.fg_stroke.width, contrast_color(color_to_show)),
+                });
+                Shape::circle_filled(point_in_screen, 1.8 * control_point_radius, color_to_show)
             })
             .collect();
 
@@ -213,18 +237,6 @@ impl PaintBezier {
         }
 
         (response.clone(), dragged_point_response, selected_index)
-    }
-
-    pub fn ui_content(
-        &mut self,
-        ui: &mut Ui,
-    ) -> (egui::Response, Option<egui::Response>, Option<usize>) {
-        let (response, painter) = ui.allocate_painter(
-            Vec2::new(ui.available_width(), ui.available_height()),
-            Sense::hover(),
-        );
-
-        self.ui_content_with_painter(ui, &response)
     }
 }
 
