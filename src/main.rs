@@ -17,14 +17,22 @@ mod ui_common;
 TODO:
 
 FEATURES
+* Number of points in curve (double click add, right click remove)
+* Write colored circles on spline points identifiers
+* Flip Gradient button
 * Hex Copy Selected color
 * Hex Copy Gradient color
+* Beginning/end of curve visuals (identifiers)
 * Different curves
-* Number of points in curve (double click add, right click remove)
 * Preset save/load
-* Beginning/end of curve visuals
 * Preset hue with stepping for points
+* Visualization curves
+- Brightness
+- Saturation
+- Hue
+- Value
 * Different color spaces
+* Import curves to photoshop????
 =============================================================
 */
 fn main() {
