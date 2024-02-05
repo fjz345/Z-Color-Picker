@@ -101,7 +101,7 @@ impl PaintBezier {
         // Fill Circle
         let mut selected_index = None;
         let hues = self.hue;
-        let mut control_point_shapes_fill: Vec<Shape> = self
+        let control_point_shapes_fill: Vec<Shape> = self
             .control_points
             .iter_mut()
             .enumerate()
@@ -122,18 +122,9 @@ impl PaintBezier {
                     dragged_point_response = Some(point_response.clone());
                 }
 
-                let current_color_size =
-                    vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
-
                 *point = to_screen.from().clamp(*point);
 
                 let point_in_screen = to_screen.transform_pos(*point);
-
-                let mut color_to_show = HsvaGamma::default();
-                color_to_show.h = hues[i];
-                color_to_show.s = (unmodified_point.x / response.rect.size().x);
-                color_to_show.v = 1.0 - (unmodified_point.y / response.rect.size().y);
-                color_to_show.a = 1.0;
 
                 let mut color_to_show = xyz_to_hsva(
                     hues[i],
@@ -158,8 +149,6 @@ impl PaintBezier {
             .enumerate()
             .take(self.degree)
             .map(|(i, point)| {
-                let size = Vec2::splat(2.0 * control_point_radius);
-
                 *point = to_screen.from().clamp(*point);
 
                 let point_in_screen = to_screen.transform_pos(*point);
