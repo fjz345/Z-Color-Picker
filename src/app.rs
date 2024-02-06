@@ -30,6 +30,7 @@ pub struct ZApp {
     pub bezier: Bezier<3, 4>,
     main_color_picker_data: MainColorPickerData,
     previewer_data: PreviewerData<4>,
+    color_copy_format: ColorStringCopy,
 }
 
 impl ZApp {
@@ -53,6 +54,7 @@ impl ZApp {
             previewer_data: PreviewerData::default(),
             num_control_points: 4,
             bezier: Bezier::new(),
+            color_copy_format: ColorStringCopy::HEX,
         }
     }
 
@@ -74,8 +76,11 @@ impl ZApp {
             ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui| {
                 ui.spacing_mut().slider_width =
                     color_picker_desired_size.x.min(color_picker_desired_size.y);
-                let (main_response, bezier_draw_size) =
-                    main_color_picker(ui, &mut self.main_color_picker_data);
+                let (main_response, bezier_draw_size) = main_color_picker(
+                    ui,
+                    &mut self.main_color_picker_data,
+                    &mut self.color_copy_format,
+                );
 
                 if main_response.double_clicked() {
                     self.num_control_points = self.num_control_points + 1;
@@ -92,11 +97,6 @@ impl ZApp {
                     _ => {}
                 }
                 self.draw_ui_previewer(ui, bezier_draw_size);
-
-                println!(
-                    "{}",
-                    format_color_as(Color32::DARK_RED, ColorStringCopy::HEX)
-                );
             });
         });
     }

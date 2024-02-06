@@ -7,7 +7,7 @@ use eframe::{
     egui::{
         self,
         color_picker::{show_color, Alpha},
-        InnerResponse, Label, Layout, Painter, Response, Sense, TextStyle, Ui, Widget,
+        ComboBox, InnerResponse, Label, Layout, Painter, Response, Sense, TextStyle, Ui, Widget,
     },
     emath::{lerp, remap_clamp},
     epaint::{self, pos2, vec2, Color32, HsvaGamma, Mesh, Pos2, Rect, Rgba, Shape, Stroke, Vec2},
@@ -18,9 +18,10 @@ use crate::{
     ui_common::{color_slider_2d, contrast_color},
 };
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum ColorStringCopy {
     HEX,
+    HEXNOA,
     SRGBHEX,
     HSV,
     HSVA,
@@ -32,22 +33,45 @@ pub enum ColorStringCopy {
     SRGBA,
 }
 
-pub fn format_color_as(color: Color32, format_type: ColorStringCopy) -> String {
-    match format_type {
-        ColorStringCopy::HEX => {
-            format!(
-                "{:02x}{:02x}{:02x}{:02x}",
-                color.a(),
-                color.r(),
-                color.g(),
-                color.b()
-            )
+pub fn format_color_as(
+    color: Color32,
+    format_type: ColorStringCopy,
+    no_alpha: Option<bool>,
+) -> String {
+    let formatted = match format_type {
+        ColorStringCopy::HEX => match no_alpha {
+            Some(no_alpha) => {
+                if no_alpha {
+                    format!("{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
+                } else {
+                    format!(
+                        "{:02x}{:02x}{:02x}{:02x}",
+                        color.a(),
+                        color.r(),
+                        color.g(),
+                        color.b()
+                    )
+                }
+            }
+            _ => {
+                format!(
+                    "{:02x}{:02x}{:02x}{:02x}",
+                    color.a(),
+                    color.r(),
+                    color.g(),
+                    color.b()
+                )
+            }
+        },
+        ColorStringCopy::HEXNOA => {
+            format!("{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
         }
         _ => {
             println!("Not Implemented {:?}", format_type);
             format!("rgb({}, {}, {})", color.r(), color.g(), color.b())
         }
-    }
+    };
+    formatted.to_uppercase()
 }
 
 const PREVIEWER_DEFAULT_VALUE: f32 = 100.0;
@@ -110,7 +134,11 @@ pub fn slice_to_hsva(xyz: &[f32]) -> HsvaGamma {
     }
 }
 
-pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> (Response, Vec2) {
+pub fn main_color_picker(
+    ui: &mut Ui,
+    data: &mut MainColorPickerData,
+    color_copy_format: &mut ColorStringCopy,
+) -> (Response, Vec2) {
     let mut bezier_response_size = Vec2::default();
     let main_color_picker_response =
         ui.with_layout(Layout::top_down(egui::Align::Min), |mut ui| {
@@ -136,7 +164,7 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> (Respon
             let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
             show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
 
-            color_text_ui(ui, color_to_show, data.alpha);
+            color_text_ui(ui, color_to_show, data.alpha, *color_copy_format);
 
             if data.alpha == Alpha::BlendOrAdditive {
                 // We signal additive blending by storing a negative alpha (a bit ironic).
@@ -278,6 +306,19 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> (Respon
             ui.horizontal(|ui| {
                 ui.checkbox(&mut data.is_curve_locked, "🔒");
                 ui.checkbox(&mut data.is_hue_middle_interpolated, "🎨");
+
+                egui::ComboBox::from_label("Color Copy Format")
+                    .selected_text(format!("{color_copy_format:?}"))
+                    .show_ui(ui, |ui| {
+                        ui.style_mut().wrap = Some(false);
+                        ui.set_min_width(60.0);
+                        ui.selectable_value(color_copy_format, ColorStringCopy::HEX, "Hex");
+                        ui.selectable_value(
+                            color_copy_format,
+                            ColorStringCopy::HEXNOA,
+                            "Hex(no A)",
+                        );
+                    });
             });
 
             if data.is_hue_middle_interpolated {
@@ -433,25 +474,31 @@ fn main_color_slider_2d(
     response
 }
 
-pub fn color_button_copy(ui: &mut Ui, color: impl Into<Color32>, alpha: Alpha) {
-    let [r, g, b, a] = color.into().to_array();
-
-    let button_response = ui.button("📋").on_hover_text("Copy HEX");
+pub fn color_button_copy(
+    ui: &mut Ui,
+    color: impl Into<Color32>,
+    alpha: Alpha,
+    color_copy_format: ColorStringCopy,
+) {
+    let button_response = ui.button("📋").on_hover_text("Copy");
     if button_response.clicked() {
-        if alpha == Alpha::Opaque {
-            ui.output_mut(|o| o.copied_text = format!("{}, {}, {}", r, g, b));
-        } else {
-            ui.output_mut(|o| o.copied_text = format!("{}, {}, {}, {}", r, g, b, a));
-        }
+        ui.output_mut(|o| {
+            o.copied_text = format_color_as(color.into(), color_copy_format, None);
+        });
     }
 }
 
-fn color_text_ui(ui: &mut Ui, color: impl Into<Color32>, alpha: Alpha) {
+fn color_text_ui(
+    ui: &mut Ui,
+    color: impl Into<Color32>,
+    alpha: Alpha,
+    color_copy_format: ColorStringCopy,
+) {
     let color = color.into();
     let [r, g, b, a] = color.to_array();
 
     ui.horizontal(|ui| {
-        color_button_copy(ui, color, alpha);
+        color_button_copy(ui, color, alpha, color_copy_format);
 
         let old_style = Arc::as_ref(ui.style()).clone();
 
