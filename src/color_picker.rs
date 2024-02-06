@@ -18,6 +18,38 @@ use crate::{
     ui_common::{color_slider_2d, contrast_color},
 };
 
+#[derive(Debug)]
+pub enum ColorStringCopy {
+    HEX,
+    SRGBHEX,
+    HSV,
+    HSVA,
+    INT,
+    FLOAT,
+    RGB,
+    SRGB,
+    RGBA,
+    SRGBA,
+}
+
+pub fn format_color_as(color: Color32, format_type: ColorStringCopy) -> String {
+    match format_type {
+        ColorStringCopy::HEX => {
+            format!(
+                "{:02x}{:02x}{:02x}{:02x}",
+                color.a(),
+                color.r(),
+                color.g(),
+                color.b()
+            )
+        }
+        _ => {
+            println!("Not Implemented {:?}", format_type);
+            format!("rgb({}, {}, {})", color.r(), color.g(), color.b())
+        }
+    }
+}
+
 const PREVIEWER_DEFAULT_VALUE: f32 = 100.0;
 pub struct PreviewerData<const D: usize> {
     pub points_preview_sizes: [f32; D],

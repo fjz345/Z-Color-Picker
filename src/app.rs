@@ -9,7 +9,10 @@ use env_logger::fmt::Color;
 
 use crate::{
     bezier::{Bezier, PaintBezier},
-    color_picker::{main_color_picker, xyz_to_hsva, MainColorPickerData, PreviewerData},
+    color_picker::{
+        format_color_as, main_color_picker, xyz_to_hsva, ColorStringCopy, MainColorPickerData,
+        PreviewerData,
+    },
     ui_common::color_button,
 };
 
@@ -89,6 +92,11 @@ impl ZApp {
                     _ => {}
                 }
                 self.draw_ui_previewer(ui, bezier_draw_size);
+
+                println!(
+                    "{}",
+                    format_color_as(Color32::DARK_RED, ColorStringCopy::HEX)
+                );
             });
         });
     }
