@@ -17,7 +17,6 @@ mod ui_common;
 TODO:
 
 FEATURES
-* Number of points in curve (double click add, right click remove)
 * Hue multiple points
 * Hex Copy Selected color
 * Hex Copy Gradient color

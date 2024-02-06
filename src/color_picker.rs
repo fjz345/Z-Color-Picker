@@ -53,6 +53,7 @@ pub struct MainColorPickerData {
     pub bezier_right_clicked: Option<usize>,
     pub last_modifying_bezier_index: usize,
     pub is_curve_locked: bool,
+    pub is_hue_middle_interpolated: bool,
 }
 
 pub fn xyz_to_hsva(x: f32, y: f32, z: f32) -> HsvaGamma {
@@ -201,7 +202,11 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> (Respon
             );
 
             let (bezier_response, dragged_points_response, selected_index, hovering_bezier_option) =
-                data.paint_bezier.ui_content(&mut ui, &slider_2d_reponse);
+                data.paint_bezier.ui_content(
+                    &mut ui,
+                    data.is_hue_middle_interpolated,
+                    &slider_2d_reponse,
+                );
             data.bezier_right_clicked = match hovering_bezier_option {
                 Some(a) => {
                     if a.0.secondary_clicked() {
@@ -238,7 +243,28 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> (Respon
                 _ => {}
             }
 
-            ui.checkbox(&mut data.is_curve_locked, "🔒");
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut data.is_curve_locked, "🔒");
+                ui.checkbox(&mut data.is_hue_middle_interpolated, "🎨");
+            });
+
+            if data.is_hue_middle_interpolated {
+                if (data.paint_bezier.control_points.len() >= 2) {
+                    let points = &mut data.paint_bezier.control_points(bezier_response_size);
+                    let first_index = 0;
+                    let last_index = points.len() - 1;
+                    let first_point = &points[0];
+                    let last_point = &points[last_index];
+                    let first_hue = data.paint_bezier.get_hue(first_index);
+                    let last_hue = data.paint_bezier.get_hue(last_index);
+                    for i in 1..(last_index) {
+                        let t = i as f32 / points.len() as f32;
+                        let hue = lerp((first_hue..=last_hue), t);
+                        data.paint_bezier.set_hue(i, hue);
+                    }
+                }
+            }
+
             slider_2d_reponse
         });
 

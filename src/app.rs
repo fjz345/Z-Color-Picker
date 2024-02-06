@@ -45,6 +45,7 @@ impl ZApp {
                 bezier_right_clicked: None,
                 last_modifying_bezier_index: 0,
                 is_curve_locked: false,
+                is_hue_middle_interpolated: true,
             },
             previewer_data: PreviewerData::default(),
             num_control_points: 4,

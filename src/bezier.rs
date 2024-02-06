@@ -85,6 +85,7 @@ impl PaintBezier {
     pub fn ui_content(
         &mut self,
         ui: &mut Ui,
+        is_middle_interpolated: bool,
         response: &egui::Response,
     ) -> (
         egui::Response,
@@ -92,6 +93,9 @@ impl PaintBezier {
         Option<usize>,
         Option<(egui::Response, usize)>,
     ) {
+        if self.control_points.len() <= 0 {
+            return (response.clone(), None, None, None);
+        }
         let to_screen = emath::RectTransform::from_to(
             Rect::from_min_size(Pos2::ZERO, response.rect.size()),
             response.rect,
@@ -104,6 +108,8 @@ impl PaintBezier {
         let control_point_radius = 8.0;
 
         // Fill Circle
+        let first_index = 0;
+        let last_index = self.control_points.len() - 1;
         let mut selected_index = None;
         let mut hovering_bezier_option = None;
         let hues = self.hue;
@@ -122,10 +128,21 @@ impl PaintBezier {
                 let point_id = response.id.with(i);
                 let point_response = ui.interact(point_rect, point_id, Sense::drag());
 
+                let mut is_inactive: bool = false;
                 if point_response.dragged() {
-                    *point += point_response.drag_delta();
-                    selected_index = Some(i);
-                    dragged_point_response = Some(point_response.clone());
+                    if !is_middle_interpolated {
+                        *point += point_response.drag_delta();
+                        selected_index = Some(i);
+                        dragged_point_response = Some(point_response.clone());
+                    } else {
+                        if (i == first_index || i == last_index) {
+                            *point += point_response.drag_delta();
+                            selected_index = Some(i);
+                            dragged_point_response = Some(point_response.clone());
+                        } else {
+                            is_inactive = true;
+                        }
+                    }
                 }
                 if point_response.hovered() {
                     hovering_bezier_option = Some((point_response, i));
@@ -135,11 +152,21 @@ impl PaintBezier {
 
                 let point_in_screen = to_screen.transform_pos(*point);
 
-                let mut color_to_show = xyz_to_hsva(
+                let point_as_color = xyz_to_hsva(
                     hues[i],
                     (unmodified_point.x / response.rect.size().x),
                     (unmodified_point.y / response.rect.size().y),
                 );
+                let mut color_to_show = if !is_inactive {
+                    point_as_color
+                } else {
+                    HsvaGamma {
+                        h: point_as_color.h,
+                        s: point_as_color.s * 0.75,
+                        v: point_as_color.v * 0.6,
+                        a: point_as_color.a,
+                    }
+                };
 
                 ui.painter().add(epaint::CircleShape {
                     center: point_in_screen,
