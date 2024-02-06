@@ -42,6 +42,7 @@ impl ZApp {
                 alpha: egui::color_picker::Alpha::Opaque,
                 paint_bezier: PaintBezier::default(),
                 dragging_bezier_index: None,
+                bezier_right_clicked: None,
                 last_modifying_bezier_index: 0,
                 is_curve_locked: false,
             },
@@ -69,8 +70,23 @@ impl ZApp {
             ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui| {
                 ui.spacing_mut().slider_width =
                     color_picker_desired_size.x.min(color_picker_desired_size.y);
-                bezier_draw_size = main_color_picker(ui, &mut self.main_color_picker_data);
+                let (main_response, bezier_draw_size) =
+                    main_color_picker(ui, &mut self.main_color_picker_data);
 
+                if main_response.double_clicked() {
+                    self.num_control_points = self.num_control_points + 1;
+                    println!("num_points_inc, new num_points {}", self.num_control_points);
+                }
+                match self.main_color_picker_data.bezier_right_clicked {
+                    Some(a) => {
+                        self.num_control_points = self.num_control_points.max(1) - 1;
+                        println!(
+                            "point_removed {}, new num_points {}",
+                            a, self.num_control_points
+                        );
+                    }
+                    _ => {}
+                }
                 self.draw_ui_previewer(ui, bezier_draw_size);
             });
         });
@@ -82,21 +98,24 @@ impl ZApp {
         previewer_ui.spacing_mut().item_spacing = Vec2::ZERO;
 
         let bezier = &self.main_color_picker_data.paint_bezier;
-        let num_colors: usize = bezier.degree();
         let total_size: Vec2 = previewer_ui.available_size();
 
-        let size_per_color_x = total_size.x / (num_colors as f32);
+        let size_per_color_x = total_size.x / (self.num_control_points as f32);
         let size_per_color_y = total_size.y;
         let previewer_sizes_sum: f32 = self.previewer_data.points_preview_sizes.iter().sum();
 
         let points: Vec<Vec2> = bezier.control_points(bezier_draw_size);
-        for i in 0..num_colors {
+        for i in 0..self.num_control_points {
+            if points.len() <= i {
+                break;
+            }
             let color_data = &points[i];
             let color_data_hue = bezier.get_hue(i);
             let mut color_at_point: HsvaGamma =
                 xyz_to_hsva(color_data_hue, color_data.x, color_data.y).into();
 
-            let size_weight: f32 = self.previewer_data.points_preview_sizes[i] * num_colors as f32
+            let size_weight: f32 = self.previewer_data.points_preview_sizes[i]
+                * self.num_control_points as f32
                 / previewer_sizes_sum;
             let response: Response = color_button(
                 &mut previewer_ui,
@@ -114,8 +133,7 @@ impl ZApp {
                 self.previewer_data.points_preview_sizes[i] =
                     self.previewer_data.points_preview_sizes[i].max(0.0);
 
-                // self.num_control_points
-                let min_percentage_x = 0.5 * (1.0 / num_colors as f32);
+                let min_percentage_x = 0.5 * (1.0 / self.num_control_points as f32);
                 let min_preview_size: f32 = min_percentage_x * previewer_sizes_sum;
 
                 // TODO: loop over all and set min_preview_size

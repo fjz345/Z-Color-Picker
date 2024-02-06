@@ -7,7 +7,7 @@ use eframe::{
     egui::{
         self,
         color_picker::{show_color, Alpha},
-        Label, Layout, Painter, Response, Sense, TextStyle, Ui, Widget,
+        InnerResponse, Label, Layout, Painter, Response, Sense, TextStyle, Ui, Widget,
     },
     emath::{lerp, remap_clamp},
     epaint::{self, pos2, vec2, Color32, HsvaGamma, Mesh, Pos2, Rect, Rgba, Shape, Stroke, Vec2},
@@ -50,6 +50,7 @@ pub struct MainColorPickerData {
     pub alpha: Alpha,
     pub paint_bezier: PaintBezier,
     pub dragging_bezier_index: Option<usize>,
+    pub bezier_right_clicked: Option<usize>,
     pub last_modifying_bezier_index: usize,
     pub is_curve_locked: bool,
 }
@@ -76,157 +77,172 @@ pub fn slice_to_hsva(xyz: &[f32]) -> HsvaGamma {
     }
 }
 
-pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
+pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> (Response, Vec2) {
     let mut bezier_response_size = Vec2::default();
-    ui.with_layout(Layout::top_down(egui::Align::Min), |mut ui| {
-        // // Test copy
-        // for i in 0..4 {
-        //     data.paint_bezier.control_points[i].x = data.bezier.control_points[i][0];
-        //     data.paint_bezier.control_points[i].y = data.bezier.control_points[i][1];
-        //     *data.paint_bezier.get_hue_mut(i) = data.bezier.control_points[i][2];
-        // }
+    let main_color_picker_response =
+        ui.with_layout(Layout::top_down(egui::Align::Min), |mut ui| {
+            // // Test copy
+            // for i in 0..4 {
+            //     data.paint_bezier.control_points[i].x = data.bezier.control_points[i][0];
+            //     data.paint_bezier.control_points[i].y = data.bezier.control_points[i][1];
+            //     *data.paint_bezier.get_hue_mut(i) = data.bezier.control_points[i][2];
+            // }
 
-        let desired_size_slider_2d = Vec2::splat(ui.spacing().slider_width);
+            let desired_size_slider_2d = Vec2::splat(ui.spacing().slider_width);
 
-        let bezier_index = data
-            .dragging_bezier_index
-            .unwrap_or(data.last_modifying_bezier_index);
+            let bezier_index = data
+                .dragging_bezier_index
+                .unwrap_or(data.last_modifying_bezier_index);
 
-        let color_data = &data.paint_bezier.control_points(desired_size_slider_2d)[bezier_index];
-        let color_data_hue = data.paint_bezier.get_hue(bezier_index);
-        let mut color_to_show: HsvaGamma =
-            xyz_to_hsva(color_data_hue, color_data.x, color_data.y).into();
+            let color_data =
+                &data.paint_bezier.control_points(desired_size_slider_2d)[bezier_index];
+            let color_data_hue = data.paint_bezier.get_hue(bezier_index);
+            let mut color_to_show: HsvaGamma =
+                xyz_to_hsva(color_data_hue, color_data.x, color_data.y).into();
 
-        let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
-        show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
+            let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
+            show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
 
-        color_text_ui(ui, color_to_show, data.alpha);
+            color_text_ui(ui, color_to_show, data.alpha);
 
-        if data.alpha == Alpha::BlendOrAdditive {
-            // We signal additive blending by storing a negative alpha (a bit ironic).
-            let a = &mut color_to_show.a;
-            let mut additive = *a < 0.0;
-            ui.horizontal(|ui| {
-                ui.label("Blending:");
-                ui.radio_value(&mut additive, false, "Normal");
-                ui.radio_value(&mut additive, true, "Additive");
+            if data.alpha == Alpha::BlendOrAdditive {
+                // We signal additive blending by storing a negative alpha (a bit ironic).
+                let a = &mut color_to_show.a;
+                let mut additive = *a < 0.0;
+                ui.horizontal(|ui| {
+                    ui.label("Blending:");
+                    ui.radio_value(&mut additive, false, "Normal");
+                    ui.radio_value(&mut additive, true, "Additive");
 
-                if additive {
-                    *a = -a.abs();
-                }
+                    if additive {
+                        *a = -a.abs();
+                    }
 
-                if !additive {
-                    *a = a.abs();
-                }
-            });
-        }
-        let additive = color_to_show.a < 0.0;
-
-        let opaque = HsvaGamma {
-            a: 1.0,
-            ..color_to_show
-        };
-
-        if data.alpha == Alpha::Opaque {
-            color_to_show.a = 1.0;
-        } else {
-            let a = &mut color_to_show.a;
-
-            if data.alpha == Alpha::OnlyBlend {
-                if *a < 0.0 {
-                    *a = 0.5; // was additive, but isn't allowed to be
-                }
-                color_slider_1d(ui, a, |a| HsvaGamma { a, ..opaque }.into()).on_hover_text("Alpha");
-            } else if !additive {
-                color_slider_1d(ui, a, |a| HsvaGamma { a, ..opaque }.into()).on_hover_text("Alpha");
+                    if !additive {
+                        *a = a.abs();
+                    }
+                });
             }
-        }
 
-        let h_mut_ref = data.paint_bezier.get_hue_mut(bezier_index);
-        let prev_hue = *h_mut_ref;
-        let hue_response = color_slider_1d(ui, h_mut_ref, |h| {
-            HsvaGamma {
-                h,
-                s: 1.0,
-                v: 1.0,
+            let additive = color_to_show.a < 0.0;
+
+            let opaque = HsvaGamma {
                 a: 1.0,
+                ..color_to_show
+            };
+
+            if data.alpha == Alpha::Opaque {
+                color_to_show.a = 1.0;
+            } else {
+                let a = &mut color_to_show.a;
+
+                if data.alpha == Alpha::OnlyBlend {
+                    if *a < 0.0 {
+                        *a = 0.5; // was additive, but isn't allowed to be
+                    }
+                    color_slider_1d(ui, a, |a| HsvaGamma { a, ..opaque }.into())
+                        .on_hover_text("Alpha");
+                } else if !additive {
+                    color_slider_1d(ui, a, |a| HsvaGamma { a, ..opaque }.into())
+                        .on_hover_text("Alpha");
+                }
             }
-            .into()
-        })
-        .on_hover_text("Hue");
 
-        if data.is_curve_locked {
-            let mut delta_hue: f32 = 0.0;
+            let h_mut_ref = data.paint_bezier.get_hue_mut(bezier_index);
+            let prev_hue = *h_mut_ref;
+            let hue_response = color_slider_1d(ui, h_mut_ref, |h| {
+                HsvaGamma {
+                    h,
+                    s: 1.0,
+                    v: 1.0,
+                    a: 1.0,
+                }
+                .into()
+            })
+            .on_hover_text("Hue");
 
-            match hue_response.interact_pointer_pos() {
-                Some(Pos) => {
-                    delta_hue = *h_mut_ref - prev_hue;
+            if data.is_curve_locked {
+                let mut delta_hue: f32 = 0.0;
+
+                match hue_response.interact_pointer_pos() {
+                    Some(Pos) => {
+                        delta_hue = *h_mut_ref - prev_hue;
+                    }
+                    _ => {}
+                }
+
+                // Move all other points
+                for i in 0..data.paint_bezier.control_points.len() {
+                    if (i == bezier_index) {
+                        continue;
+                    }
+                    let hue_ref = data.paint_bezier.get_hue_mut(i);
+                    *hue_ref += delta_hue;
+                }
+            }
+
+            let HsvaGamma { h, s, v, a: _ } = &mut color_to_show;
+
+            if false {
+                color_slider_1d(ui, s, |s| HsvaGamma { s, ..opaque }.into())
+                    .on_hover_text("Saturation");
+            }
+
+            if false {
+                color_slider_1d(ui, v, |v| HsvaGamma { v, ..opaque }.into()).on_hover_text("Value");
+            }
+
+            let slider_2d_reponse: Response = main_color_slider_2d(
+                ui,
+                desired_size_slider_2d,
+                s,
+                v,
+                main_color_picker_color_at_function(*h, 1.0),
+            );
+
+            let (bezier_response, dragged_points_response, selected_index, hovering_bezier_option) =
+                data.paint_bezier.ui_content(&mut ui, &slider_2d_reponse);
+            data.bezier_right_clicked = match hovering_bezier_option {
+                Some(a) => {
+                    if a.0.secondary_clicked() {
+                        Some(a.1)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            data.dragging_bezier_index = selected_index;
+            match selected_index {
+                Some(a) => data.last_modifying_bezier_index = a,
+                _ => {}
+            }
+
+            bezier_response_size = bezier_response.rect.size();
+
+            match dragged_points_response {
+                Some(R) => {
+                    if R.dragged() {
+                        if data.is_curve_locked {
+                            // Move all other points
+                            for i in 0..data.paint_bezier.control_points.len() {
+                                if i == bezier_index {
+                                    continue;
+                                }
+                                let point_ref = &mut data.paint_bezier.control_points[i];
+                                *point_ref += R.drag_delta();
+                            }
+                        }
+                    }
                 }
                 _ => {}
             }
 
-            // Move all other points
-            for i in 0..data.paint_bezier.control_points.len() {
-                if (i == bezier_index) {
-                    continue;
-                }
-                let hue_ref = data.paint_bezier.get_hue_mut(i);
-                *hue_ref += delta_hue;
-            }
-        }
+            ui.checkbox(&mut data.is_curve_locked, "🔒");
+            slider_2d_reponse
+        });
 
-        let HsvaGamma { h, s, v, a: _ } = &mut color_to_show;
-
-        if false {
-            color_slider_1d(ui, s, |s| HsvaGamma { s, ..opaque }.into())
-                .on_hover_text("Saturation");
-        }
-
-        if false {
-            color_slider_1d(ui, v, |v| HsvaGamma { v, ..opaque }.into()).on_hover_text("Value");
-        }
-
-        let slider_2d_reponse: Response = main_color_slider_2d(
-            ui,
-            desired_size_slider_2d,
-            s,
-            v,
-            main_color_picker_color_at_function(*h, 1.0),
-        );
-
-        let (bezier_response, dragged_points_response, selected_index) =
-            data.paint_bezier.ui_content(&mut ui, &slider_2d_reponse);
-
-        data.dragging_bezier_index = selected_index;
-        match selected_index {
-            Some(a) => data.last_modifying_bezier_index = a,
-            _ => {}
-        }
-
-        bezier_response_size = bezier_response.rect.size();
-
-        match dragged_points_response {
-            Some(R) => {
-                if R.dragged() {
-                    if data.is_curve_locked {
-                        // Move all other points
-                        for i in 0..data.paint_bezier.control_points.len() {
-                            if i == bezier_index {
-                                continue;
-                            }
-                            let point_ref = &mut data.paint_bezier.control_points[i];
-                            *point_ref += R.drag_delta();
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        ui.checkbox(&mut data.is_curve_locked, "🔒");
-    });
-
-    return bezier_response_size;
+    return (main_color_picker_response.inner, bezier_response_size);
 }
 
 fn main_color_picker_color_at_function(hue: f32, alpha: f32) -> impl Fn(f32, f32) -> Color32 {
@@ -311,7 +327,7 @@ fn main_color_slider_2d(
     y_value: &mut f32,
     color_at: impl Fn(f32, f32) -> Color32,
 ) -> Response {
-    let (rect, response) = ui.allocate_at_least(desiered_size, Sense::focusable_noninteractive());
+    let (rect, response) = ui.allocate_at_least(desiered_size, Sense::click());
 
     if let Some(mpos) = response.interact_pointer_pos() {
         *x_value = remap_clamp(mpos.x, rect.left()..=rect.right(), 0.0..=1.0);

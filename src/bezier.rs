@@ -86,7 +86,12 @@ impl PaintBezier {
         &mut self,
         ui: &mut Ui,
         response: &egui::Response,
-    ) -> (egui::Response, Option<egui::Response>, Option<usize>) {
+    ) -> (
+        egui::Response,
+        Option<egui::Response>,
+        Option<usize>,
+        Option<(egui::Response, usize)>,
+    ) {
         let to_screen = emath::RectTransform::from_to(
             Rect::from_min_size(Pos2::ZERO, response.rect.size()),
             response.rect,
@@ -100,6 +105,7 @@ impl PaintBezier {
 
         // Fill Circle
         let mut selected_index = None;
+        let mut hovering_bezier_option = None;
         let hues = self.hue;
         let control_point_shapes_fill: Vec<Shape> = self
             .control_points
@@ -120,6 +126,9 @@ impl PaintBezier {
                     *point += point_response.drag_delta();
                     selected_index = Some(i);
                     dragged_point_response = Some(point_response.clone());
+                }
+                if point_response.hovered() {
+                    hovering_bezier_option = Some((point_response, i));
                 }
 
                 *point = to_screen.from().clamp(*point);
@@ -213,9 +222,7 @@ impl PaintBezier {
 
         ui.painter()
             .add(PathShape::line(points_in_screen, self.aux_stroke));
-
         ui.painter().extend(control_point_shapes_fill);
-
         ui.painter().extend(control_point_shapes);
 
         match selected_shape {
@@ -225,7 +232,12 @@ impl PaintBezier {
             _ => {}
         }
 
-        (response.clone(), dragged_point_response, selected_index)
+        (
+            response.clone(),
+            dragged_point_response,
+            selected_index,
+            hovering_bezier_option,
+        )
     }
 }
 

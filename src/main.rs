@@ -17,12 +17,11 @@ mod ui_common;
 TODO:
 
 FEATURES
-* Write colored circles on spline points identifiers
 * Number of points in curve (double click add, right click remove)
 * Hue multiple points
-* Flip Gradient button
 * Hex Copy Selected color
 * Hex Copy Gradient color
+* Flip Gradient button
 * Beginning/end of curve visuals (identifiers)
 * Different curves
 * Preset save/load
