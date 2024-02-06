@@ -8,7 +8,7 @@ use eframe::egui::color_picker::show_color;
 use egui::epaint::{CubicBezierShape, PathShape, QuadraticBezierShape};
 use egui::*;
 
-use crate::color_picker::{main_color_picker_color_at, xyz_to_hsva};
+use crate::color_picker::xyz_to_hsva;
 use crate::math::{add_array, add_array_array, combination, mul_array};
 use crate::ui_common::contrast_color;
 

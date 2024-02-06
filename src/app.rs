@@ -9,9 +9,7 @@ use env_logger::fmt::Color;
 
 use crate::{
     bezier::{Bezier, PaintBezier},
-    color_picker::{
-        main_color_picker, main_color_picker_color_at, MainColorPickerData, PreviewerData,
-    },
+    color_picker::{main_color_picker, xyz_to_hsva, MainColorPickerData, PreviewerData},
     ui_common::color_button,
 };
 
@@ -93,9 +91,10 @@ impl ZApp {
 
         let points: Vec<Vec2> = bezier.control_points(bezier_draw_size);
         for i in 0..num_colors {
+            let color_data = &points[i];
+            let color_data_hue = bezier.get_hue(i);
             let mut color_at_point: HsvaGamma =
-                main_color_picker_color_at(self.main_color_picker_data.hsva, &points[i]).into();
-            color_at_point.h = bezier.get_hue(i);
+                xyz_to_hsva(color_data_hue, color_data.x, color_data.y).into();
 
             let size_weight: f32 = self.previewer_data.points_preview_sizes[i] * num_colors as f32
                 / previewer_sizes_sum;

@@ -91,12 +91,11 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
         let bezier_index = data
             .dragging_bezier_index
             .unwrap_or(data.last_modifying_bezier_index);
-        let mut color_to_show: HsvaGamma = main_color_picker_color_at(
-            data.hsva,
-            &data.paint_bezier.control_points(desired_size_slider_2d)[bezier_index],
-        )
-        .into();
-        color_to_show.h = data.paint_bezier.get_hue(bezier_index);
+
+        let color_data = &data.paint_bezier.control_points(desired_size_slider_2d)[bezier_index];
+        let color_data_hue = data.paint_bezier.get_hue(bezier_index);
+        let mut color_to_show: HsvaGamma =
+            xyz_to_hsva(color_data_hue, color_data.x, color_data.y).into();
 
         let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
         show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
@@ -192,16 +191,7 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
             desired_size_slider_2d,
             s,
             v,
-            main_color_picker_color_at_function(
-                HsvaGamma {
-                    h: *h,
-                    s: *s,
-                    v: *v,
-                    a: 1.0,
-                },
-                *s,
-                *v,
-            ),
+            main_color_picker_color_at_function(*h, 1.0),
         );
 
         let (bezier_response, dragged_points_response, selected_index) =
@@ -239,14 +229,15 @@ pub fn main_color_picker(ui: &mut Ui, data: &mut MainColorPickerData) -> Vec2 {
     return bezier_response_size;
 }
 
-fn main_color_picker_color_at_function(
-    hsva: HsvaGamma,
-    x: f32,
-    y: f32,
-) -> impl Fn(f32, f32) -> Color32 {
-    let opaque = HsvaGamma { a: 1.0, ..hsva };
+fn main_color_picker_color_at_function(hue: f32, alpha: f32) -> impl Fn(f32, f32) -> Color32 {
+    let color = HsvaGamma {
+        h: hue,
+        s: 0.0,
+        v: 0.0,
+        a: alpha,
+    };
 
-    return move |s, v| HsvaGamma { s, v, ..opaque }.into();
+    return move |s, v| HsvaGamma { s, v, ..color }.into();
 }
 
 fn color_slider_1d(ui: &mut Ui, value: &mut f32, color_at: impl Fn(f32) -> Color32) -> Response {
@@ -366,11 +357,6 @@ fn main_color_slider_2d(
     }
 
     response
-}
-
-pub fn main_color_picker_color_at(hsva: HsvaGamma, pos: &Vec2) -> Color32 {
-    let color = main_color_picker_color_at_function(hsva, pos[0], pos[1])(pos[0], 1.0 - pos[1]);
-    color
 }
 
 pub fn color_button_copy(ui: &mut Ui, color: impl Into<Color32>, alpha: Alpha) {
