@@ -129,21 +129,24 @@ impl PaintBezier {
                 let point_response = ui.interact(point_rect, point_id, Sense::drag());
 
                 let mut is_inactive: bool = false;
+                let mut is_inactive_click_or_drag: bool = false;
+
+                if is_middle_interpolated {
+                    if !(i == first_index || i == last_index) {
+                        is_inactive = true;
+                    }
+                }
+
                 if point_response.dragged() {
-                    if !is_middle_interpolated {
+                    is_inactive_click_or_drag = is_inactive;
+
+                    if !is_inactive {
                         *point += point_response.drag_delta();
                         selected_index = Some(i);
                         dragged_point_response = Some(point_response.clone());
-                    } else {
-                        if (i == first_index || i == last_index) {
-                            *point += point_response.drag_delta();
-                            selected_index = Some(i);
-                            dragged_point_response = Some(point_response.clone());
-                        } else {
-                            is_inactive = true;
-                        }
                     }
                 }
+
                 if point_response.hovered() {
                     hovering_bezier_option = Some((point_response, i));
                 }
@@ -157,7 +160,7 @@ impl PaintBezier {
                     (unmodified_point.x / response.rect.size().x),
                     (unmodified_point.y / response.rect.size().y),
                 );
-                let mut color_to_show = if !is_inactive {
+                let mut color_to_show = if !is_inactive_click_or_drag {
                     point_as_color
                 } else {
                     HsvaGamma {
@@ -168,12 +171,17 @@ impl PaintBezier {
                     }
                 };
 
-                ui.painter().add(epaint::CircleShape {
-                    center: point_in_screen,
-                    radius: point_rect.width() / 6.0,
-                    fill: color_to_show.into(),
-                    stroke: Stroke::new(visuals.fg_stroke.width, contrast_color(color_to_show)),
-                });
+                if is_inactive {
+                    let mut stroke: Stroke = ui.style().noninteractive().fg_stroke;
+                    stroke.color = Color32::LIGHT_GRAY;
+                    stroke.width *= 6.0;
+                    ui.painter().add(Shape::circle_stroke(
+                        point_in_screen,
+                        1.8 * control_point_radius,
+                        stroke,
+                    ));
+                }
+
                 Shape::circle_filled(point_in_screen, 1.8 * control_point_radius, color_to_show)
             })
             .collect();
