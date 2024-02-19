@@ -3,7 +3,7 @@ use std::default;
 use eframe::{
     egui::{
         self, color_picker::Alpha, Frame, Id, LayerId, Layout, Painter, PointerButton, Response,
-        Sense, Ui, Widget,
+        Sense, Ui, Widget, Window,
     },
     epaint::{Color32, Hsva, HsvaGamma, Pos2, Rect, Rounding, Vec2},
     CreationContext,
@@ -113,6 +113,10 @@ impl ZApp {
                 self.draw_ui_previewer(ui, bezier_draw_size);
             });
         });
+
+        if self.debug_control_points {
+            self.draw_debug_control_points(ctx);
+        }
     }
 
     fn draw_ui_previewer(&mut self, ui: &mut Ui, bezier_draw_size: Vec2) {
@@ -193,6 +197,19 @@ impl ZApp {
         if ui.put(reset_button_rect, reset_button).clicked() {
             self.previewer_data.reset_preview_sizes();
         }
+    }
+
+    fn draw_debug_control_points(&mut self, ctx: &egui::Context) {
+        let window = Window::new("==Debug Control Points==")
+            .resizable(true)
+            .constrain(true)
+            .collapsible(true)
+            .title_bar(true)
+            .enabled(true);
+
+        window.show(ctx, |ui| {
+            ui.label("ASDASDASD");
+        });
     }
 }
 
