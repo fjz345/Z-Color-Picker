@@ -7,7 +7,8 @@ use eframe::{
     egui::{
         self,
         color_picker::{show_color, Alpha},
-        ComboBox, InnerResponse, Label, Layout, Painter, Response, Sense, TextStyle, Ui, Widget,
+        ComboBox, InnerResponse, Label, Layout, Painter, PointerButton, Response, Sense, TextStyle,
+        Ui, Widget,
     },
     emath::{lerp, remap_clamp},
     epaint::{self, pos2, vec2, Color32, HsvaGamma, Mesh, Pos2, Rect, Rgba, Shape, Stroke, Vec2},
@@ -162,7 +163,15 @@ pub fn main_color_picker(
                 xyz_to_hsva(color_data_hue, color_data.x, color_data.y).into();
 
             let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
-            show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
+            let response =
+                show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
+            response_copy_color_on_click(
+                ui,
+                &response,
+                color_to_show,
+                ColorStringCopy::HEXNOA,
+                PointerButton::Middle,
+            );
 
             color_text_ui(ui, color_to_show, data.alpha, *color_copy_format);
 
@@ -480,8 +489,22 @@ pub fn color_button_copy(
     alpha: Alpha,
     color_copy_format: ColorStringCopy,
 ) {
-    let button_response = ui.button("📋").on_hover_text("Copy");
+    let button_response = ui.button("📋").on_hover_text("Copy (middle mouse click)");
     if button_response.clicked() {
+        ui.output_mut(|o| {
+            o.copied_text = format_color_as(color.into(), color_copy_format, None);
+        });
+    }
+}
+
+pub fn response_copy_color_on_click(
+    ui: &mut Ui,
+    response: &Response,
+    color: impl Into<Color32>,
+    color_copy_format: ColorStringCopy,
+    button_click_type: PointerButton,
+) {
+    if response.clicked_by(button_click_type) {
         ui.output_mut(|o| {
             o.copied_text = format_color_as(color.into(), color_copy_format, None);
         });

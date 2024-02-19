@@ -2,7 +2,8 @@ use std::default;
 
 use eframe::{
     egui::{
-        self, color_picker::Alpha, Frame, Id, LayerId, Layout, Painter, Response, Sense, Ui, Widget,
+        self, color_picker::Alpha, Frame, Id, LayerId, Layout, Painter, PointerButton, Response,
+        Sense, Ui, Widget,
     },
     epaint::{Color32, Hsva, HsvaGamma, Pos2, Rect, Rounding, Vec2},
     CreationContext,
@@ -12,8 +13,8 @@ use env_logger::fmt::Color;
 use crate::{
     bezier::{Bezier, PaintBezier},
     color_picker::{
-        color_button_copy, format_color_as, main_color_picker, xyz_to_hsva, ColorStringCopy,
-        MainColorPickerData, PreviewerData,
+        color_button_copy, format_color_as, main_color_picker, response_copy_color_on_click,
+        xyz_to_hsva, ColorStringCopy, MainColorPickerData, PreviewerData,
     },
     ui_common::color_button,
 };
@@ -137,12 +138,15 @@ impl ZApp {
                 color_at_point.into(),
                 true,
             );
-            if response.secondary_clicked() {
-                ui.output_mut(|o| {
-                    o.copied_text =
-                        format_color_as(color_at_point.into(), self.color_copy_format, None);
-                });
-            }
+
+            response_copy_color_on_click(
+                ui,
+                &response,
+                color_at_point,
+                ColorStringCopy::HEXNOA,
+                PointerButton::Middle,
+            );
+
             if response.dragged() {
                 const PREVIEWER_DRAG_SENSITIVITY: f32 = 0.6;
                 self.previewer_data.points_preview_sizes[i] +=

@@ -17,11 +17,11 @@ mod ui_common;
 TODO:
 
 FEATURES
-* Hue multiple points
 * Hex Copy Selected color
 * Hex Copy Gradient color
 * Flip Gradient button
 * Beginning/end of curve visuals (identifiers)
+* Hue multiple points
 * Different curves
 * Preset save/load
 * Preset hue with stepping for points
