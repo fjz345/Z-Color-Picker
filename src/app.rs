@@ -35,6 +35,7 @@ pub struct ZApp {
     main_color_picker_data: MainColorPickerData,
     previewer_data: PreviewerData<4>,
     color_copy_format: ColorStringCopy,
+    debug_control_points: bool,
 }
 
 impl ZApp {
@@ -67,6 +68,7 @@ impl ZApp {
             num_control_points: STARTUP_NUM_CONTROL_POINTS,
             bezier: Bezier::new(),
             color_copy_format: ColorStringCopy::HEX,
+            debug_control_points: false,
         }
     }
 
@@ -211,5 +213,13 @@ impl eframe::App for ZApp {
                 panic!("Not a valid state {:?}", self.state);
             }
         }
+
+        // Debug toggles
+        ctx.input(|reader| {
+            if reader.key_pressed(egui::Key::F12) {
+                self.debug_control_points = !self.debug_control_points;
+                println!("debug_control_points {}", self.debug_control_points);
+            }
+        });
     }
 }
