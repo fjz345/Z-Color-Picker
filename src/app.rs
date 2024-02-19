@@ -9,13 +9,14 @@ use eframe::{
     CreationContext,
 };
 use env_logger::fmt::Color;
+use splines::Key;
 
 use crate::{
-    bezier_homemade::{Bezier, PaintBezier},
     color_picker::{
         color_button_copy, format_color_as, main_color_picker, response_copy_color_on_click,
         xyz_to_hsva, ColorStringCopy, MainColorPickerData, PreviewerData,
     },
+    curves::{Bezier, PaintBezier},
     ui_common::color_button,
 };
 
@@ -40,14 +41,22 @@ impl ZApp {
     pub fn new(cc: &CreationContext<'_>) -> Self {
         let monitor_size = cc.integration_info.window_info.monitor_size.unwrap();
         const RESOLUTION_REF: f32 = 1080.0;
-        let scale_factor = monitor_size.x.min(monitor_size.y) / RESOLUTION_REF;
+        let scale_factor: f32 = monitor_size.x.min(monitor_size.y) / RESOLUTION_REF;
+        const STARTUP_NUM_CONTROL_POINTS: usize = 4;
         Self {
             scale_factor: scale_factor,
             state: AppState::Startup,
             main_color_picker_data: MainColorPickerData {
                 hsva: HsvaGamma::default(),
                 alpha: egui::color_picker::Alpha::Opaque,
-                paint_bezier: PaintBezier::default(),
+                paint_bezier: PaintBezier::from_vec(vec![
+                    Key::new(
+                        0.0,
+                        [0.0; 3],
+                        splines::Interpolation::Linear
+                    );
+                    STARTUP_NUM_CONTROL_POINTS
+                ]),
                 dragging_bezier_index: None,
                 bezier_right_clicked: None,
                 last_modifying_bezier_index: 0,
@@ -55,7 +64,7 @@ impl ZApp {
                 is_hue_middle_interpolated: true,
             },
             previewer_data: PreviewerData::default(),
-            num_control_points: 4,
+            num_control_points: STARTUP_NUM_CONTROL_POINTS,
             bezier: Bezier::new(),
             color_copy_format: ColorStringCopy::HEX,
         }
@@ -116,13 +125,21 @@ impl ZApp {
         let size_per_color_y = total_size.y;
         let previewer_sizes_sum: f32 = self.previewer_data.points_preview_sizes.iter().sum();
 
-        let points: Vec<Vec2> = bezier.control_points(bezier_draw_size);
+        let spline = bezier.control_points();
+        let mut points: Vec<Vec2> = Vec::with_capacity(spline.len());
+        for key in spline {
+            points.push(Vec2::new(
+                key.value[0] / bezier_draw_size.x,
+                key.value[1] / bezier_draw_size.y,
+            ));
+        }
+
         for i in 0..self.num_control_points {
             if points.len() <= i {
                 break;
             }
             let color_data = &points[i];
-            let color_data_hue = bezier.get_hue(i);
+            let color_data_hue = spline.get(i).unwrap().value[2];
             let mut color_at_point: HsvaGamma =
                 xyz_to_hsva(color_data_hue, color_data.x, color_data.y).into();
 

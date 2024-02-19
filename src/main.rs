@@ -5,9 +5,8 @@ use eframe::egui;
 use crate::app::ZApp;
 
 mod app;
-mod bezier_homemade;
 mod color_picker;
-mod curve;
+mod curves;
 mod math;
 mod previewer;
 mod ui_common;

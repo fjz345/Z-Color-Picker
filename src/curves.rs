@@ -2,11 +2,13 @@
 
 use std::ops::Mul;
 
-use ecolor::HsvaGamma;
-use eframe::egui;
+use ecolor::{Color32, HsvaGamma};
 use eframe::egui::color_picker::show_color;
+use eframe::egui::{self, Sense, Ui};
+use eframe::epaint::{Pos2, Rect, Shape, Stroke, Vec2};
+use eframe::{emath, epaint};
 use egui::epaint::{CubicBezierShape, PathShape, QuadraticBezierShape};
-use egui::*;
+use splines::{Key, Spline};
 
 use crate::color_picker::xyz_to_hsva;
 use crate::math::{add_array, add_array_array, combination, mul_array};
@@ -14,14 +16,8 @@ use crate::ui_common::contrast_color;
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(default))]
-pub struct PaintBezier {
-    /// Bézier curve degree, it can be 3, 4.
-    degree: usize,
-
-    /// The control points. The [`Self::degree`] first of them are used.
-    pub control_points: [Pos2; 4],
-
-    hue: [f32; 4],
+pub struct PaintBezier<T, V> {
+    pub spline: Spline<T, V>,
 
     /// Stroke for Bézier curve.
     stroke: Stroke,
@@ -35,53 +31,19 @@ pub struct PaintBezier {
     bounding_box_stroke: Stroke,
 }
 
-impl Default for PaintBezier {
+impl<T: std::default::Default, V: std::default::Default> Default for PaintBezier<T, V> {
     fn default() -> Self {
         Self {
-            degree: 4,
-            control_points: [
-                pos2(50.0, 50.0),
-                pos2(60.0, 250.0),
-                pos2(200.0, 200.0),
-                pos2(250.0, 50.0),
-            ],
+            spline: Spline::default(),
             stroke: Stroke::new(1.0, Color32::from_rgb(25, 200, 100)),
             fill: Color32::from_rgb(50, 100, 150).linear_multiply(0.25),
             aux_stroke: Stroke::new(1.0, Color32::RED.linear_multiply(0.25)),
             bounding_box_stroke: Stroke::new(0.0, Color32::LIGHT_GREEN.linear_multiply(0.25)),
-            hue: [0.0; 4],
         }
     }
 }
 
-impl PaintBezier {
-    pub fn degree(&self) -> usize {
-        self.degree
-    }
-
-    pub fn control_points(&self, bezier_draw_size: Vec2) -> Vec<Vec2> {
-        let points_in_screen: Vec<Vec2> = self
-            .control_points
-            .iter()
-            .take(self.degree)
-            .map(|p| Vec2::new(p.x, p.y) / bezier_draw_size)
-            .collect();
-
-        points_in_screen
-    }
-
-    pub fn set_hue(&mut self, index: usize, val: f32) {
-        self.hue[index] = val;
-    }
-
-    pub fn get_hue(&self, index: usize) -> f32 {
-        self.hue[index]
-    }
-
-    pub fn get_hue_mut(&mut self, index: usize) -> &mut f32 {
-        &mut self.hue[index]
-    }
-
+impl PaintBezier<f32, [f32; 3]> {
     pub fn ui_content(
         &mut self,
         ui: &mut Ui,
@@ -93,7 +55,7 @@ impl PaintBezier {
         Option<usize>,
         Option<(egui::Response, usize)>,
     ) {
-        if self.control_points.len() <= 0 {
+        if self.spline.len() <= 0 {
             return (response.clone(), None, None, None);
         }
         let to_screen = emath::RectTransform::from_to(
@@ -109,21 +71,22 @@ impl PaintBezier {
 
         // Fill Circle
         let first_index = 0;
-        let last_index = self.control_points.len() - 1;
+        let last_index = self.spline.len() - 1;
         let mut selected_index = None;
         let mut hovering_bezier_option = None;
-        let hues = self.hue;
+
         let control_point_shapes_fill: Vec<Shape> = self
-            .control_points
-            .iter_mut()
+            .spline
+            .into_iter()
             .enumerate()
-            .take(self.degree)
-            .map(|(i, point)| {
+            .take(self.spline.len())
+            .map(|(i, key)| {
                 let size: Vec2 = Vec2::splat(2.0 * control_point_radius);
 
+                let mut point = Pos2::new(key.value[0], key.value[1]);
                 let unmodified_point = point.clone();
 
-                let point_in_screen: Pos2 = to_screen.transform_pos(*point);
+                let point_in_screen: Pos2 = to_screen.transform_pos(point);
                 let point_rect = Rect::from_center_size(point_in_screen, size);
                 let point_id = response.id.with(i);
                 let point_response = ui.interact(point_rect, point_id, Sense::drag());
@@ -141,7 +104,7 @@ impl PaintBezier {
                     is_inactive_click_or_drag = is_inactive;
 
                     if !is_inactive {
-                        *point += point_response.drag_delta();
+                        point += point_response.drag_delta();
                         selected_index = Some(i);
                         dragged_point_response = Some(point_response.clone());
                     }
@@ -151,12 +114,12 @@ impl PaintBezier {
                     hovering_bezier_option = Some((point_response, i));
                 }
 
-                *point = to_screen.from().clamp(*point);
+                point = to_screen.from().clamp(point);
 
-                let point_in_screen = to_screen.transform_pos(*point);
+                let point_in_screen = to_screen.transform_pos(point);
 
                 let point_as_color = xyz_to_hsva(
-                    hues[i],
+                    key.value[2],
                     (unmodified_point.x / response.rect.size().x),
                     (unmodified_point.y / response.rect.size().y),
                 );
@@ -188,22 +151,24 @@ impl PaintBezier {
 
         // Circle Stroke
         let control_point_shapes: Vec<Shape> = self
-            .control_points
-            .iter_mut()
+            .spline
+            .into_iter()
             .enumerate()
-            .take(self.degree)
-            .map(|(i, point)| {
-                *point = to_screen.from().clamp(*point);
+            .take(self.spline.len())
+            .map(|(i, key)| {
+                let mut point = Pos2::new(key.value[0], key.value[1]);
+                point = to_screen.from().clamp(point);
 
-                let point_in_screen = to_screen.transform_pos(*point);
+                let point_in_screen = to_screen.transform_pos(point);
                 let stroke: Stroke = ui.style().interact(response).fg_stroke;
 
                 Shape::circle_stroke(point_in_screen, control_point_radius, stroke)
             })
             .collect();
 
-        let selected_shape = if (selected_index.is_some()) {
-            let mut point = self.control_points[selected_index.unwrap()];
+        let selected_shape = if selected_index.is_some() {
+            let key = self.spline.get(selected_index.unwrap()).unwrap();
+            let mut point = Pos2::new(key.value[0], key.value[1]);
 
             point = to_screen.from().clamp(point);
 
@@ -221,13 +186,16 @@ impl PaintBezier {
         };
 
         let points_in_screen: Vec<Pos2> = self
-            .control_points
-            .iter()
-            .take(self.degree)
-            .map(|p| to_screen * *p)
+            .spline
+            .into_iter()
+            .take(self.spline.len())
+            .map(|key| {
+                let point = Pos2::new(key.value[0], key.value[1]);
+                to_screen * point
+            })
             .collect();
 
-        match self.degree {
+        match self.spline.len() {
             3 => {
                 let points = points_in_screen.clone().try_into().unwrap();
                 let shape =
@@ -273,6 +241,30 @@ impl PaintBezier {
             selected_index,
             hovering_bezier_option,
         )
+    }
+}
+
+impl<T, V> PaintBezier<T, V> {
+    pub fn from_vec(keys: Vec<Key<T, V>>) -> Self
+    where
+        T: PartialOrd,
+    {
+        let mut spline = Spline::from_vec(keys);
+        Self {
+            spline: spline,
+            stroke: Stroke::new(1.0, Color32::from_rgb(25, 200, 100)),
+            fill: Color32::from_rgb(50, 100, 150).linear_multiply(0.25),
+            aux_stroke: Stroke::new(1.0, Color32::RED.linear_multiply(0.25)),
+            bounding_box_stroke: Stroke::new(0.0, Color32::LIGHT_GREEN.linear_multiply(0.25)),
+        }
+    }
+
+    pub fn control_points(&self) -> &Spline<T, V> {
+        &self.spline
+    }
+
+    pub fn control_points_mut(&mut self) -> &mut Spline<T, V> {
+        &mut self.spline
     }
 }
 

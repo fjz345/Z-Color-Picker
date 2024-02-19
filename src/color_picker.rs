@@ -15,7 +15,7 @@ use eframe::{
 };
 
 use crate::{
-    bezier_homemade::{self, Bezier, PaintBezier},
+    curves::{self, Bezier, PaintBezier},
     ui_common::{color_slider_2d, contrast_color},
 };
 
@@ -105,7 +105,7 @@ impl<const D: usize> PreviewerData<D> {
 pub struct MainColorPickerData {
     pub hsva: HsvaGamma,
     pub alpha: Alpha,
-    pub paint_bezier: PaintBezier,
+    pub paint_bezier: PaintBezier<f32, [f32; 3]>,
     pub dragging_bezier_index: Option<usize>,
     pub bezier_right_clicked: Option<usize>,
     pub last_modifying_bezier_index: usize,
@@ -156,11 +156,20 @@ pub fn main_color_picker(
                 .dragging_bezier_index
                 .unwrap_or(data.last_modifying_bezier_index);
 
-            let color_data =
-                &data.paint_bezier.control_points(desired_size_slider_2d)[bezier_index];
-            let color_data_hue = data.paint_bezier.get_hue(bezier_index);
-            let mut color_to_show: HsvaGamma =
-                xyz_to_hsva(color_data_hue, color_data.x, color_data.y).into();
+            let color_data = data
+                .paint_bezier
+                .control_points_mut()
+                .get_mut(bezier_index)
+                .unwrap()
+                .value;
+
+            let color_data_hue = color_data[2];
+            let mut color_to_show: HsvaGamma = xyz_to_hsva(
+                color_data_hue,
+                color_data[0] / desired_size_slider_2d.x,
+                color_data[1] / desired_size_slider_2d.y,
+            )
+            .into();
 
             let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
             let response =
@@ -218,7 +227,14 @@ pub fn main_color_picker(
                 }
             }
 
-            let h_mut_ref = data.paint_bezier.get_hue_mut(bezier_index);
+            let h_mut_ref = data
+                .paint_bezier
+                .spline
+                .get_mut(bezier_index)
+                .unwrap()
+                .value
+                .get_mut(2)
+                .unwrap();
             let prev_hue = *h_mut_ref;
             let hue_response = color_slider_1d(ui, h_mut_ref, |h| {
                 HsvaGamma {
@@ -242,11 +258,11 @@ pub fn main_color_picker(
                 }
 
                 // Move all other points
-                for i in 0..data.paint_bezier.control_points.len() {
+                for i in 0..data.paint_bezier.spline.len() {
                     if (i == bezier_index) {
                         continue;
                     }
-                    let hue_ref = data.paint_bezier.get_hue_mut(i);
+                    let hue_ref = &mut data.paint_bezier.spline.get_mut(i).unwrap().value[2];
                     *hue_ref += delta_hue;
                 }
             }
@@ -299,12 +315,22 @@ pub fn main_color_picker(
                     if R.dragged() {
                         if data.is_curve_locked {
                             // Move all other points
-                            for i in 0..data.paint_bezier.control_points.len() {
+                            for i in 0..data.paint_bezier.spline.len() {
                                 if i == bezier_index {
                                     continue;
                                 }
-                                let point_ref = &mut data.paint_bezier.control_points[i];
-                                *point_ref += R.drag_delta();
+
+                                {
+                                    let point_x_ref =
+                                        &mut data.paint_bezier.spline.get_mut(i).unwrap().value[0];
+
+                                    *point_x_ref += R.drag_delta().x;
+                                }
+                                {
+                                    let point_y_ref =
+                                        &mut data.paint_bezier.spline.get_mut(i).unwrap().value[1];
+                                    *point_y_ref += R.drag_delta().y;
+                                }
                             }
                         }
                     }
@@ -331,18 +357,25 @@ pub fn main_color_picker(
             });
 
             if data.is_hue_middle_interpolated {
-                if (data.paint_bezier.control_points.len() >= 2) {
-                    let points = &mut data.paint_bezier.control_points(bezier_response_size);
+                let num_points = data.paint_bezier.spline.len();
+                if (num_points >= 2) {
+                    let points = data.paint_bezier.control_points_mut();
+                    for i in 0..num_points {
+                        let point = points.get_mut(i).unwrap();
+                        point.value[0] /= bezier_response_size.x;
+                        point.value[1] /= bezier_response_size.y;
+                    }
+
                     let first_index = 0;
                     let last_index = points.len() - 1;
-                    let first_point = &points[0];
-                    let last_point = &points[last_index];
-                    let first_hue = data.paint_bezier.get_hue(first_index);
-                    let last_hue = data.paint_bezier.get_hue(last_index);
+                    let first_point = points.get(0).unwrap().value[2];
+                    let last_point = points.get(last_index).unwrap().value[2];
+                    let first_hue = points.get(first_index).unwrap().value[2];
+                    let last_hue = points.get(last_index).unwrap().value[2];
                     for i in 1..(last_index) {
                         let t = i as f32 / points.len() as f32;
                         let hue = lerp((first_hue..=last_hue), t);
-                        data.paint_bezier.set_hue(i, hue);
+                        points.get_mut(i).unwrap().value[2] = hue;
                     }
                 }
             }
