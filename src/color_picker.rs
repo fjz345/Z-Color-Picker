@@ -15,7 +15,7 @@ use eframe::{
 };
 
 use crate::{
-    bezier::{self, Bezier, PaintBezier},
+    bezier_homemade::{self, Bezier, PaintBezier},
     ui_common::{color_slider_2d, contrast_color},
 };
 
@@ -169,7 +169,7 @@ pub fn main_color_picker(
                 ui,
                 &response,
                 color_to_show,
-                ColorStringCopy::HEXNOA,
+                *color_copy_format,
                 PointerButton::Middle,
             );
 

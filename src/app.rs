@@ -11,7 +11,7 @@ use eframe::{
 use env_logger::fmt::Color;
 
 use crate::{
-    bezier::{Bezier, PaintBezier},
+    bezier_homemade::{Bezier, PaintBezier},
     color_picker::{
         color_button_copy, format_color_as, main_color_picker, response_copy_color_on_click,
         xyz_to_hsva, ColorStringCopy, MainColorPickerData, PreviewerData,
@@ -143,7 +143,7 @@ impl ZApp {
                 ui,
                 &response,
                 color_at_point,
-                ColorStringCopy::HEXNOA,
+                self.color_copy_format,
                 PointerButton::Middle,
             );
 
