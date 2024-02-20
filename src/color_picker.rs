@@ -303,7 +303,7 @@ pub fn main_color_picker(
                     .get_mut(bezier_index.unwrap())
                     .unwrap()
                     .value[0];
-                *color_data_x_mut = *s / desired_size_slider_2d.x;
+                *color_data_x_mut = *s * desired_size_slider_2d.y;
 
                 let color_data_y_mut = &mut data
                     .paint_curve
@@ -311,7 +311,7 @@ pub fn main_color_picker(
                     .get_mut(bezier_index.unwrap())
                     .unwrap()
                     .value[1];
-                *color_data_y_mut = *v / desired_size_slider_2d.y;
+                *color_data_y_mut = (1.0 - *v) * desired_size_slider_2d.y;
             }
 
             let (bezier_response, dragged_points_response, selected_index, hovering_bezier_option) =
@@ -330,6 +330,7 @@ pub fn main_color_picker(
                 }
                 _ => None,
             };
+
             data.dragging_bezier_index = selected_index;
             match selected_index {
                 Some(a) => data.last_modifying_bezier_index = Some(a),
@@ -529,16 +530,16 @@ fn main_color_slider_2d(
 
         ui.painter().rect_stroke(rect, 0.0, visuals.bg_stroke); // outline
 
-        // Show where the slider is at:
-        let x = lerp(rect.left()..=rect.right(), *x_value);
-        let y = lerp(rect.bottom()..=rect.top(), *y_value);
-        let picked_color = color_at(*x_value, *y_value);
-        ui.painter().add(epaint::CircleShape {
-            center: pos2(x, y),
-            radius: rect.width() / 12.0,
-            fill: picked_color,
-            stroke: Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
-        });
+        // // Show where the slider is at:
+        // let x = lerp(rect.left()..=rect.right(), *x_value);
+        // let y = lerp(rect.bottom()..=rect.top(), *y_value);
+        // let picked_color = color_at(*x_value, *y_value);
+        // ui.painter().add(epaint::CircleShape {
+        //     center: pos2(x, y),
+        //     radius: rect.width() / 12.0,
+        //     fill: picked_color,
+        //     stroke: Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
+        // });
     }
 
     response

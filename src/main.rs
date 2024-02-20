@@ -16,19 +16,21 @@ mod ui_common;
 TODO:
 
 FEATURES
-* Hex Copy Selected color
+* Gradient Curve
 * Hex Copy Gradient color
-* Flip Gradient button
+* Flip Control Points button
 * Beginning/end of curve visuals (identifiers)
-* Hue multiple points
-* Different curves
+* Hue multiple control points
+* Different curve types
+    - Bezier
+    - Polynomial
 * Preset save/load
 * Preset hue with stepping for points
 * Visualization curves
-- Brightness
-- Saturation
-- Hue
-- Value
+    - Brightness
+    - Saturation
+    - Hue
+    - Value
 * Different color spaces
 * Import curves to photoshop????
 =============================================================
