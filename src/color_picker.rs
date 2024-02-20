@@ -138,11 +138,12 @@ pub fn main_color_picker(
     color_copy_format: &mut ColorStringCopy,
 ) -> (Response, Vec2) {
     let num_spline_points = data.paint_curve.spline.len();
-    match data.last_modifying_bezier_index {
-        Some(a) => {
+    if let Some(a) = data.last_modifying_bezier_index {
+        if num_spline_points == 0 {
             data.last_modifying_bezier_index = None;
+        } else if a >= num_spline_points {
+            data.last_modifying_bezier_index = Some(num_spline_points - 1);
         }
-        _ => {}
     }
 
     let mut bezier_response_size = Vec2::default();
@@ -240,8 +241,17 @@ pub fn main_color_picker(
                 })
                 .on_hover_text("Hue");
 
-                if data.is_curve_locked {
-                    if bezier_index.is_some() {
+                if bezier_index.is_some() {
+                    let color_data_hue_mut = &mut data
+                        .paint_curve
+                        .control_points_mut()
+                        .get_mut(bezier_index.unwrap())
+                        .unwrap()
+                        .value[2];
+
+                    *color_data_hue_mut = hue_mut;
+
+                    if data.is_curve_locked {
                         delta_hue = if let Some(_) = hue_response.interact_pointer_pos() {
                             let hue_diff = hue_mut - prev_hue;
                             Some(hue_diff)
@@ -250,13 +260,6 @@ pub fn main_color_picker(
                         };
 
                         if delta_hue.is_some() {
-                            let color_data_hue_mut = &mut data
-                                .paint_curve
-                                .control_points_mut()
-                                .get_mut(bezier_index.unwrap())
-                                .unwrap()
-                                .value[2];
-
                             *color_data_hue_mut += delta_hue.unwrap();
                         }
                     }
