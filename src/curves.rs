@@ -16,7 +16,7 @@ use crate::ui_common::contrast_color;
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(default))]
-pub struct PaintBezier<T, V> {
+pub struct PaintCurve<T, V> {
     pub spline: Spline<T, V>,
 
     /// Stroke for Bézier curve.
@@ -31,7 +31,7 @@ pub struct PaintBezier<T, V> {
     bounding_box_stroke: Stroke,
 }
 
-impl<T: std::default::Default, V: std::default::Default> Default for PaintBezier<T, V> {
+impl<T: std::default::Default, V: std::default::Default> Default for PaintCurve<T, V> {
     fn default() -> Self {
         Self {
             spline: Spline::default(),
@@ -43,7 +43,7 @@ impl<T: std::default::Default, V: std::default::Default> Default for PaintBezier
     }
 }
 
-impl PaintBezier<f32, [f32; 3]> {
+impl PaintCurve<f32, [f32; 3]> {
     pub fn ui_content(
         &mut self,
         ui: &mut Ui,
@@ -195,33 +195,33 @@ impl PaintBezier<f32, [f32; 3]> {
             })
             .collect();
 
-        match self.spline.len() {
-            3 => {
-                let points = points_in_screen.clone().try_into().unwrap();
-                let shape =
-                    QuadraticBezierShape::from_points_stroke(points, true, self.fill, self.stroke);
-                ui.painter().add(epaint::RectShape::stroke(
-                    shape.visual_bounding_rect(),
-                    0.0,
-                    self.bounding_box_stroke,
-                ));
-                ui.painter().add(shape);
-            }
-            4 => {
-                let points = points_in_screen.clone().try_into().unwrap();
-                let shape =
-                    CubicBezierShape::from_points_stroke(points, true, self.fill, self.stroke);
-                ui.painter().add(epaint::RectShape::stroke(
-                    shape.visual_bounding_rect(),
-                    0.0,
-                    self.bounding_box_stroke,
-                ));
-                ui.painter().add(shape);
-            }
-            _ => {
-                unreachable!();
-            }
-        };
+        // match self.spline.len() {
+        //     3 => {
+        //         let points = points_in_screen.clone().try_into().unwrap();
+        //         let shape =
+        //             QuadraticBezierShape::from_points_stroke(points, true, self.fill, self.stroke);
+        //         ui.painter().add(epaint::RectShape::stroke(
+        //             shape.visual_bounding_rect(),
+        //             0.0,
+        //             self.bounding_box_stroke,
+        //         ));
+        //         ui.painter().add(shape);
+        //     }
+        //     4 => {
+        //         let points = points_in_screen.clone().try_into().unwrap();
+        //         let shape =
+        //             CubicBezierShape::from_points_stroke(points, true, self.fill, self.stroke);
+        //         ui.painter().add(epaint::RectShape::stroke(
+        //             shape.visual_bounding_rect(),
+        //             0.0,
+        //             self.bounding_box_stroke,
+        //         ));
+        //         ui.painter().add(shape);
+        //     }
+        //     _ => {
+        //         unreachable!();
+        //     }
+        // };
 
         ui.painter()
             .add(PathShape::line(points_in_screen, self.aux_stroke));
@@ -244,7 +244,7 @@ impl PaintBezier<f32, [f32; 3]> {
     }
 }
 
-impl<T, V> PaintBezier<T, V> {
+impl<T, V> PaintCurve<T, V> {
     pub fn from_vec(keys: Vec<Key<T, V>>) -> Self
     where
         T: PartialOrd,

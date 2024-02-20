@@ -16,7 +16,7 @@ use crate::{
         color_button_copy, format_color_as, main_color_picker, response_copy_color_on_click,
         xyz_to_hsva, ColorStringCopy, MainColorPickerData, PreviewerData,
     },
-    curves::{Bezier, PaintBezier},
+    curves::{Bezier, PaintCurve},
     ui_common::color_button,
 };
 
@@ -30,10 +30,8 @@ enum AppState {
 pub struct ZApp {
     scale_factor: f32,
     state: AppState,
-    pub num_control_points: usize,
-    pub bezier: Bezier<3, 4>,
     main_color_picker_data: MainColorPickerData,
-    previewer_data: PreviewerData<4>,
+    previewer_data: PreviewerData,
     color_copy_format: ColorStringCopy,
     debug_control_points: bool,
 }
@@ -50,7 +48,7 @@ impl ZApp {
             main_color_picker_data: MainColorPickerData {
                 hsva: HsvaGamma::default(),
                 alpha: egui::color_picker::Alpha::Opaque,
-                paint_bezier: PaintBezier::from_vec(vec![
+                paint_curve: PaintCurve::from_vec(vec![
                     Key::new(
                         0.0,
                         [0.0; 3],
@@ -60,13 +58,11 @@ impl ZApp {
                 ]),
                 dragging_bezier_index: None,
                 bezier_right_clicked: None,
-                last_modifying_bezier_index: 0,
+                last_modifying_bezier_index: None,
                 is_curve_locked: false,
                 is_hue_middle_interpolated: true,
             },
-            previewer_data: PreviewerData::default(),
-            num_control_points: STARTUP_NUM_CONTROL_POINTS,
-            bezier: Bezier::new(),
+            previewer_data: PreviewerData::new(STARTUP_NUM_CONTROL_POINTS),
             color_copy_format: ColorStringCopy::HEX,
             debug_control_points: false,
         }
@@ -97,16 +93,19 @@ impl ZApp {
                 );
 
                 if main_response.double_clicked() {
-                    self.num_control_points = self.num_control_points + 1;
-                    println!("num_points_inc, new num_points {}", self.num_control_points);
+                    let spline = &mut self.main_color_picker_data.paint_curve.spline;
+                    spline.add(Key::new(0.0, [0.0; 3], splines::Interpolation::Linear));
+                    self.previewer_data.points_preview_sizes.push(0.0);
+                    self.previewer_data.reset_preview_sizes();
+                    println!("num_points_inc, new num_points {}", spline.len());
                 }
                 match self.main_color_picker_data.bezier_right_clicked {
                     Some(a) => {
-                        self.num_control_points = self.num_control_points.max(1) - 1;
-                        println!(
-                            "point_removed {}, new num_points {}",
-                            a, self.num_control_points
-                        );
+                        let spline = &mut self.main_color_picker_data.paint_curve.spline;
+                        spline.remove(a);
+                        self.previewer_data.points_preview_sizes.remove(a);
+                        self.previewer_data.reset_preview_sizes();
+                        println!("point_removed {}, new num_points {}", a, spline.len());
                     }
                     _ => {}
                 }
@@ -124,15 +123,16 @@ impl ZApp {
         let mut previewer_ui = ui.child_ui(previewer_rect, Layout::left_to_right(egui::Align::Min));
         previewer_ui.spacing_mut().item_spacing = Vec2::ZERO;
 
-        let bezier = &self.main_color_picker_data.paint_bezier;
+        let bezier = &self.main_color_picker_data.paint_curve;
         let total_size: Vec2 = previewer_ui.available_size();
 
-        let size_per_color_x = total_size.x / (self.num_control_points as f32);
+        let spline = bezier.control_points();
+        let num_spline_points = spline.len();
+        let size_per_color_x = total_size.x / (num_spline_points as f32);
         let size_per_color_y = total_size.y;
         let previewer_sizes_sum: f32 = self.previewer_data.points_preview_sizes.iter().sum();
 
-        let spline = bezier.control_points();
-        let mut points: Vec<Vec2> = Vec::with_capacity(spline.len());
+        let mut points: Vec<Vec2> = Vec::with_capacity(num_spline_points);
         for key in spline {
             points.push(Vec2::new(
                 key.value[0] / bezier_draw_size.x,
@@ -140,7 +140,7 @@ impl ZApp {
             ));
         }
 
-        for i in 0..self.num_control_points {
+        for i in 0..num_spline_points {
             if points.len() <= i {
                 break;
             }
@@ -150,7 +150,7 @@ impl ZApp {
                 xyz_to_hsva(color_data_hue, color_data.x, color_data.y).into();
 
             let size_weight: f32 = self.previewer_data.points_preview_sizes[i]
-                * self.num_control_points as f32
+                * num_spline_points as f32
                 / previewer_sizes_sum;
             let response: Response = color_button(
                 &mut previewer_ui,
@@ -177,7 +177,7 @@ impl ZApp {
                 self.previewer_data.points_preview_sizes[i] =
                     self.previewer_data.points_preview_sizes[i].max(0.0);
 
-                let min_percentage_x = 0.5 * (1.0 / self.num_control_points as f32);
+                let min_percentage_x = 0.5 * (1.0 / num_spline_points as f32);
                 let min_preview_size: f32 = min_percentage_x * previewer_sizes_sum;
 
                 // TODO: loop over all and set min_preview_size
@@ -200,7 +200,7 @@ impl ZApp {
     }
 
     fn draw_debug_control_points(&mut self, ctx: &egui::Context) {
-        let window = Window::new("==Debug Control Points==")
+        let window = Window::new("=== Debug Control Points ===")
             .resizable(true)
             .constrain(true)
             .collapsible(true)
@@ -208,7 +208,15 @@ impl ZApp {
             .enabled(true);
 
         window.show(ctx, |ui| {
-            ui.label("ASDASDASD");
+            let spline = &self.main_color_picker_data.paint_curve.spline;
+            for i in 0..spline.len() {
+                let point = spline.get(i).unwrap();
+                ui.label(format!("[{i}]"));
+                ui.label(format!("- x: {}", point.value[0]));
+                ui.label(format!("- y: {}", point.value[1]));
+                ui.label(format!("- h: {}", point.value[2]));
+                ui.label(format!(""));
+            }
         });
     }
 }
