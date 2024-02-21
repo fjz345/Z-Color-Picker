@@ -110,6 +110,7 @@ pub struct MainColorPickerData {
     pub is_curve_locked: bool,
     pub is_hue_middle_interpolated: bool,
     pub is_insert_right: bool,
+    pub is_window_lock: bool,
 }
 
 pub fn main_color_picker(
@@ -372,6 +373,15 @@ pub fn main_color_picker(
                         let hue = lerp((first_hue..=last_hue), t);
                         points.get_mut(i).unwrap().value[2] = hue;
                     }
+                }
+            }
+
+            if data.is_window_lock {
+                for i in 0..data.paint_curve.spline.len() {
+                    let key = data.paint_curve.spline.get_mut(i).unwrap();
+                    key.value[0] = key.value[0].clamp(0.0, 1.0);
+                    key.value[1] = key.value[1].clamp(0.0, 1.0);
+                    key.value[2] = key.value[2].clamp(0.0, 1.0);
                 }
             }
 

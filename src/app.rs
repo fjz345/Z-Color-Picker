@@ -58,6 +58,7 @@ impl ZApp {
                 is_curve_locked: false,
                 is_hue_middle_interpolated: false,
                 is_insert_right: true,
+                is_window_lock: false,
             },
             previewer_data: PreviewerData::new(0),
             color_copy_format: ColorStringCopy::HEX,
@@ -135,7 +136,10 @@ impl ZApp {
         let mut closest_distance_to_control_point: Option<f32> = None;
         let spline = &self.main_color_picker_data.paint_curve.spline;
         for key in spline {
-            let pos_2d = Pos2::new(key.value[0], 1.0 - key.value[1]);
+            let pos_2d = Pos2::new(
+                key.value[0].clamp(0.0, 1.0),
+                1.0 - key.value[1].clamp(0.0, 1.0),
+            );
             let distance_2d = pos_2d.distance(xy);
 
             closest_distance_to_control_point = match closest_distance_to_control_point {
@@ -198,6 +202,8 @@ impl ZApp {
                             "Insert new points in {} direction",
                             insert_mode_unicode
                         ));
+                        ui.checkbox(&mut self.main_color_picker_data.is_window_lock, "🆘")
+                            .on_hover_text("Clamps the control points so they are contained");
 
                         egui::ComboBox::from_label("Color Copy Format")
                             .selected_text(format!("{:?}", self.color_copy_format))
@@ -242,7 +248,10 @@ impl ZApp {
                             };
                             if should_spawn_control_point {
                                 let color_hue = 0.5;
-                                let color_xy = Pos2::new(normalized_xy.x, 1.0 - normalized_xy.y);
+                                let color_xy = Pos2::new(
+                                    normalized_xy.x.clamp(0.0, 1.0),
+                                    1.0 - normalized_xy.y.clamp(0.0, 1.0),
+                                );
                                 let color = [color_xy[0], color_xy[1], color_hue];
                                 self.spawn_control_point(color);
                             }

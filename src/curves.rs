@@ -85,8 +85,10 @@ impl PaintCurve<f32, [f32; 3]> {
             .take(num_control_points)
             .map(|(i, key)| {
                 let control_point = &key.value;
-                let mut point_xy: Pos2 =
-                    Pos2::new(control_point[0], 1.0 - control_point[1].clamp(0.0, 1.0));
+                let mut point_xy: Pos2 = Pos2::new(
+                    control_point[0].clamp(0.0, 1.0),
+                    1.0 - control_point[1].clamp(0.0, 1.0),
+                );
 
                 let point_in_screen: Pos2 = to_screen.transform_pos(point_xy);
                 let control_point_ui_rect =
