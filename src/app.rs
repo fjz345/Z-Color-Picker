@@ -5,6 +5,7 @@ use eframe::{
         self, color_picker::Alpha, Frame, Id, LayerId, Layout, Painter, PointerButton, Response,
         Sense, Ui, Widget, Window,
     },
+    emath,
     epaint::{Color32, Hsva, HsvaGamma, Pos2, Rect, Rounding, Vec2},
     CreationContext,
 };
@@ -14,7 +15,7 @@ use splines::Key;
 use crate::{
     color_picker::{
         color_button_copy, format_color_as, main_color_picker, response_copy_color_on_click,
-        xyz_to_hsva, ColorStringCopy, MainColorPickerData, PreviewerData,
+        ColorStringCopy, MainColorPickerData, PreviewerData,
     },
     curves::{Bezier, PaintCurve},
     ui_common::color_button,
@@ -34,6 +35,7 @@ pub struct ZApp {
     previewer_data: PreviewerData,
     color_copy_format: ColorStringCopy,
     debug_control_points: bool,
+    double_click_event: Option<Pos2>,
 }
 
 impl ZApp {
@@ -57,14 +59,15 @@ impl ZApp {
                     STARTUP_NUM_CONTROL_POINTS
                 ]),
                 dragging_bezier_index: None,
-                bezier_right_clicked: None,
-                last_modifying_bezier_index: None,
+                control_point_right_clicked: None,
+                last_modifying_point_index: None,
                 is_curve_locked: false,
-                is_hue_middle_interpolated: true,
+                is_hue_middle_interpolated: false,
             },
             previewer_data: PreviewerData::new(STARTUP_NUM_CONTROL_POINTS),
             color_copy_format: ColorStringCopy::HEX,
             debug_control_points: false,
+            double_click_event: None,
         }
     }
 
@@ -74,6 +77,48 @@ impl ZApp {
         ctx.set_pixels_per_point(self.scale_factor);
     }
 
+    fn spawn_control_point(&mut self, color: [f32; 3]) {
+        let spline = &mut self.main_color_picker_data.paint_curve.spline;
+
+        spline.add(Key::new(0.0, color, splines::Interpolation::Linear));
+        self.previewer_data.points_preview_sizes.push(0.0);
+        self.previewer_data.reset_preview_sizes();
+        println!(
+            "ControlPoint#{} spawned @{},{},{}",
+            spline.len(),
+            color[0],
+            color[1],
+            color[2],
+        );
+        self.main_color_picker_data.last_modifying_point_index = Some(spline.len() - 1);
+    }
+
+    fn get_control_points_sdf_2d(&self, xy: Pos2) -> Option<f32> {
+        let mut closest_distance_to_control_point: Option<f32> = None;
+        let spline = &self.main_color_picker_data.paint_curve.spline;
+        for key in spline {
+            let pos_2d = Pos2::new(key.value[0], 1.0 - key.value[1]);
+            let distance_2d = pos_2d.distance(xy);
+
+            closest_distance_to_control_point = match closest_distance_to_control_point {
+                Some(closest_dist_2d) => Some(closest_dist_2d.min(distance_2d)),
+                None => Some(distance_2d),
+            };
+        }
+
+        match closest_distance_to_control_point {
+            Some(closest_dist_2d) => {
+                let dist = closest_dist_2d;
+                println!("Closest Dist: {}", dist);
+                Some(dist)
+            }
+            None => {
+                println!("Did not find closest dist");
+                None
+            }
+        }
+    }
+
     fn draw_ui_menu(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let color_picker_desired_size = Vec2 {
@@ -81,25 +126,44 @@ impl ZApp {
                 y: ui.available_height().min(ui.available_width()),
             };
 
-            let mut bezier_draw_size = Vec2::default();
-
             ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui| {
                 ui.spacing_mut().slider_width =
                     color_picker_desired_size.x.min(color_picker_desired_size.y);
-                let (main_response, bezier_draw_size) = main_color_picker(
+                let main_response = main_color_picker(
                     ui,
                     &mut self.main_color_picker_data,
                     &mut self.color_copy_format,
                 );
 
-                if main_response.double_clicked() {
-                    let spline = &mut self.main_color_picker_data.paint_curve.spline;
-                    spline.add(Key::new(0.0, [0.0; 3], splines::Interpolation::Linear));
-                    self.previewer_data.points_preview_sizes.push(0.0);
-                    self.previewer_data.reset_preview_sizes();
-                    println!("num_points_inc, new num_points {}", spline.len());
+                match self.double_click_event {
+                    Some(pos) => {
+                        if main_response.rect.contains(pos) {
+                            let main_response_xy = pos - main_response.rect.min;
+                            let normalized_xy = main_response_xy / main_response.rect.size();
+
+                            let closest_distance_to_control_point =
+                                self.get_control_points_sdf_2d(normalized_xy.to_pos2());
+                            const MIN_DIST: f32 = 0.1;
+
+                            let should_spawn_control_point = match closest_distance_to_control_point
+                            {
+                                Some(dist) => {
+                                    let dist = closest_distance_to_control_point.unwrap();
+                                    dist > MIN_DIST
+                                }
+                                _ => true,
+                            };
+                            if should_spawn_control_point {
+                                let color_hue = 0.5;
+                                let color_xy = Pos2::new(normalized_xy.x, 1.0 - normalized_xy.y);
+                                let color = [color_xy[0], color_xy[1], color_hue];
+                                self.spawn_control_point(color);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                match self.main_color_picker_data.bezier_right_clicked {
+                match self.main_color_picker_data.control_point_right_clicked {
                     Some(a) => {
                         let spline = &mut self.main_color_picker_data.paint_curve.spline;
                         spline.remove(a);
@@ -109,7 +173,7 @@ impl ZApp {
                     }
                     _ => {}
                 }
-                self.draw_ui_previewer(ui, bezier_draw_size);
+                self.draw_ui_previewer(ui);
             });
         });
 
@@ -118,7 +182,7 @@ impl ZApp {
         }
     }
 
-    fn draw_ui_previewer(&mut self, ui: &mut Ui, bezier_draw_size: Vec2) {
+    fn draw_ui_previewer(&mut self, ui: &mut Ui) {
         let previewer_rect = ui.available_rect_before_wrap();
         let mut previewer_ui = ui.child_ui(previewer_rect, Layout::left_to_right(egui::Align::Min));
         previewer_ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -126,7 +190,7 @@ impl ZApp {
         let bezier = &self.main_color_picker_data.paint_curve;
         let total_size: Vec2 = previewer_ui.available_size();
 
-        let spline = bezier.control_points();
+        let spline = &bezier.spline;
         let num_spline_points = spline.len();
         let size_per_color_x = total_size.x / (num_spline_points as f32);
         let size_per_color_y = total_size.y;
@@ -134,10 +198,7 @@ impl ZApp {
 
         let mut points: Vec<Vec2> = Vec::with_capacity(num_spline_points);
         for key in spline {
-            points.push(Vec2::new(
-                key.value[0] / bezier_draw_size.x,
-                key.value[1] / bezier_draw_size.y,
-            ));
+            points.push(Vec2::new(key.value[0], key.value[1]));
         }
 
         for i in 0..num_spline_points {
@@ -146,8 +207,12 @@ impl ZApp {
             }
             let color_data = &points[i];
             let color_data_hue = spline.get(i).unwrap().value[2];
-            let mut color_at_point: HsvaGamma =
-                xyz_to_hsva(color_data_hue, color_data.x, color_data.y).into();
+            let mut color_at_point: HsvaGamma = HsvaGamma {
+                h: color_data_hue,
+                s: color_data.x,
+                v: color_data.y,
+                a: 1.0,
+            };
 
             let size_weight: f32 = self.previewer_data.points_preview_sizes[i]
                 * num_spline_points as f32
@@ -238,6 +303,19 @@ impl eframe::App for ZApp {
                 panic!("Not a valid state {:?}", self.state);
             }
         }
+
+        // Register add control point
+        self.double_click_event = None;
+        ctx.input(|reader| {
+            if reader.pointer.button_double_clicked(PointerButton::Primary) {
+                self.double_click_event = Some(reader.pointer.interact_pos().unwrap());
+                println!(
+                    "add control_point @({},{})",
+                    self.double_click_event.unwrap().x,
+                    self.double_click_event.unwrap().y
+                );
+            }
+        });
 
         // Debug toggles
         ctx.input(|reader| {

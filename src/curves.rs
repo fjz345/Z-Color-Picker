@@ -4,13 +4,12 @@ use std::ops::Mul;
 
 use ecolor::{Color32, HsvaGamma};
 use eframe::egui::color_picker::show_color;
-use eframe::egui::{self, Sense, Ui};
+use eframe::egui::{self, Id, Sense, Ui};
 use eframe::epaint::{Pos2, Rect, Shape, Stroke, Vec2};
 use eframe::{emath, epaint};
 use egui::epaint::{CubicBezierShape, PathShape, QuadraticBezierShape};
 use splines::{Key, Spline};
 
-use crate::color_picker::xyz_to_hsva;
 use crate::math::{add_array, add_array_array, combination, mul_array};
 use crate::ui_common::contrast_color;
 
@@ -50,20 +49,23 @@ impl PaintCurve<f32, [f32; 3]> {
         is_middle_interpolated: bool,
         response: &egui::Response,
     ) -> (
-        egui::Response,
+        /*
+            dragged_point_response,
+            selected_index,
+            hovering_point_option,
+        */
         Option<egui::Response>,
         Option<usize>,
         Option<(egui::Response, usize)>,
     ) {
-        if self.spline.len() <= 0 {
-            return (response.clone(), None, None, None);
+        let num_control_points = self.spline.len();
+        if num_control_points <= 0 {
+            return (None, None, None);
         }
         let to_screen = emath::RectTransform::from_to(
-            Rect::from_min_size(Pos2::ZERO, response.rect.size()),
+            Rect::from_min_size(Pos2::ZERO, Vec2::new(1.0, 1.0)),
             response.rect,
         );
-
-        let visuals = ui.style().interact(&response);
 
         let mut dragged_point_response = None;
 
@@ -71,26 +73,28 @@ impl PaintCurve<f32, [f32; 3]> {
 
         // Fill Circle
         let first_index = 0;
-        let last_index = self.spline.len() - 1;
+        let last_index = num_control_points - 1;
         let mut selected_index = None;
-        let mut hovering_bezier_option = None;
+        let mut hovering_control_point = None;
 
+        let control_point_draw_size: Vec2 = Vec2::splat(2.0 * control_point_radius);
         let control_point_shapes_fill: Vec<Shape> = self
             .spline
             .into_iter()
             .enumerate()
-            .take(self.spline.len())
+            .take(num_control_points)
             .map(|(i, key)| {
-                let size: Vec2 = Vec2::splat(2.0 * control_point_radius);
+                let control_point = &key.value;
+                let mut point_xy: Pos2 =
+                    Pos2::new(control_point[0], 1.0 - control_point[1].clamp(0.0, 1.0));
 
-                let mut point = Pos2::new(key.value[0], key.value[1]);
-                let unmodified_point = point.clone();
+                let point_in_screen: Pos2 = to_screen.transform_pos(point_xy);
+                let control_point_ui_rect =
+                    Rect::from_center_size(point_in_screen, control_point_draw_size);
+                let control_point_response =
+                    ui.interact(control_point_ui_rect, response.id.with(i), Sense::drag());
 
-                let point_in_screen: Pos2 = to_screen.transform_pos(point);
-                let point_rect = Rect::from_center_size(point_in_screen, size);
-                let point_id = response.id.with(i);
-                let point_response = ui.interact(point_rect, point_id, Sense::drag());
-
+                // TODO: CHECK THIS LOGIC (is_inactive, is_inactive_click_or_drag)
                 let mut is_inactive: bool = false;
                 let mut is_inactive_click_or_drag: bool = false;
 
@@ -100,29 +104,28 @@ impl PaintCurve<f32, [f32; 3]> {
                     }
                 }
 
-                if point_response.dragged() {
+                if control_point_response.dragged() {
+                    println!("Dragged index: {i}");
                     is_inactive_click_or_drag = is_inactive;
 
                     if !is_inactive {
-                        point += point_response.drag_delta();
+                        point_xy += control_point_response.drag_delta() / response.rect.size();
                         selected_index = Some(i);
-                        dragged_point_response = Some(point_response.clone());
+                        dragged_point_response = Some(control_point_response.clone());
                     }
                 }
 
-                if point_response.hovered() {
-                    hovering_bezier_option = Some((point_response, i));
+                if control_point_response.hovered() {
+                    println!("Hovered index: {i}");
+                    hovering_control_point = Some((control_point_response, i));
                 }
 
-                point = to_screen.from().clamp(point);
-
-                let point_in_screen = to_screen.transform_pos(point);
-
-                let point_as_color = xyz_to_hsva(
-                    key.value[2],
-                    (unmodified_point.x / response.rect.size().x),
-                    (unmodified_point.y / response.rect.size().y),
-                );
+                let point_as_color = HsvaGamma {
+                    h: control_point[2],
+                    s: control_point[0],
+                    v: control_point[1],
+                    a: 1.0,
+                };
                 let mut color_to_show = if !is_inactive_click_or_drag {
                     point_as_color
                 } else {
@@ -154,9 +157,9 @@ impl PaintCurve<f32, [f32; 3]> {
             .spline
             .into_iter()
             .enumerate()
-            .take(self.spline.len())
+            .take(num_control_points)
             .map(|(i, key)| {
-                let mut point = Pos2::new(key.value[0], key.value[1]);
+                let mut point = Pos2::new(key.value[0], 1.0 - key.value[1]);
                 point = to_screen.from().clamp(point);
 
                 let point_in_screen = to_screen.transform_pos(point);
@@ -168,12 +171,9 @@ impl PaintCurve<f32, [f32; 3]> {
 
         let selected_shape = if selected_index.is_some() {
             let key = self.spline.get(selected_index.unwrap()).unwrap();
-            let mut point = Pos2::new(key.value[0], key.value[1]);
-
-            point = to_screen.from().clamp(point);
+            let mut point = Pos2::new(key.value[0], 1.0 - key.value[1]);
 
             let point_in_screen = to_screen.transform_pos(point);
-
             let stroke: Stroke = ui.style().interact(response).fg_stroke;
 
             Some(Shape::circle_stroke(
@@ -188,14 +188,14 @@ impl PaintCurve<f32, [f32; 3]> {
         let points_in_screen: Vec<Pos2> = self
             .spline
             .into_iter()
-            .take(self.spline.len())
+            .take(num_control_points)
             .map(|key| {
-                let point = Pos2::new(key.value[0], key.value[1]);
+                let point = Pos2::new(key.value[0], 1.0 - key.value[1]);
                 to_screen * point
             })
             .collect();
 
-        // match self.spline.len() {
+        // match num_control_points {
         //     3 => {
         //         let points = points_in_screen.clone().try_into().unwrap();
         //         let shape =
@@ -236,10 +236,9 @@ impl PaintCurve<f32, [f32; 3]> {
         }
 
         (
-            response.clone(),
             dragged_point_response,
             selected_index,
-            hovering_bezier_option,
+            hovering_control_point,
         )
     }
 }
@@ -257,14 +256,6 @@ impl<T, V> PaintCurve<T, V> {
             aux_stroke: Stroke::new(1.0, Color32::RED.linear_multiply(0.25)),
             bounding_box_stroke: Stroke::new(0.0, Color32::LIGHT_GREEN.linear_multiply(0.25)),
         }
-    }
-
-    pub fn control_points(&self) -> &Spline<T, V> {
-        &self.spline
-    }
-
-    pub fn control_points_mut(&mut self) -> &mut Spline<T, V> {
-        &mut self.spline
     }
 }
 
