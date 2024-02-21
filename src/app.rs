@@ -3,8 +3,8 @@ use std::default;
 use bspline::Interpolate;
 use eframe::{
     egui::{
-        self, color_picker::Alpha, Frame, Id, LayerId, Layout, Painter, PointerButton, Response,
-        Sense, Ui, Widget, Window,
+        self, color_picker::Alpha, Frame, Id, InnerResponse, LayerId, Layout, Painter,
+        PointerButton, Response, Sense, Ui, Widget, Window,
     },
     emath,
     epaint::{Color32, Hsva, HsvaGamma, Pos2, Rect, Rounding, Vec2},
@@ -167,11 +167,60 @@ impl ZApp {
             ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui| {
                 ui.spacing_mut().slider_width =
                     color_picker_desired_size.x.min(color_picker_desired_size.y);
-                let main_response = main_color_picker(
-                    ui,
-                    &mut self.main_color_picker_data,
-                    &mut self.color_copy_format,
-                );
+
+                let left_side_reponse = ui.vertical(|ui| {
+                    let main_response = main_color_picker(
+                        ui,
+                        &mut self.main_color_picker_data,
+                        &mut self.color_copy_format,
+                    );
+
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut self.main_color_picker_data.is_curve_locked, "🔒")
+                            .on_hover_text("Apply changes to all control points");
+                        ui.checkbox(
+                            &mut self.main_color_picker_data.is_hue_middle_interpolated,
+                            "🎨",
+                        )
+                        .on_hover_text("Only modify first/last control points");
+                        const INSERT_RIGHT_UNICODE: &str = "👉";
+                        const INSERT_LEFT_UNICODE: &str = "👈";
+                        let insert_mode_unicode = if self.main_color_picker_data.is_insert_right {
+                            INSERT_RIGHT_UNICODE
+                        } else {
+                            INSERT_LEFT_UNICODE
+                        };
+                        ui.checkbox(
+                            &mut self.main_color_picker_data.is_insert_right,
+                            insert_mode_unicode,
+                        )
+                        .on_hover_text(format!(
+                            "Insert new points in {} direction",
+                            insert_mode_unicode
+                        ));
+
+                        egui::ComboBox::from_label("Color Copy Format")
+                            .selected_text(format!("{:?}", self.color_copy_format))
+                            .show_ui(ui, |ui| {
+                                ui.style_mut().wrap = Some(false);
+                                ui.set_min_width(60.0);
+                                ui.selectable_value(
+                                    &mut self.color_copy_format,
+                                    ColorStringCopy::HEX,
+                                    "Hex",
+                                );
+                                ui.selectable_value(
+                                    &mut self.color_copy_format,
+                                    ColorStringCopy::HEXNOA,
+                                    "Hex(no A)",
+                                );
+                            });
+                    });
+
+                    main_response
+                });
+
+                let main_response = left_side_reponse.inner;
 
                 match self.double_click_event {
                     Some(pos) => {

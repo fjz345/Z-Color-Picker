@@ -356,38 +356,6 @@ pub fn main_color_picker(
                 _ => {}
             }
 
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut data.is_curve_locked, "🔒")
-                    .on_hover_text("Apply changes to all control points");
-                ui.checkbox(&mut data.is_hue_middle_interpolated, "🎨")
-                    .on_hover_text("Only modify first/last control points");
-                const INSERT_RIGHT_UNICODE: &str = "👉";
-                const INSERT_LEFT_UNICODE: &str = "👈";
-                let insert_mode_unicode = if data.is_insert_right {
-                    INSERT_RIGHT_UNICODE
-                } else {
-                    INSERT_LEFT_UNICODE
-                };
-                ui.checkbox(&mut data.is_insert_right, insert_mode_unicode)
-                    .on_hover_text(format!(
-                        "Insert new points in {} direction",
-                        insert_mode_unicode
-                    ));
-
-                egui::ComboBox::from_label("Color Copy Format")
-                    .selected_text(format!("{color_copy_format:?}"))
-                    .show_ui(ui, |ui| {
-                        ui.style_mut().wrap = Some(false);
-                        ui.set_min_width(60.0);
-                        ui.selectable_value(color_copy_format, ColorStringCopy::HEX, "Hex");
-                        ui.selectable_value(
-                            color_copy_format,
-                            ColorStringCopy::HEXNOA,
-                            "Hex(no A)",
-                        );
-                    });
-            });
-
             if data.is_hue_middle_interpolated {
                 let num_points = data.paint_curve.spline.len();
                 if (num_points >= 2) {
