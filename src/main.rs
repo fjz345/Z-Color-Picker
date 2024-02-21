@@ -19,7 +19,7 @@ mod ui_common;
 TODO:
 
 FEATURES
-* Gradient Curve
+* Set spline t values based on distance in H-S-V space
 * Hex Copy Gradient color
 * Flip Control Points button
 * Beginning/end of curve visuals (identifiers)
@@ -34,6 +34,7 @@ FEATURES
     - Saturation
     - Hue
     - Value
+* User feedback when copying color value
 * Different color spaces
 * Import curves to photoshop????
 =============================================================
