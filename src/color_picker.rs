@@ -245,20 +245,6 @@ pub fn main_color_picker(
                 }
             }
 
-            // if false {
-            //     color_slider_1d(ui, &mut color_to_show.s, |s| {
-            //         HsvaGamma { s, ..opaque }.into()
-            //     })
-            //     .on_hover_text("Saturation");
-            // }
-
-            // if false {
-            //     color_slider_1d(ui, &mut color_to_show.s, |v| {
-            //         HsvaGamma { v, ..opaque }.into()
-            //     })
-            //     .on_hover_text("Value");
-            // }
-
             let slider_2d_reponse: Response = main_color_slider_2d(
                 ui,
                 desired_size_slider_2d,
@@ -302,7 +288,7 @@ pub fn main_color_picker(
 
             data.dragging_bezier_index = selected_index;
             match selected_index {
-                Some(a) => data.last_modifying_point_index = Some(a),
+                Some(index) => data.last_modifying_point_index = Some(index),
                 _ => {}
             }
 
@@ -355,34 +341,6 @@ pub fn main_color_picker(
                     }
                 }
                 _ => {}
-            }
-
-            if data.is_hue_middle_interpolated {
-                let num_points = data.paint_curve.spline.len();
-                if (num_points >= 2) {
-                    let points = &mut data.paint_curve.spline;
-
-                    let first_index = 0;
-                    let last_index = points.len() - 1;
-                    let first_point = points.get(0).unwrap().value[2];
-                    let last_point = points.get(last_index).unwrap().value[2];
-                    let first_hue = points.get(first_index).unwrap().value[2];
-                    let last_hue = points.get(last_index).unwrap().value[2];
-                    for i in 1..(last_index) {
-                        let t = i as f32 / points.len() as f32;
-                        let hue = lerp((first_hue..=last_hue), t);
-                        points.get_mut(i).unwrap().value[2] = hue;
-                    }
-                }
-            }
-
-            if data.is_window_lock {
-                for i in 0..data.paint_curve.spline.len() {
-                    let key = data.paint_curve.spline.get_mut(i).unwrap();
-                    key.value[0] = key.value[0].clamp(0.0, 1.0);
-                    key.value[1] = key.value[1].clamp(0.0, 1.0);
-                    key.value[2] = key.value[2].clamp(0.0, 1.0);
-                }
             }
 
             slider_2d_reponse

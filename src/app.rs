@@ -3,7 +3,7 @@ use std::default;
 use bspline::Interpolate;
 use eframe::{
     egui::{
-        self, color_picker::Alpha, Frame, Id, InnerResponse, LayerId, Layout, Painter,
+        self, color_picker::Alpha, lerp, Frame, Id, InnerResponse, LayerId, Layout, Painter,
         PointerButton, Response, Sense, Ui, Widget, Window,
     },
     emath,
@@ -161,6 +161,41 @@ impl ZApp {
         }
     }
 
+    fn post_update_control_points(&mut self) {
+        if self.main_color_picker_data.is_hue_middle_interpolated {
+            let num_points = self.main_color_picker_data.paint_curve.spline.len();
+            if num_points >= 2 {
+                let points = &mut self.main_color_picker_data.paint_curve.spline;
+
+                let first_index = 0;
+                let last_index = points.len() - 1;
+                let first_point = points.get(0).unwrap().value[2];
+                let last_point = points.get(last_index).unwrap().value[2];
+                let first_hue = points.get(first_index).unwrap().value[2];
+                let last_hue: f32 = points.get(last_index).unwrap().value[2];
+                for i in 1..last_index {
+                    let t = i as f32 / points.len() as f32;
+                    let hue = lerp(first_hue..=last_hue, t);
+                    points.get_mut(i).unwrap().value[2] = hue;
+                }
+            }
+        }
+
+        if self.main_color_picker_data.is_window_lock {
+            for i in 0..self.main_color_picker_data.paint_curve.spline.len() {
+                let key = self
+                    .main_color_picker_data
+                    .paint_curve
+                    .spline
+                    .get_mut(i)
+                    .unwrap();
+                key.value[0] = key.value[0].clamp(0.0, 1.0);
+                key.value[1] = key.value[1].clamp(0.0, 1.0);
+                key.value[2] = key.value[2].clamp(0.0, 1.0);
+            }
+        }
+    }
+
     fn draw_ui_menu(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let color_picker_desired_size = Vec2 {
@@ -178,6 +213,7 @@ impl ZApp {
                         &mut self.main_color_picker_data,
                         &mut self.color_copy_format,
                     );
+                    self.post_update_control_points();
 
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut self.main_color_picker_data.is_curve_locked, "🔒")
