@@ -251,7 +251,7 @@ impl ZApp {
                         ui.checkbox(&mut self.main_color_picker_data.is_window_lock, "🆘")
                             .on_hover_text("Clamps the control points so they are contained");
 
-                        egui::ComboBox::from_label("Color Copy Format")
+                        egui::ComboBox::from_label("")
                             .selected_text(format!("{:?}", self.color_copy_format))
                             .show_ui(ui, |ui| {
                                 ui.style_mut().wrap = Some(false);
@@ -266,7 +266,9 @@ impl ZApp {
                                     ColorStringCopy::HEXNOA,
                                     "Hex(no A)",
                                 );
-                            });
+                            })
+                            .response
+                            .on_hover_text("Color Copy Format");
                     });
 
                     main_response
