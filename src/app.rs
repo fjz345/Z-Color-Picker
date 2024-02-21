@@ -20,6 +20,7 @@ use crate::{
         ColorStringCopy, MainColorPickerData, PreviewerData,
     },
     curves::{Bezier, PaintCurve},
+    gradient::{vertex_gradient, Gradient},
     ui_common::color_button,
 };
 
@@ -314,15 +315,18 @@ impl ZApp {
         }
     }
 
-    fn draw_ui_previewer(&mut self, ui: &mut Ui) {
-        let previewer_rect = ui.available_rect_before_wrap();
-        let mut previewer_ui = ui.child_ui(previewer_rect, Layout::left_to_right(egui::Align::Min));
-        previewer_ui.spacing_mut().item_spacing = Vec2::ZERO;
+    fn draw_ui_previewer_control_points(&mut self, ui: &mut Ui, size: Vec2) {
+        let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
+        ui.allocate_rect(rect, Sense::click_and_drag());
+        let mut previewer_ui_control_points =
+            ui.child_ui(rect, Layout::left_to_right(egui::Align::Min));
 
-        let bezier = &self.main_color_picker_data.paint_curve;
-        let total_size: Vec2 = previewer_ui.available_size();
+        previewer_ui_control_points.spacing_mut().item_spacing = Vec2::ZERO;
 
-        let spline = &bezier.spline;
+        let paint_curve = &self.main_color_picker_data.paint_curve;
+        let total_size: Vec2 = previewer_ui_control_points.available_size();
+
+        let spline = &paint_curve.spline;
         let num_spline_points = spline.len();
         let size_per_color_x = total_size.x / (num_spline_points as f32);
         let size_per_color_y = total_size.y;
@@ -350,7 +354,7 @@ impl ZApp {
                 * num_spline_points as f32
                 / previewer_sizes_sum;
             let response: Response = color_button(
-                &mut previewer_ui,
+                &mut previewer_ui_control_points,
                 Vec2 {
                     x: size_weight * size_per_color_x,
                     y: size_per_color_y,
@@ -383,17 +387,40 @@ impl ZApp {
 
             let color_response_rect = response.ctx.screen_rect();
         }
+    }
 
-        let reset_button = egui::Button::new("❌").small().wrap(true).frame(true);
-        let reset_button_size: Vec2 = Vec2::new(25.0, 25.0);
-        let mut reset_button_rect: Rect = Rect {
-            min: previewer_rect.min,
-            max: previewer_rect.min + reset_button_size,
-        };
+    fn draw_ui_previewer_curve(&mut self, ui: &mut Ui, size: Vec2, bg_fill: Color32) {
+        let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
+        ui.allocate_rect(rect, Sense::click_and_drag());
+        let mut previewer_ui_curve = ui.child_ui(rect, Layout::left_to_right(egui::Align::Min));
+        previewer_ui_curve.spacing_mut().item_spacing = Vec2::ZERO;
 
-        if ui.put(reset_button_rect, reset_button).clicked() {
-            self.previewer_data.reset_preview_sizes();
-        }
+        let gradient = Gradient::endpoints(Color32::BLACK, Color32::RED);
+        vertex_gradient(&mut previewer_ui_curve, rect.size(), bg_fill, &gradient);
+    }
+
+    fn draw_ui_previewer(&mut self, ui: &mut Ui) {
+        let previewer_rect = ui.available_rect_before_wrap();
+
+        ui.vertical(|ui| {
+            self.draw_ui_previewer_control_points(ui, previewer_rect.size() * Vec2::new(1.0, 0.5));
+            self.draw_ui_previewer_curve(
+                ui,
+                previewer_rect.size() * Vec2::new(1.0, 0.5),
+                Color32::GRAY,
+            );
+
+            let reset_button = egui::Button::new("❌").small().wrap(true).frame(true);
+            let reset_button_size: Vec2 = Vec2::new(25.0, 25.0);
+            let mut reset_button_rect: Rect = Rect {
+                min: previewer_rect.min,
+                max: previewer_rect.min + reset_button_size,
+            };
+
+            if ui.put(reset_button_rect, reset_button).clicked() {
+                self.previewer_data.reset_preview_sizes();
+            }
+        });
     }
 
     fn draw_debug_control_points(&mut self, ctx: &egui::Context) {
@@ -443,7 +470,7 @@ impl eframe::App for ZApp {
             if reader.pointer.button_double_clicked(PointerButton::Primary) {
                 self.double_click_event = Some(reader.pointer.interact_pos().unwrap());
                 println!(
-                    "add control_point @({},{})",
+                    "double click @({},{})",
                     self.double_click_event.unwrap().x,
                     self.double_click_event.unwrap().y
                 );

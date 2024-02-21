@@ -7,6 +7,7 @@ use crate::app::ZApp;
 mod app;
 mod color_picker;
 mod curves;
+mod gradient;
 mod math;
 mod previewer;
 mod ui_common;
@@ -16,7 +17,6 @@ mod ui_common;
 TODO:
 
 FEATURES
-* Fix clamp to picker window mode, (fix bug where only [0,1] is saved for V (y) of control_points)
 * Gradient Curve
 * Hex Copy Gradient color
 * Flip Control Points button
