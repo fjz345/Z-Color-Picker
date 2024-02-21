@@ -1,5 +1,6 @@
 use std::{
     borrow::{Borrow, BorrowMut},
+    fmt::format,
     sync::Arc,
 };
 
@@ -108,6 +109,7 @@ pub struct MainColorPickerData {
     pub last_modifying_point_index: Option<usize>,
     pub is_curve_locked: bool,
     pub is_hue_middle_interpolated: bool,
+    pub is_insert_right: bool,
 }
 
 pub fn main_color_picker(
@@ -306,6 +308,27 @@ pub fn main_color_picker(
             match dragged_points_response {
                 Some(R) => {
                     if R.dragged_by(PointerButton::Primary) {
+                        match control_point_index {
+                            Some(index) => {
+                                {
+                                    let point_x_ref =
+                                        &mut data.paint_curve.spline.get_mut(index).unwrap().value
+                                            [0];
+
+                                    *point_x_ref +=
+                                        R.drag_delta().x / slider_2d_reponse.rect.size().x;
+                                }
+                                {
+                                    let point_y_ref =
+                                        &mut data.paint_curve.spline.get_mut(index).unwrap().value
+                                            [1];
+                                    *point_y_ref -=
+                                        R.drag_delta().y / slider_2d_reponse.rect.size().y;
+                                }
+                            }
+                            _ => {}
+                        }
+
                         if data.is_curve_locked {
                             // Move all other points
                             for i in 0..num_spline_points {
@@ -334,8 +357,22 @@ pub fn main_color_picker(
             }
 
             ui.horizontal(|ui| {
-                ui.checkbox(&mut data.is_curve_locked, "🔒");
-                ui.checkbox(&mut data.is_hue_middle_interpolated, "🎨");
+                ui.checkbox(&mut data.is_curve_locked, "🔒")
+                    .on_hover_text("Apply changes to all control points");
+                ui.checkbox(&mut data.is_hue_middle_interpolated, "🎨")
+                    .on_hover_text("Only modify first/last control points");
+                const INSERT_RIGHT_UNICODE: &str = "👉";
+                const INSERT_LEFT_UNICODE: &str = "👈";
+                let insert_mode_unicode = if data.is_insert_right {
+                    INSERT_RIGHT_UNICODE
+                } else {
+                    INSERT_LEFT_UNICODE
+                };
+                ui.checkbox(&mut data.is_insert_right, insert_mode_unicode)
+                    .on_hover_text(format!(
+                        "Insert new points in {} direction",
+                        insert_mode_unicode
+                    ));
 
                 egui::ComboBox::from_label("Color Copy Format")
                     .selected_text(format!("{color_copy_format:?}"))

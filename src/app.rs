@@ -1,5 +1,6 @@
 use std::default;
 
+use bspline::Interpolate;
 use eframe::{
     egui::{
         self, color_picker::Alpha, Frame, Id, LayerId, Layout, Painter, PointerButton, Response,
@@ -10,7 +11,8 @@ use eframe::{
     CreationContext,
 };
 use env_logger::fmt::Color;
-use splines::Key;
+use palette::white_point::A;
+use splines::{Interpolation, Key};
 
 use crate::{
     color_picker::{
@@ -55,6 +57,7 @@ impl ZApp {
                 last_modifying_point_index: None,
                 is_curve_locked: false,
                 is_hue_middle_interpolated: false,
+                is_insert_right: true,
             },
             previewer_data: PreviewerData::new(0),
             color_copy_format: ColorStringCopy::HEX,
@@ -82,10 +85,43 @@ impl ZApp {
 
     fn spawn_control_point(&mut self, color: [f32; 3]) {
         let spline = &mut self.main_color_picker_data.paint_curve.spline;
+        let control_point_pivot = self.main_color_picker_data.last_modifying_point_index;
 
-        spline.add(Key::new(0.0, color, splines::Interpolation::Linear));
+        // We know that it has index 0
+        let mut new_key = Key::new(spline.len() as f32, color, Interpolation::Linear);
+
+        match control_point_pivot {
+            Some(index) => {
+                let pivot_key = spline.get(index).unwrap();
+
+                let to_right: bool = self.main_color_picker_data.is_insert_right;
+                let to_right_factor = (to_right as usize * 2) as f32 - 1.0;
+                new_key.interpolation = pivot_key.interpolation;
+                new_key.t = pivot_key.t + 1.0 * to_right_factor;
+
+                if to_right {
+                    if index < spline.len() - 1 {
+                        let next_key = spline.get(index + 1).unwrap();
+                        new_key.t = pivot_key.t.interpolate(&next_key.t, 0.5);
+                    }
+                } else {
+                    if index > 0 {
+                        let next_key = spline.get(index - 1).unwrap();
+                        new_key.t = pivot_key.t.interpolate(&next_key.t, 0.5);
+                    }
+                }
+            }
+            None => {}
+        }
+
+        spline.add(new_key);
+        // Adding keys messes with the indicies
+        self.main_color_picker_data.last_modifying_point_index = None;
+        self.main_color_picker_data.dragging_bezier_index = None;
+
         self.previewer_data.points_preview_sizes.push(0.0);
         self.previewer_data.reset_preview_sizes();
+
         println!(
             "ControlPoint#{} spawned @{},{},{}",
             spline.len(),
@@ -93,7 +129,6 @@ impl ZApp {
             color[1],
             color[2],
         );
-        self.main_color_picker_data.last_modifying_point_index = Some(spline.len() - 1);
     }
 
     fn get_control_points_sdf_2d(&self, xy: Pos2) -> Option<f32> {
@@ -280,6 +315,7 @@ impl ZApp {
             for i in 0..spline.len() {
                 let point = spline.get(i).unwrap();
                 ui.label(format!("[{i}]"));
+                ui.label(format!("({})", point.t));
                 ui.label(format!("- x: {}", point.value[0]));
                 ui.label(format!("- y: {}", point.value[1]));
                 ui.label(format!("- h: {}", point.value[2]));
