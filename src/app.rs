@@ -43,28 +43,20 @@ impl ZApp {
         let monitor_size = cc.integration_info.window_info.monitor_size.unwrap();
         const RESOLUTION_REF: f32 = 1080.0;
         let scale_factor: f32 = monitor_size.x.min(monitor_size.y) / RESOLUTION_REF;
-        const STARTUP_NUM_CONTROL_POINTS: usize = 4;
         Self {
             scale_factor: scale_factor,
             state: AppState::Startup,
             main_color_picker_data: MainColorPickerData {
                 hsva: HsvaGamma::default(),
                 alpha: egui::color_picker::Alpha::Opaque,
-                paint_curve: PaintCurve::from_vec(vec![
-                    Key::new(
-                        0.0,
-                        [0.0; 3],
-                        splines::Interpolation::Linear
-                    );
-                    STARTUP_NUM_CONTROL_POINTS
-                ]),
+                paint_curve: PaintCurve::default(),
                 dragging_bezier_index: None,
                 control_point_right_clicked: None,
                 last_modifying_point_index: None,
                 is_curve_locked: false,
                 is_hue_middle_interpolated: false,
             },
-            previewer_data: PreviewerData::new(STARTUP_NUM_CONTROL_POINTS),
+            previewer_data: PreviewerData::new(0),
             color_copy_format: ColorStringCopy::HEX,
             debug_control_points: false,
             double_click_event: None,
@@ -75,6 +67,17 @@ impl ZApp {
         let mut visuals: egui::Visuals = egui::Visuals::dark();
         ctx.set_visuals(visuals);
         ctx.set_pixels_per_point(self.scale_factor);
+
+        const DEFAULT_STARTUP_CONTROL_POINTS: [[f32; 3]; 4] = [
+            [0.25, 0.33, 0.0],
+            [0.44, 0.38, 0.1],
+            [0.8, 0.6, 0.1],
+            [0.9, 0.8, 0.2],
+        ];
+
+        for control_point in DEFAULT_STARTUP_CONTROL_POINTS {
+            self.spawn_control_point(control_point);
+        }
     }
 
     fn spawn_control_point(&mut self, color: [f32; 3]) {
@@ -235,7 +238,7 @@ impl ZApp {
                 PointerButton::Middle,
             );
 
-            if response.dragged() {
+            if response.dragged_by(PointerButton::Primary) {
                 const PREVIEWER_DRAG_SENSITIVITY: f32 = 0.6;
                 self.previewer_data.points_preview_sizes[i] +=
                     response.drag_delta().x * PREVIEWER_DRAG_SENSITIVITY;

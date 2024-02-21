@@ -104,7 +104,7 @@ impl PaintCurve<f32, [f32; 3]> {
                     }
                 }
 
-                if control_point_response.dragged() {
+                if control_point_response.dragged_by(egui::PointerButton::Primary) {
                     println!("Dragged index: {i}");
                     is_inactive_click_or_drag = is_inactive;
 

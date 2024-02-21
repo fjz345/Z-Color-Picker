@@ -305,7 +305,7 @@ pub fn main_color_picker(
 
             match dragged_points_response {
                 Some(R) => {
-                    if R.dragged() {
+                    if R.dragged_by(PointerButton::Primary) {
                         if data.is_curve_locked {
                             // Move all other points
                             for i in 0..num_spline_points {
