@@ -17,7 +17,9 @@ use eframe::{
 
 use crate::{
     curves::{self, Bezier, PaintCurve},
+    hsv_key_value::HsvKeyValue,
     ui_common::{color_slider_2d, contrast_color},
+    CONTROL_POINT_TYPE,
 };
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -103,7 +105,7 @@ impl PreviewerData {
 pub struct MainColorPickerData {
     pub hsva: HsvaGamma,
     pub alpha: Alpha,
-    pub paint_curve: PaintCurve<f32, [f32; 3]>,
+    pub paint_curve: PaintCurve<f32, HsvKeyValue>,
     pub dragging_bezier_index: Option<usize>,
     pub control_point_right_clicked: Option<usize>,
     pub last_modifying_point_index: Option<usize>,
@@ -258,7 +260,7 @@ pub fn main_color_picker(
                     Some(a) => Some(data.paint_curve.spline.get_mut(a).unwrap().value),
                     _ => None,
                 };
-                let unwrapped: &mut [f32; 3] = control_point.unwrap();
+                let unwrapped = &mut control_point.unwrap();
                 unwrapped[2] = color_to_show.h;
             }
 
@@ -267,7 +269,7 @@ pub fn main_color_picker(
                     Some(a) => Some(data.paint_curve.spline.get_mut(a).unwrap().value),
                     _ => None,
                 };
-                let unwrapped: &mut [f32; 3] = control_point.unwrap();
+                let unwrapped = &mut control_point.unwrap();
                 unwrapped[0] = color_to_show.s;
                 unwrapped[1] = color_to_show.v;
             }

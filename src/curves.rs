@@ -12,6 +12,7 @@ use splines::{Key, Spline};
 
 use crate::math::{add_array, add_array_array, combination, mul_array};
 use crate::ui_common::contrast_color;
+use crate::CONTROL_POINT_TYPE;
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(default))]
@@ -42,7 +43,7 @@ impl<T: std::default::Default, V: std::default::Default> Default for PaintCurve<
     }
 }
 
-impl PaintCurve<f32, [f32; 3]> {
+impl PaintCurve<f32, CONTROL_POINT_TYPE> {
     pub fn ui_content(
         &mut self,
         ui: &mut Ui,

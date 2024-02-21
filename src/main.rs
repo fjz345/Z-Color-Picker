@@ -1,6 +1,7 @@
 // #![windows_subsystem = "windows"]
 
 use eframe::egui;
+use hsv_key_value::HsvKeyValue;
 
 use crate::app::ZApp;
 
@@ -8,6 +9,7 @@ mod app;
 mod color_picker;
 mod curves;
 mod gradient;
+mod hsv_key_value;
 mod math;
 mod previewer;
 mod ui_common;
@@ -57,3 +59,5 @@ fn main() {
         }
     }
 }
+
+type CONTROL_POINT_TYPE = HsvKeyValue;

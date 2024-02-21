@@ -12,7 +12,7 @@ use eframe::{
 };
 use env_logger::fmt::Color;
 use palette::white_point::A;
-use splines::{Interpolation, Key};
+use splines::{interpolate::Interpolator, Interpolation, Key};
 
 use crate::{
     color_picker::{
@@ -20,8 +20,9 @@ use crate::{
         ColorStringCopy, MainColorPickerData, PreviewerData,
     },
     curves::{Bezier, PaintCurve},
-    gradient::{mesh_gradient, vertex_gradient, Gradient},
+    gradient::{color_function_gradient, mesh_gradient, vertex_gradient, Gradient},
     ui_common::color_button,
+    CONTROL_POINT_TYPE,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -59,7 +60,7 @@ impl ZApp {
                 is_curve_locked: false,
                 is_hue_middle_interpolated: false,
                 is_insert_right: true,
-                is_window_lock: false,
+                is_window_lock: true,
             },
             previewer_data: PreviewerData::new(0),
             color_copy_format: ColorStringCopy::HEX,
@@ -73,11 +74,19 @@ impl ZApp {
         ctx.set_visuals(visuals);
         ctx.set_pixels_per_point(self.scale_factor);
 
-        const DEFAULT_STARTUP_CONTROL_POINTS: [[f32; 3]; 4] = [
-            [0.25, 0.33, 0.0],
-            [0.44, 0.38, 0.1],
-            [0.8, 0.6, 0.1],
-            [0.9, 0.8, 0.2],
+        const DEFAULT_STARTUP_CONTROL_POINTS: [CONTROL_POINT_TYPE; 4] = [
+            CONTROL_POINT_TYPE {
+                val: [0.25, 0.33, 0.0],
+            },
+            CONTROL_POINT_TYPE {
+                val: [0.44, 0.38, 0.1],
+            },
+            CONTROL_POINT_TYPE {
+                val: [0.8, 0.6, 0.1],
+            },
+            CONTROL_POINT_TYPE {
+                val: [0.9, 0.8, 0.2],
+            },
         ];
 
         for control_point in DEFAULT_STARTUP_CONTROL_POINTS {
@@ -85,7 +94,7 @@ impl ZApp {
         }
     }
 
-    fn spawn_control_point(&mut self, color: [f32; 3]) {
+    fn spawn_control_point(&mut self, color: CONTROL_POINT_TYPE) {
         let spline = &mut self.main_color_picker_data.paint_curve.spline;
         let control_point_pivot = self.main_color_picker_data.last_modifying_point_index;
 
@@ -290,7 +299,7 @@ impl ZApp {
                                     1.0 - normalized_xy.y.clamp(0.0, 1.0),
                                 );
                                 let color = [color_xy[0], color_xy[1], color_hue];
-                                self.spawn_control_point(color);
+                                self.spawn_control_point(color.into());
                             }
                         }
                     }
@@ -409,7 +418,30 @@ impl ZApp {
                 .into()
             })
             .collect();
-        mesh_gradient(&mut previewer_ui_curve, rect.size(), &colors[..]);
+
+        color_function_gradient(&mut previewer_ui_curve, rect.size(), |x| {
+            if spline.len() <= 0 {
+                return HsvaGamma {
+                    h: 0.0,
+                    s: 0.0,
+                    v: 0.0,
+                    a: 0.0,
+                }
+                .into();
+            }
+
+            let sample = spline
+                .clamped_sample(x * spline.get(spline.len() - 1).unwrap().t as f32)
+                .unwrap_or_default();
+
+            HsvaGamma {
+                h: sample[2],
+                s: sample[0],
+                v: sample[1],
+                a: 1.0,
+            }
+            .into()
+        });
     }
 
     fn draw_ui_previewer(&mut self, ui: &mut Ui) {
