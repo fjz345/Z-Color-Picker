@@ -1,5 +1,36 @@
 use eframe::egui::{self, *};
 
+pub fn mesh_gradient(ui: &mut Ui, size: Vec2, vertex_colors: &[Color32]) -> Response {
+    let (rect, response) = ui.allocate_at_least(size, Sense::click_and_drag());
+
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+
+        // background_checkers(ui.painter(), rect); // for alpha:
+
+        {
+            let num_: u32 = (vertex_colors.len() - 1) as u32;
+            // fill color:
+            let mut mesh = Mesh::default();
+            for i in 0..=num_ {
+                let t = i as f32 / (num_ as f32);
+                let index = (t * (vertex_colors.len()) as f32) as usize;
+                let color = vertex_colors[index.clamp(0, vertex_colors.len() - 1)];
+                let x = lerp(rect.left()..=rect.right(), t);
+                mesh.colored_vertex(pos2(x, rect.top()), color);
+                mesh.colored_vertex(pos2(x, rect.bottom()), color);
+                if i < num_ {
+                    mesh.add_triangle(2 * i + 0, 2 * i + 1, 2 * i + 2);
+                    mesh.add_triangle(2 * i + 1, 2 * i + 2, 2 * i + 3);
+                }
+            }
+            ui.painter().add(Shape::mesh(mesh));
+        }
+    }
+
+    response
+}
+
 pub fn vertex_gradient(ui: &mut Ui, size: Vec2, bg_fill: Color32, gradient: &Gradient) -> Response {
     use egui::epaint::*;
     let (rect, response) = ui.allocate_at_least(size, Sense::hover());

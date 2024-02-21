@@ -20,7 +20,7 @@ use crate::{
         ColorStringCopy, MainColorPickerData, PreviewerData,
     },
     curves::{Bezier, PaintCurve},
-    gradient::{vertex_gradient, Gradient},
+    gradient::{mesh_gradient, vertex_gradient, Gradient},
     ui_common::color_button,
 };
 
@@ -389,14 +389,27 @@ impl ZApp {
         }
     }
 
-    fn draw_ui_previewer_curve(&mut self, ui: &mut Ui, size: Vec2, bg_fill: Color32) {
+    fn draw_ui_previewer_curve(&mut self, ui: &mut Ui, size: Vec2) {
         let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
         ui.allocate_rect(rect, Sense::click_and_drag());
         let mut previewer_ui_curve = ui.child_ui(rect, Layout::left_to_right(egui::Align::Min));
         previewer_ui_curve.spacing_mut().item_spacing = Vec2::ZERO;
 
-        let gradient = Gradient::endpoints(Color32::BLACK, Color32::RED);
-        vertex_gradient(&mut previewer_ui_curve, rect.size(), bg_fill, &gradient);
+        let spline = &self.main_color_picker_data.paint_curve.spline;
+        let colors: Vec<Color32> = spline
+            .keys()
+            .iter()
+            .map(|a| {
+                HsvaGamma {
+                    h: a.value[2],
+                    s: a.value[0],
+                    v: a.value[1],
+                    a: 1.0,
+                }
+                .into()
+            })
+            .collect();
+        mesh_gradient(&mut previewer_ui_curve, rect.size(), &colors[..]);
     }
 
     fn draw_ui_previewer(&mut self, ui: &mut Ui) {
@@ -404,11 +417,7 @@ impl ZApp {
 
         ui.vertical(|ui| {
             self.draw_ui_previewer_control_points(ui, previewer_rect.size() * Vec2::new(1.0, 0.5));
-            self.draw_ui_previewer_curve(
-                ui,
-                previewer_rect.size() * Vec2::new(1.0, 0.5),
-                Color32::GRAY,
-            );
+            self.draw_ui_previewer_curve(ui, previewer_rect.size() * Vec2::new(1.0, 0.5));
 
             let reset_button = egui::Button::new("❌").small().wrap(true).frame(true);
             let reset_button_size: Vec2 = Vec2::new(25.0, 25.0);
