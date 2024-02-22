@@ -204,14 +204,13 @@ impl splines::interpolate::Interpolate<f32> for HsvKeyValue {
     }
 
     fn lerp(t: f32, a: Self, b: Self) -> Self {
-        // Self {
-        //     val: [
-        //         a.val[0] * (1. - t) + b.val[0] * t,
-        //         a.val[1] * (1. - t) + b.val[1] * t,
-        //         hue_lerp(a.val[2], b.val[2], t),
-        //     ],
-        // }
-        a * (1. - t) + b * t
+        Self {
+            val: [
+                a.val[0] * (1. - t) + b.val[0] * t,
+                a.val[1] * (1. - t) + b.val[1] * t,
+                hue_lerp(a.val[2], b.val[2], t),
+            ],
+        }
     }
 
     //a * (1. - t) + b * t
