@@ -22,6 +22,7 @@ use crate::{
     curves::{control_points_to_spline, Bezier, PaintCurve},
     gradient::{color_function_gradient, mesh_gradient, vertex_gradient, Gradient},
     hsv_key_value::HsvKeyValue,
+    math::hue_lerp,
     previewer::draw_ui_previewer,
     ui_common::color_button,
     CONTROL_POINT_TYPE,
@@ -172,13 +173,12 @@ impl ZApp {
 
                 let first_index = 0;
                 let last_index = points.len() - 1;
-                let first_point = points[0][2];
-                let last_point = points[last_index][2];
                 let first_hue = points[first_index][2];
                 let last_hue: f32 = points[last_index][2];
+
                 for i in 1..last_index {
-                    let t = i as f32 / points.len() as f32;
-                    let hue = lerp(first_hue..=last_hue, t);
+                    let t = (i as f32) / (points.len() - 1) as f32;
+                    let hue = hue_lerp(first_hue, last_hue, t);
                     points[i][2] = hue;
                 }
             }

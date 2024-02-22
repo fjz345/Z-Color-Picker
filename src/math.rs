@@ -1,3 +1,5 @@
+use eframe::egui::lerp;
+
 pub fn factorial(n: u64) -> u64 {
     (1..=n).product()
 }
@@ -48,4 +50,17 @@ pub fn add_array_array<const D: usize, T: std::ops::AddAssign + std::marker::Cop
         lhs[i] += rhs[i];
     }
     lhs
+}
+
+pub fn hue_lerp(hue0: f32, hue1: f32, t: f32) -> f32 {
+    let dist_right = (hue1 - hue0).rem_euclid(1.0);
+    let dist_left = (hue0 - hue1).rem_euclid(1.0);
+    let closest_right = dist_right <= dist_left;
+
+    let hue = match closest_right {
+        true => lerp(hue0..=hue1, t),
+        false => lerp(hue0..=hue1, t),
+    };
+
+    hue.rem_euclid(1.0)
 }
