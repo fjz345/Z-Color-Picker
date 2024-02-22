@@ -237,9 +237,6 @@ pub fn main_color_picker(
                 true => Some(color_to_show.h - prev_hue),
                 false => None,
             };
-            println!("prev_hue{}", prev_hue);
-            println!("coor_toshow{}", color_to_show.h);
-            println!("delta{}", delta_hue.unwrap_or(0.0));
         }
 
         if let Some(h) = delta_hue {
