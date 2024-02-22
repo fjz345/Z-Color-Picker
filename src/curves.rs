@@ -8,7 +8,7 @@ use eframe::egui::{self, Id, Sense, Ui};
 use eframe::epaint::{Pos2, Rect, Shape, Stroke, Vec2};
 use eframe::{emath, epaint};
 use egui::epaint::{CubicBezierShape, PathShape, QuadraticBezierShape};
-use splines::{Key, Spline};
+use splines::{Interpolation, Key, Spline};
 
 use crate::math::{add_array, add_array_array, combination, mul_array};
 use crate::ui_common::contrast_color;
@@ -16,9 +16,7 @@ use crate::CONTROL_POINT_TYPE;
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(default))]
-pub struct PaintCurve<T, V> {
-    pub spline: Spline<T, V>,
-
+pub struct PaintCurve {
     /// Stroke for Bézier curve.
     stroke: Stroke,
 
@@ -31,10 +29,9 @@ pub struct PaintCurve<T, V> {
     bounding_box_stroke: Stroke,
 }
 
-impl<T: std::default::Default, V: std::default::Default> Default for PaintCurve<T, V> {
+impl Default for PaintCurve {
     fn default() -> Self {
         Self {
-            spline: Spline::default(),
             stroke: Stroke::new(1.0, Color32::from_rgb(25, 200, 100)),
             fill: Color32::from_rgb(50, 100, 150).linear_multiply(0.25),
             aux_stroke: Stroke::new(1.0, Color32::RED.linear_multiply(0.25)),
@@ -43,10 +40,11 @@ impl<T: std::default::Default, V: std::default::Default> Default for PaintCurve<
     }
 }
 
-impl PaintCurve<f32, CONTROL_POINT_TYPE> {
+impl PaintCurve {
     pub fn ui_content(
         &mut self,
         ui: &mut Ui,
+        control_points: &[CONTROL_POINT_TYPE],
         is_middle_interpolated: bool,
         response: &egui::Response,
     ) -> (
@@ -59,7 +57,8 @@ impl PaintCurve<f32, CONTROL_POINT_TYPE> {
         Option<usize>,
         Option<(egui::Response, usize)>,
     ) {
-        let num_control_points = self.spline.len();
+        let spline = control_points_to_spline(&control_points[..]);
+        let num_control_points = spline.len();
         if num_control_points <= 0 {
             return (None, None, None);
         }
@@ -79,8 +78,7 @@ impl PaintCurve<f32, CONTROL_POINT_TYPE> {
         let mut hovering_control_point = None;
 
         let control_point_draw_size: Vec2 = Vec2::splat(2.0 * control_point_radius);
-        let control_point_shapes_fill: Vec<Shape> = self
-            .spline
+        let control_point_shapes_fill: Vec<Shape> = spline
             .into_iter()
             .enumerate()
             .take(num_control_points)
@@ -156,8 +154,7 @@ impl PaintCurve<f32, CONTROL_POINT_TYPE> {
             .collect();
 
         // Circle Stroke
-        let control_point_shapes: Vec<Shape> = self
-            .spline
+        let control_point_shapes: Vec<Shape> = spline
             .into_iter()
             .enumerate()
             .take(num_control_points)
@@ -173,7 +170,7 @@ impl PaintCurve<f32, CONTROL_POINT_TYPE> {
             .collect();
 
         let selected_shape = if selected_index.is_some() {
-            let key = self.spline.get(selected_index.unwrap()).unwrap();
+            let key = spline.get(selected_index.unwrap()).unwrap();
             let mut point = Pos2::new(key.value[0], 1.0 - key.value[1]);
 
             let point_in_screen = to_screen.transform_pos(point);
@@ -188,8 +185,7 @@ impl PaintCurve<f32, CONTROL_POINT_TYPE> {
             None
         };
 
-        let points_in_screen: Vec<Pos2> = self
-            .spline
+        let points_in_screen: Vec<Pos2> = spline
             .into_iter()
             .take(num_control_points)
             .map(|key| {
@@ -246,22 +242,6 @@ impl PaintCurve<f32, CONTROL_POINT_TYPE> {
     }
 }
 
-impl<T, V> PaintCurve<T, V> {
-    pub fn from_vec(keys: Vec<Key<T, V>>) -> Self
-    where
-        T: PartialOrd,
-    {
-        let mut spline = Spline::from_vec(keys);
-        Self {
-            spline: spline,
-            stroke: Stroke::new(1.0, Color32::from_rgb(25, 200, 100)),
-            fill: Color32::from_rgb(50, 100, 150).linear_multiply(0.25),
-            aux_stroke: Stroke::new(1.0, Color32::RED.linear_multiply(0.25)),
-            bounding_box_stroke: Stroke::new(0.0, Color32::LIGHT_GREEN.linear_multiply(0.25)),
-        }
-    }
-}
-
 pub struct Bezier<const D: usize, const N: usize> {
     pub control_points: [[f32; D]; N],
 }
@@ -287,4 +267,16 @@ impl<const D: usize, const N: usize> Bezier<D, N> {
 
         outer_sum
     }
+}
+
+pub fn control_points_to_spline(
+    control_points: &[CONTROL_POINT_TYPE],
+) -> Spline<f32, CONTROL_POINT_TYPE> {
+    Spline::from_vec(
+        control_points
+            .iter()
+            .enumerate()
+            .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::Linear))
+            .collect(),
+    )
 }

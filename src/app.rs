@@ -12,15 +12,16 @@ use eframe::{
 };
 use env_logger::fmt::Color;
 use palette::white_point::A;
-use splines::{interpolate::Interpolator, Interpolation, Key};
+use splines::{interpolate::Interpolator, Interpolation, Key, Spline};
 
 use crate::{
     color_picker::{
         color_button_copy, format_color_as, main_color_picker, response_copy_color_on_click,
         ColorStringCopy, MainColorPickerData, PreviewerData,
     },
-    curves::{Bezier, PaintCurve},
+    curves::{control_points_to_spline, Bezier, PaintCurve},
     gradient::{color_function_gradient, mesh_gradient, vertex_gradient, Gradient},
+    hsv_key_value::HsvKeyValue,
     ui_common::color_button,
     CONTROL_POINT_TYPE,
 };
@@ -35,6 +36,7 @@ enum AppState {
 pub struct ZApp {
     scale_factor: f32,
     state: AppState,
+    control_points: Vec<CONTROL_POINT_TYPE>,
     main_color_picker_data: MainColorPickerData,
     previewer_data: PreviewerData,
     color_copy_format: ColorStringCopy,
@@ -66,6 +68,7 @@ impl ZApp {
             color_copy_format: ColorStringCopy::HEX,
             debug_control_points: false,
             double_click_event: None,
+            control_points: Vec::with_capacity(4),
         }
     }
 
@@ -95,39 +98,32 @@ impl ZApp {
     }
 
     fn spawn_control_point(&mut self, color: CONTROL_POINT_TYPE) {
-        let spline = &mut self.main_color_picker_data.paint_curve.spline;
         let control_point_pivot = self.main_color_picker_data.last_modifying_point_index;
 
-        // We know that it has index 0
-        let mut new_key = Key::new(spline.len() as f32, color, Interpolation::Linear);
-
-        match control_point_pivot {
+        let new_index = match control_point_pivot {
             Some(index) => {
-                let pivot_key = spline.get(index).unwrap();
-
-                let to_right: bool = self.main_color_picker_data.is_insert_right;
-                let to_right_factor = (to_right as usize * 2) as f32 - 1.0;
-                new_key.interpolation = pivot_key.interpolation;
-                new_key.t = pivot_key.t + 1.0 * to_right_factor;
-
-                if to_right {
-                    if index < spline.len() - 1 {
-                        let next_key = spline.get(index + 1).unwrap();
-                        new_key.t = pivot_key.t.interpolate(&next_key.t, 0.5);
-                    }
+                if self.main_color_picker_data.is_insert_right {
+                    index + 1
                 } else {
-                    if index > 0 {
-                        let next_key = spline.get(index - 1).unwrap();
-                        new_key.t = pivot_key.t.interpolate(&next_key.t, 0.5);
+                    index
+                }
+            }
+            None => {
+                if self.control_points.len() <= 0 {
+                    0
+                } else {
+                    if self.main_color_picker_data.is_insert_right {
+                        self.control_points.len()
+                    } else {
+                        0
                     }
                 }
             }
-            None => {}
-        }
+        };
 
-        spline.add(new_key);
+        self.control_points.insert(new_index, color);
         // Adding keys messes with the indicies
-        self.main_color_picker_data.last_modifying_point_index = None;
+        self.main_color_picker_data.last_modifying_point_index = Some(new_index);
         self.main_color_picker_data.dragging_bezier_index = None;
 
         self.previewer_data.points_preview_sizes.push(0.0);
@@ -135,7 +131,7 @@ impl ZApp {
 
         println!(
             "ControlPoint#{} spawned @{},{},{}",
-            spline.len(),
+            self.control_points.len(),
             color[0],
             color[1],
             color[2],
@@ -144,12 +140,8 @@ impl ZApp {
 
     fn get_control_points_sdf_2d(&self, xy: Pos2) -> Option<f32> {
         let mut closest_distance_to_control_point: Option<f32> = None;
-        let spline = &self.main_color_picker_data.paint_curve.spline;
-        for key in spline {
-            let pos_2d = Pos2::new(
-                key.value[0].clamp(0.0, 1.0),
-                1.0 - key.value[1].clamp(0.0, 1.0),
-            );
+        for cp in self.control_points.iter() {
+            let pos_2d = Pos2::new(cp[0].clamp(0.0, 1.0), 1.0 - cp[1].clamp(0.0, 1.0));
             let distance_2d = pos_2d.distance(xy);
 
             closest_distance_to_control_point = match closest_distance_to_control_point {
@@ -173,35 +165,30 @@ impl ZApp {
 
     fn post_update_control_points(&mut self) {
         if self.main_color_picker_data.is_hue_middle_interpolated {
-            let num_points = self.main_color_picker_data.paint_curve.spline.len();
+            let num_points = self.control_points.len();
             if num_points >= 2 {
-                let points = &mut self.main_color_picker_data.paint_curve.spline;
+                let points = &mut self.control_points[..];
 
                 let first_index = 0;
                 let last_index = points.len() - 1;
-                let first_point = points.get(0).unwrap().value[2];
-                let last_point = points.get(last_index).unwrap().value[2];
-                let first_hue = points.get(first_index).unwrap().value[2];
-                let last_hue: f32 = points.get(last_index).unwrap().value[2];
+                let first_point = points[0][2];
+                let last_point = points[last_index][2];
+                let first_hue = points[first_index][2];
+                let last_hue: f32 = points[last_index][2];
                 for i in 1..last_index {
                     let t = i as f32 / points.len() as f32;
                     let hue = lerp(first_hue..=last_hue, t);
-                    points.get_mut(i).unwrap().value[2] = hue;
+                    points[i][2] = hue;
                 }
             }
         }
 
         if self.main_color_picker_data.is_window_lock {
-            for i in 0..self.main_color_picker_data.paint_curve.spline.len() {
-                let key = self
-                    .main_color_picker_data
-                    .paint_curve
-                    .spline
-                    .get_mut(i)
-                    .unwrap();
-                key.value[0] = key.value[0].clamp(0.0, 1.0);
-                key.value[1] = key.value[1].clamp(0.0, 1.0);
-                key.value[2] = key.value[2].clamp(0.0, 1.0);
+            for i in 0..self.control_points.len() {
+                let cp = &mut self.control_points[i];
+                cp[0] = cp[0].clamp(0.0, 1.0);
+                cp[1] = cp[1].clamp(0.0, 1.0);
+                cp[2] = cp[2].clamp(0.0, 1.0);
             }
         }
     }
@@ -220,6 +207,7 @@ impl ZApp {
                 let left_side_reponse = ui.vertical(|ui| {
                     let main_response = main_color_picker(
                         ui,
+                        &mut self.control_points[..],
                         &mut self.main_color_picker_data,
                         &mut self.color_copy_format,
                     );
@@ -309,11 +297,10 @@ impl ZApp {
                 }
                 match self.main_color_picker_data.control_point_right_clicked {
                     Some(a) => {
-                        let spline = &mut self.main_color_picker_data.paint_curve.spline;
-                        spline.remove(a);
+                        self.control_points.remove(a);
                         self.previewer_data.points_preview_sizes.remove(a);
                         self.previewer_data.reset_preview_sizes();
-                        println!("point_removed {}, new num_points {}", a, spline.len());
+                        println!("CP {} removed, new len {}", a, self.control_points.len());
                     }
                     _ => {}
                 }
@@ -334,18 +321,17 @@ impl ZApp {
 
         previewer_ui_control_points.spacing_mut().item_spacing = Vec2::ZERO;
 
-        let paint_curve = &self.main_color_picker_data.paint_curve;
-        let total_size: Vec2 = previewer_ui_control_points.available_size();
+        let ui_size: Vec2 = previewer_ui_control_points.available_size();
 
-        let spline = &paint_curve.spline;
+        let spline = control_points_to_spline(&self.control_points[..]);
         let num_spline_points = spline.len();
-        let size_per_color_x = total_size.x / (num_spline_points as f32);
-        let size_per_color_y = total_size.y;
+        let size_per_color_x = ui_size.x / (num_spline_points as f32);
+        let size_per_color_y = ui_size.y;
         let previewer_sizes_sum: f32 = self.previewer_data.points_preview_sizes.iter().sum();
 
         let mut points: Vec<Vec2> = Vec::with_capacity(num_spline_points);
-        for key in spline {
-            points.push(Vec2::new(key.value[0], key.value[1]));
+        for cp in &self.control_points[..] {
+            points.push(Vec2::new(cp[0], cp[1]));
         }
 
         for i in 0..num_spline_points {
@@ -406,7 +392,7 @@ impl ZApp {
         let mut previewer_ui_curve = ui.child_ui(rect, Layout::left_to_right(egui::Align::Min));
         previewer_ui_curve.spacing_mut().item_spacing = Vec2::ZERO;
 
-        let spline = &self.main_color_picker_data.paint_curve.spline;
+        let spline = control_points_to_spline(&self.control_points[..]);
         let colors: Vec<Color32> = spline
             .keys()
             .iter()
@@ -475,14 +461,12 @@ impl ZApp {
             .enabled(true);
 
         window.show(ctx, |ui| {
-            let spline = &self.main_color_picker_data.paint_curve.spline;
-            for i in 0..spline.len() {
-                let point = spline.get(i).unwrap();
+            for i in 0..self.control_points.len() {
+                let point = self.control_points[i];
                 ui.label(format!("[{i}]"));
-                ui.label(format!("({})", point.t));
-                ui.label(format!("- x: {}", point.value[0]));
-                ui.label(format!("- y: {}", point.value[1]));
-                ui.label(format!("- h: {}", point.value[2]));
+                ui.label(format!("- x: {}", point[0]));
+                ui.label(format!("- y: {}", point[1]));
+                ui.label(format!("- h: {}", point[2]));
                 ui.label(format!(""));
             }
         });
