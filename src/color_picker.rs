@@ -115,42 +115,30 @@ impl PreviewerData {
     }
 }
 
-pub struct MainColorPickerData {
-    pub hsva: HsvaGamma,
-    pub alpha: Alpha,
-    pub paint_curve: PaintCurve,
-    pub dragging_bezier_index: Option<usize>,
-    pub control_point_right_clicked: Option<usize>,
-    pub last_modifying_point_index: Option<usize>,
-    pub is_curve_locked: bool,
-    pub is_hue_middle_interpolated: bool,
-    pub is_insert_right: bool,
-    pub is_window_lock: bool,
-}
-
 pub fn main_color_picker(
     ui: &mut Ui,
     control_points: &mut [CONTROL_POINT_TYPE],
     spline_mode: SplineMode,
-    data: &mut MainColorPickerData,
     color_copy_format: &mut ColorStringCopy,
+    mut last_modifying_point_index: &mut Option<usize>,
+    dragging_bezier_index: &mut Option<usize>,
+    control_point_right_clicked: &mut Option<usize>,
+    is_hue_middle_interpolated: bool,
+    is_curve_locked: bool,
 ) -> Response {
     let num_spline_points = control_points.len();
-    if let Some(last_modified_index) = data.last_modifying_point_index {
+    if let Some(last_modified_index) = *last_modifying_point_index {
         if num_spline_points == 0 {
-            data.last_modifying_point_index = None;
+            *last_modifying_point_index = None;
         } else {
-            data.last_modifying_point_index =
-                Some(last_modified_index.clamp(0, num_spline_points - 1));
+            *last_modifying_point_index = Some(last_modified_index.clamp(0, num_spline_points - 1));
         }
     }
 
     let main_color_picker_response = ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
         let desired_size_slider_2d = Vec2::splat(ui.spacing().slider_width);
 
-        let is_modifying_index = data
-            .dragging_bezier_index
-            .or(data.last_modifying_point_index);
+        let is_modifying_index = dragging_bezier_index.or(*last_modifying_point_index);
 
         let modifying_control_point = match is_modifying_index {
             Some(index) => control_points.get_mut(index),
@@ -186,9 +174,10 @@ pub fn main_color_picker(
                 PointerButton::Middle,
             );
 
-            color_text_ui(ui, color_to_show, data.alpha, *color_copy_format);
+            let alpha = Alpha::Opaque;
+            color_text_ui(ui, color_to_show, alpha, *color_copy_format);
 
-            if data.alpha == Alpha::BlendOrAdditive {
+            if alpha == Alpha::BlendOrAdditive {
                 // We signal additive blending by storing a negative alpha (a bit ironic).
                 let a = &mut color_to_show.a;
                 let mut additive = *a < 0.0;
@@ -214,12 +203,12 @@ pub fn main_color_picker(
                 ..color_to_show
             };
 
-            if data.alpha == Alpha::Opaque {
+            if alpha == Alpha::Opaque {
                 color_to_show.a = 1.0;
             } else {
                 let a = &mut color_to_show.a;
 
-                if data.alpha == Alpha::OnlyBlend {
+                if alpha == Alpha::OnlyBlend {
                     if *a < 0.0 {
                         *a = 0.5; // was additive, but isn't allowed to be
                     }
@@ -282,7 +271,7 @@ pub fn main_color_picker(
             unwrapped[2] = color_to_show.h;
         }
 
-        if data.dragging_bezier_index.is_some() {
+        if dragging_bezier_index.is_some() {
             let mut control_point = match is_modifying_index {
                 Some(a) => Some(control_points[a]),
                 _ => None,
@@ -293,14 +282,14 @@ pub fn main_color_picker(
         }
 
         let (dragged_points_response, selected_index, hovering_control_point) =
-            data.paint_curve.ui_content(
+            PaintCurve::default().ui_content(
                 ui,
                 control_points,
                 spline_mode,
-                data.is_hue_middle_interpolated,
+                is_hue_middle_interpolated,
                 &slider_2d_reponse,
             );
-        data.control_point_right_clicked = match hovering_control_point {
+        *control_point_right_clicked = match hovering_control_point {
             Some(a) => {
                 if a.0.clicked_by(PointerButton::Secondary) {
                     Some(a.1)
@@ -311,9 +300,9 @@ pub fn main_color_picker(
             _ => None,
         };
 
-        data.dragging_bezier_index = selected_index;
+        *dragging_bezier_index = selected_index;
         match selected_index {
-            Some(index) => data.last_modifying_point_index = Some(index),
+            Some(index) => *last_modifying_point_index = Some(index),
             _ => {}
         }
 
@@ -335,7 +324,7 @@ pub fn main_color_picker(
                         _ => {}
                     }
 
-                    if data.is_curve_locked {
+                    if is_curve_locked {
                         // Move all other points
                         for i in 0..num_spline_points {
                             if i == is_modifying_index.unwrap_or(0) {

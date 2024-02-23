@@ -16,8 +16,7 @@ use splines::{interpolate::Interpolator, Interpolation, Key, Spline};
 
 use crate::{
     color_picker::{
-        format_color_as, main_color_picker, ColorStringCopy, MainColorPickerData, PreviewerData,
-        SplineMode,
+        format_color_as, main_color_picker, ColorStringCopy, PreviewerData, SplineMode,
     },
     curves::{control_points_to_spline, Bezier, PaintCurve},
     gradient::{color_function_gradient, mesh_gradient, vertex_gradient, Gradient},
@@ -39,7 +38,13 @@ pub struct ZApp {
     scale_factor: f32,
     state: AppState,
     control_points: Vec<CONTROL_POINT_TYPE>,
-    main_color_picker_data: MainColorPickerData,
+    dragging_bezier_index: Option<usize>,
+    control_point_right_clicked: Option<usize>,
+    last_modifying_point_index: Option<usize>,
+    is_curve_locked: bool,
+    is_hue_middle_interpolated: bool,
+    is_insert_right: bool,
+    is_window_lock: bool,
     previewer_data: PreviewerData,
     color_copy_format: ColorStringCopy,
     spline_mode: SplineMode,
@@ -55,24 +60,19 @@ impl ZApp {
         Self {
             scale_factor: scale_factor,
             state: AppState::Startup,
-            main_color_picker_data: MainColorPickerData {
-                hsva: HsvaGamma::default(),
-                alpha: egui::color_picker::Alpha::Opaque,
-                paint_curve: PaintCurve::default(),
-                dragging_bezier_index: None,
-                control_point_right_clicked: None,
-                last_modifying_point_index: None,
-                is_curve_locked: false,
-                is_hue_middle_interpolated: false,
-                is_insert_right: true,
-                is_window_lock: true,
-            },
             previewer_data: PreviewerData::new(0),
             color_copy_format: ColorStringCopy::HEX,
             spline_mode: SplineMode::Linear,
             debug_control_points: false,
             double_click_event: None,
             control_points: Vec::with_capacity(4),
+            dragging_bezier_index: None,
+            control_point_right_clicked: None,
+            last_modifying_point_index: None,
+            is_curve_locked: false,
+            is_hue_middle_interpolated: false,
+            is_insert_right: true,
+            is_window_lock: true,
         }
     }
 
@@ -102,11 +102,11 @@ impl ZApp {
     }
 
     fn spawn_control_point(&mut self, color: CONTROL_POINT_TYPE) {
-        let control_point_pivot = self.main_color_picker_data.last_modifying_point_index;
+        let control_point_pivot = self.last_modifying_point_index;
 
         let new_index = match control_point_pivot {
             Some(index) => {
-                if self.main_color_picker_data.is_insert_right {
+                if self.is_insert_right {
                     index + 1
                 } else {
                     index
@@ -116,7 +116,7 @@ impl ZApp {
                 if self.control_points.len() <= 0 {
                     0
                 } else {
-                    if self.main_color_picker_data.is_insert_right {
+                    if self.is_insert_right {
                         self.control_points.len()
                     } else {
                         0
@@ -127,8 +127,8 @@ impl ZApp {
 
         self.control_points.insert(new_index, color);
         // Adding keys messes with the indicies
-        self.main_color_picker_data.last_modifying_point_index = Some(new_index);
-        self.main_color_picker_data.dragging_bezier_index = None;
+        self.last_modifying_point_index = Some(new_index);
+        self.dragging_bezier_index = None;
 
         self.previewer_data.points_preview_sizes.push(0.0);
         self.previewer_data.reset_preview_sizes();
@@ -168,7 +168,7 @@ impl ZApp {
     }
 
     fn post_update_control_points(&mut self) {
-        if self.main_color_picker_data.is_hue_middle_interpolated {
+        if self.is_hue_middle_interpolated {
             let num_points = self.control_points.len();
             if num_points >= 2 {
                 let points = &mut self.control_points[..];
@@ -186,7 +186,7 @@ impl ZApp {
             }
         }
 
-        if self.main_color_picker_data.is_window_lock {
+        if self.is_window_lock {
             for i in 0..self.control_points.len() {
                 let cp = &mut self.control_points[i];
                 cp[0] = cp[0].clamp(0.0, 1.0);
@@ -194,6 +194,69 @@ impl ZApp {
                 cp[2] = cp[2].clamp(0.0, 1.0);
             }
         }
+    }
+
+    fn draw_ui_main_options(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.is_curve_locked, "🔒")
+                .on_hover_text("Apply changes to all control points");
+            ui.checkbox(&mut self.is_hue_middle_interpolated, "🎨")
+                .on_hover_text("Only modify first/last control points");
+            const INSERT_RIGHT_UNICODE: &str = "👉";
+            const INSERT_LEFT_UNICODE: &str = "👈";
+            let insert_mode_unicode = if self.is_insert_right {
+                INSERT_RIGHT_UNICODE
+            } else {
+                INSERT_LEFT_UNICODE
+            };
+            ui.checkbox(&mut self.is_insert_right, insert_mode_unicode)
+                .on_hover_text(format!(
+                    "Insert new points in {} direction",
+                    insert_mode_unicode
+                ));
+            ui.checkbox(&mut self.is_window_lock, "🆘")
+                .on_hover_text("Clamps the control points so they are contained");
+        });
+
+        ui.horizontal(|ui| {
+            egui::ComboBox::new(12312312, "")
+                .selected_text(format!("{:?}", self.color_copy_format))
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(60.0);
+                    ui.selectable_value(&mut self.color_copy_format, ColorStringCopy::HEX, "Hex");
+                    ui.selectable_value(
+                        &mut self.color_copy_format,
+                        ColorStringCopy::HEXNOA,
+                        "Hex(no A)",
+                    );
+                })
+                .response
+                .on_hover_text("Color Copy Format");
+
+            egui::ComboBox::new(12312313, "")
+                .selected_text(format!("{:?}", self.spline_mode))
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(60.0);
+                    ui.selectable_value(&mut self.spline_mode, SplineMode::Linear, "Linear");
+                    ui.selectable_value(
+                        &mut self.spline_mode,
+                        SplineMode::Bezier,
+                        "Bezier(Bugged)",
+                    );
+                    ui.selectable_value(
+                        &mut self.spline_mode,
+                        SplineMode::HermiteBezier,
+                        "Hermite(NYI)",
+                    );
+                    ui.selectable_value(
+                        &mut self.spline_mode,
+                        SplineMode::Polynomial,
+                        "Polynomial(Crash)",
+                    );
+                })
+                .response
+                .on_hover_text("Spline Mode");
+        });
     }
 
     fn draw_ui_menu(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -212,85 +275,17 @@ impl ZApp {
                         ui,
                         &mut self.control_points[..],
                         self.spline_mode,
-                        &mut self.main_color_picker_data,
                         &mut self.color_copy_format,
+                        &mut self.last_modifying_point_index,
+                        &mut self.dragging_bezier_index,
+                        &mut self.control_point_right_clicked,
+                        self.is_hue_middle_interpolated,
+                        self.is_curve_locked,
                     );
+
                     self.post_update_control_points();
 
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut self.main_color_picker_data.is_curve_locked, "🔒")
-                            .on_hover_text("Apply changes to all control points");
-                        ui.checkbox(
-                            &mut self.main_color_picker_data.is_hue_middle_interpolated,
-                            "🎨",
-                        )
-                        .on_hover_text("Only modify first/last control points");
-                        const INSERT_RIGHT_UNICODE: &str = "👉";
-                        const INSERT_LEFT_UNICODE: &str = "👈";
-                        let insert_mode_unicode = if self.main_color_picker_data.is_insert_right {
-                            INSERT_RIGHT_UNICODE
-                        } else {
-                            INSERT_LEFT_UNICODE
-                        };
-                        ui.checkbox(
-                            &mut self.main_color_picker_data.is_insert_right,
-                            insert_mode_unicode,
-                        )
-                        .on_hover_text(format!(
-                            "Insert new points in {} direction",
-                            insert_mode_unicode
-                        ));
-                        ui.checkbox(&mut self.main_color_picker_data.is_window_lock, "🆘")
-                            .on_hover_text("Clamps the control points so they are contained");
-                    });
-
-                    ui.horizontal(|ui| {
-                        egui::ComboBox::new(12312312, "")
-                            .selected_text(format!("{:?}", self.color_copy_format))
-                            .show_ui(ui, |ui| {
-                                ui.set_min_width(60.0);
-                                ui.selectable_value(
-                                    &mut self.color_copy_format,
-                                    ColorStringCopy::HEX,
-                                    "Hex",
-                                );
-                                ui.selectable_value(
-                                    &mut self.color_copy_format,
-                                    ColorStringCopy::HEXNOA,
-                                    "Hex(no A)",
-                                );
-                            })
-                            .response
-                            .on_hover_text("Color Copy Format");
-
-                        egui::ComboBox::new(12312313, "")
-                            .selected_text(format!("{:?}", self.spline_mode))
-                            .show_ui(ui, |ui| {
-                                ui.set_min_width(60.0);
-                                ui.selectable_value(
-                                    &mut self.spline_mode,
-                                    SplineMode::Linear,
-                                    "Linear",
-                                );
-                                ui.selectable_value(
-                                    &mut self.spline_mode,
-                                    SplineMode::Bezier,
-                                    "Bezier(Bugged)",
-                                );
-                                ui.selectable_value(
-                                    &mut self.spline_mode,
-                                    SplineMode::HermiteBezier,
-                                    "Hermite(NYI)",
-                                );
-                                ui.selectable_value(
-                                    &mut self.spline_mode,
-                                    SplineMode::Polynomial,
-                                    "Polynomial(Crash)",
-                                );
-                            })
-                            .response
-                            .on_hover_text("Spline Mode");
-                    });
+                    self.draw_ui_main_options(ui);
 
                     main_response
                 });
@@ -328,7 +323,7 @@ impl ZApp {
                     }
                     _ => {}
                 }
-                match self.main_color_picker_data.control_point_right_clicked {
+                match self.control_point_right_clicked {
                     Some(a) => {
                         self.control_points.remove(a);
                         self.previewer_data.points_preview_sizes.remove(a);
