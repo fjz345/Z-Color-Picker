@@ -16,8 +16,8 @@ use splines::{interpolate::Interpolator, Interpolation, Key, Spline};
 
 use crate::{
     color_picker::{
-        color_button_copy, format_color_as, main_color_picker, response_copy_color_on_click,
-        ColorStringCopy, MainColorPickerData, PreviewerData, SplineMode,
+        format_color_as, main_color_picker, ColorStringCopy, MainColorPickerData, PreviewerData,
+        SplineMode,
     },
     curves::{control_points_to_spline, Bezier, PaintCurve},
     gradient::{color_function_gradient, mesh_gradient, vertex_gradient, Gradient},

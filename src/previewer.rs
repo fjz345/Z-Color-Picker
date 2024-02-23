@@ -7,10 +7,10 @@ use eframe::{
 };
 
 use crate::{
-    color_picker::{response_copy_color_on_click, ColorStringCopy, PreviewerData, SplineMode},
+    color_picker::{ColorStringCopy, PreviewerData, SplineMode},
     curves::control_points_to_spline,
     gradient::color_function_gradient,
-    ui_common::{background_checkers, color_button},
+    ui_common::{background_checkers, color_button, response_copy_color_on_click},
     CONTROL_POINT_TYPE,
 };
 
