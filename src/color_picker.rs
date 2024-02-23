@@ -38,6 +38,14 @@ pub enum ColorStringCopy {
     SRGBA,
 }
 
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum SplineMode {
+    Linear,
+    Bezier,
+    HermiteBezier,
+    Polynomial,
+}
+
 pub fn format_color_as(
     color: Color32,
     format_type: ColorStringCopy,

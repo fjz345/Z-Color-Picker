@@ -17,7 +17,7 @@ use splines::{interpolate::Interpolator, Interpolation, Key, Spline};
 use crate::{
     color_picker::{
         color_button_copy, format_color_as, main_color_picker, response_copy_color_on_click,
-        ColorStringCopy, MainColorPickerData, PreviewerData,
+        ColorStringCopy, MainColorPickerData, PreviewerData, SplineMode,
     },
     curves::{control_points_to_spline, Bezier, PaintCurve},
     gradient::{color_function_gradient, mesh_gradient, vertex_gradient, Gradient},
@@ -42,6 +42,7 @@ pub struct ZApp {
     main_color_picker_data: MainColorPickerData,
     previewer_data: PreviewerData,
     color_copy_format: ColorStringCopy,
+    spline_mode: SplineMode,
     debug_control_points: bool,
     double_click_event: Option<Pos2>,
 }
@@ -68,6 +69,7 @@ impl ZApp {
             },
             previewer_data: PreviewerData::new(0),
             color_copy_format: ColorStringCopy::HEX,
+            spline_mode: SplineMode::Bezier,
             debug_control_points: false,
             double_click_event: None,
             control_points: Vec::with_capacity(4),
@@ -240,7 +242,7 @@ impl ZApp {
                         ui.checkbox(&mut self.main_color_picker_data.is_window_lock, "🆘")
                             .on_hover_text("Clamps the control points so they are contained");
 
-                        egui::ComboBox::from_label("")
+                        egui::ComboBox::new(12312312, "")
                             .selected_text(format!("{:?}", self.color_copy_format))
                             .show_ui(ui, |ui| {
                                 ui.style_mut().wrap = Some(false);
@@ -258,6 +260,35 @@ impl ZApp {
                             })
                             .response
                             .on_hover_text("Color Copy Format");
+
+                        egui::ComboBox::new(12312313, "")
+                            .selected_text(format!("{:?}", self.spline_mode))
+                            .show_ui(ui, |ui| {
+                                ui.style_mut().wrap = Some(false);
+                                ui.set_min_width(60.0);
+                                ui.selectable_value(
+                                    &mut self.spline_mode,
+                                    SplineMode::Linear,
+                                    "Linear",
+                                );
+                                ui.selectable_value(
+                                    &mut self.spline_mode,
+                                    SplineMode::Bezier,
+                                    "Bezier",
+                                );
+                                ui.selectable_value(
+                                    &mut self.spline_mode,
+                                    SplineMode::HermiteBezier,
+                                    "Hermite",
+                                );
+                                ui.selectable_value(
+                                    &mut self.spline_mode,
+                                    SplineMode::Polynomial,
+                                    "Polynomial",
+                                );
+                            })
+                            .response
+                            .on_hover_text("Spline Mode");
                     });
 
                     main_response
