@@ -4,7 +4,7 @@ use crate::egui::TextStyle;
 use eframe::{
     egui::{color_picker::Alpha, vec2, Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
     emath::{lerp, remap_clamp},
-    epaint::{self, pos2, Color32, Mesh, Rect, Rgba, Shape, Stroke, Vec2},
+    epaint::{pos2, Color32, Mesh, Rect, Rgba, Shape, Stroke, Vec2},
 };
 use std::sync::Arc;
 

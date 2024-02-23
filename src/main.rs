@@ -18,6 +18,9 @@ mod ui_common;
 =============================================================
 TODO:
 
+BUGS
+* Bezier mode hue interpolation
+
 FEATURES
 * Set spline t values based on distance in H-S-V space
 * Hex Copy Gradient color
@@ -37,6 +40,7 @@ FEATURES
 * User feedback when copying color value
 * Different color spaces
 * Import curves to photoshop????
+* Better ui widget dynamic rezizing
 =============================================================
 */
 fn main() {

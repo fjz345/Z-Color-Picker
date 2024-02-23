@@ -1,29 +1,15 @@
-use std::{
-    borrow::{Borrow, BorrowMut},
-    default,
-    fmt::format,
-    sync::Arc,
-};
-
 use eframe::{
     egui::{
         self,
         color_picker::{show_color, Alpha},
-        ComboBox, InnerResponse, Label, Layout, Painter, PointerButton, Response, Sense, TextStyle,
-        Ui, Widget,
+        Layout, PointerButton, Response, Ui,
     },
-    emath::{lerp, remap_clamp},
-    epaint::{self, pos2, vec2, Color32, HsvaGamma, Mesh, Pos2, Rect, Rgba, Shape, Stroke, Vec2},
+    epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
-use splines::{Interpolation, Spline};
 
 use crate::{
-    curves::{self, Bezier, PaintCurve},
-    hsv_key_value::HsvKeyValue,
-    ui_common::{
-        color_slider_1d, color_slider_2d, color_text_ui, contrast_color,
-        response_copy_color_on_click,
-    },
+    curves::PaintCurve,
+    ui_common::{color_slider_1d, color_slider_2d, color_text_ui, response_copy_color_on_click},
     CONTROL_POINT_TYPE,
 };
 

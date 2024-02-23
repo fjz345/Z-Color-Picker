@@ -1,18 +1,14 @@
 //https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
 
-use std::ops::Mul;
-
 use ecolor::{Color32, HsvaGamma};
-use eframe::egui::color_picker::show_color;
-use eframe::egui::{self, Id, Sense, Ui};
+use eframe::egui::{self, Sense, Ui};
+use eframe::emath;
 use eframe::epaint::{Pos2, Rect, Shape, Stroke, Vec2};
-use eframe::{emath, epaint};
-use egui::epaint::{CubicBezierShape, PathShape, QuadraticBezierShape};
+use egui::epaint::PathShape;
 use splines::{Interpolation, Key, Spline};
 
 use crate::color_picker::SplineMode;
-use crate::math::{add_array, add_array_array, combination, mul_array};
-use crate::ui_common::contrast_color;
+use crate::math::{add_array_array, mul_array};
 use crate::CONTROL_POINT_TYPE;
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]

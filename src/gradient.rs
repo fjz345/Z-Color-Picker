@@ -1,4 +1,4 @@
-use eframe::egui::{self, *};
+use eframe::egui::*;
 
 pub fn color_function_gradient(
     ui: &mut Ui,
@@ -66,7 +66,6 @@ pub fn mesh_gradient(ui: &mut Ui, size: Vec2, vertex_colors: &[Color32]) -> Resp
 }
 
 pub fn vertex_gradient(ui: &mut Ui, size: Vec2, bg_fill: Color32, gradient: &Gradient) -> Response {
-    use egui::epaint::*;
     let (rect, response) = ui.allocate_at_least(size, Sense::hover());
     if bg_fill != Default::default() {
         let mut mesh = Mesh::default();

@@ -1,8 +1,6 @@
 use ecolor::HsvaGamma;
 use eframe::{
-    egui::{
-        self, Layout, Painter, PointerButton, Response, Sense, Ui, Vec2, WidgetInfo, WidgetType,
-    },
+    egui::{self, Layout, PointerButton, Response, Sense, Ui, Vec2},
     epaint::{Color32, Rect},
 };
 
@@ -10,7 +8,7 @@ use crate::{
     color_picker::{ColorStringCopy, PreviewerData, SplineMode},
     curves::control_points_to_spline,
     gradient::color_function_gradient,
-    ui_common::{background_checkers, color_button, response_copy_color_on_click},
+    ui_common::{color_button, response_copy_color_on_click},
     CONTROL_POINT_TYPE,
 };
 

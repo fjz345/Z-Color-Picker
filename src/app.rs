@@ -1,29 +1,13 @@
-use std::default;
-
-use bspline::Interpolate;
 use eframe::{
-    egui::{
-        self, color_picker::Alpha, lerp, Frame, Id, InnerResponse, LayerId, Layout, Painter,
-        PointerButton, Response, Sense, Ui, Widget, Window,
-    },
-    emath,
-    epaint::{Color32, Hsva, HsvaGamma, Pos2, Rect, Rounding, Vec2},
+    egui::{self, Layout, PointerButton, Ui, Window},
+    epaint::{Pos2, Vec2},
     CreationContext,
 };
-use env_logger::fmt::Color;
-use palette::white_point::A;
-use splines::{interpolate::Interpolator, Interpolation, Key, Spline};
 
 use crate::{
-    color_picker::{
-        format_color_as, main_color_picker, ColorStringCopy, PreviewerData, SplineMode,
-    },
-    curves::{control_points_to_spline, Bezier, PaintCurve},
-    gradient::{color_function_gradient, mesh_gradient, vertex_gradient, Gradient},
-    hsv_key_value::HsvKeyValue,
+    color_picker::{main_color_picker, ColorStringCopy, PreviewerData, SplineMode},
     math::hue_lerp,
     previewer::draw_ui_previewer,
-    ui_common::color_button,
     CONTROL_POINT_TYPE,
 };
 
