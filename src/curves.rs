@@ -10,6 +10,7 @@ use eframe::{emath, epaint};
 use egui::epaint::{CubicBezierShape, PathShape, QuadraticBezierShape};
 use splines::{Interpolation, Key, Spline};
 
+use crate::color_picker::SplineMode;
 use crate::math::{add_array, add_array_array, combination, mul_array};
 use crate::ui_common::contrast_color;
 use crate::CONTROL_POINT_TYPE;
@@ -45,6 +46,7 @@ impl PaintCurve {
         &mut self,
         ui: &mut Ui,
         control_points: &[CONTROL_POINT_TYPE],
+        spline_mode: SplineMode,
         is_middle_interpolated: bool,
         response: &egui::Response,
     ) -> (
@@ -57,7 +59,7 @@ impl PaintCurve {
         Option<usize>,
         Option<(egui::Response, usize)>,
     ) {
-        let spline = control_points_to_spline(&control_points[..]);
+        let spline = control_points_to_spline(&control_points[..], spline_mode);
         let num_control_points = spline.len();
         if num_control_points <= 0 {
             return (None, None, None);
@@ -271,12 +273,33 @@ impl<const D: usize, const N: usize> Bezier<D, N> {
 
 pub fn control_points_to_spline(
     control_points: &[CONTROL_POINT_TYPE],
+    spline_mode: SplineMode,
 ) -> Spline<f32, CONTROL_POINT_TYPE> {
-    Spline::from_vec(
-        control_points
-            .iter()
-            .enumerate()
-            .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::Linear))
-            .collect(),
-    )
+    match spline_mode {
+        SplineMode::Linear => Spline::from_vec(
+            control_points
+                .iter()
+                .enumerate()
+                .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::Linear))
+                .collect(),
+        ),
+        SplineMode::Bezier => Spline::from_vec(
+            control_points
+                .iter()
+                .enumerate()
+                .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::Bezier(*e.1)))
+                .collect(),
+        ),
+        SplineMode::Polynomial => todo!(),
+        _ => {
+            println!("Not Implemented...");
+            Spline::from_vec(
+                control_points
+                    .iter()
+                    .enumerate()
+                    .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::Linear))
+                    .collect(),
+            )
+        }
+    }
 }

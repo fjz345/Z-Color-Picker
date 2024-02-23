@@ -7,7 +7,7 @@ use eframe::{
 };
 
 use crate::{
-    color_picker::{response_copy_color_on_click, ColorStringCopy, PreviewerData},
+    color_picker::{response_copy_color_on_click, ColorStringCopy, PreviewerData, SplineMode},
     curves::control_points_to_spline,
     gradient::color_function_gradient,
     ui_common::{background_checkers, color_button},
@@ -18,6 +18,7 @@ fn draw_ui_previewer_control_points(
     ui: &mut Ui,
     size: Vec2,
     control_points: &[CONTROL_POINT_TYPE],
+    spline_mode: SplineMode,
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
 ) {
@@ -30,7 +31,7 @@ fn draw_ui_previewer_control_points(
 
     let ui_size: Vec2 = previewer_ui_control_points.available_size();
 
-    let spline = control_points_to_spline(control_points);
+    let spline = control_points_to_spline(control_points, spline_mode);
     let num_spline_points = spline.len();
     let size_per_color_x = ui_size.x / (num_spline_points as f32);
     let size_per_color_y = ui_size.y;
@@ -96,6 +97,7 @@ fn draw_ui_previewer_curve(
     ui: &mut Ui,
     size: Vec2,
     control_points: &[CONTROL_POINT_TYPE],
+    spline_mode: SplineMode,
     previewer_data: &PreviewerData,
     color_copy_format: ColorStringCopy,
 ) {
@@ -104,7 +106,7 @@ fn draw_ui_previewer_curve(
     let mut previewer_ui_curve = ui.child_ui(rect, Layout::left_to_right(egui::Align::Min));
     previewer_ui_curve.spacing_mut().item_spacing = Vec2::ZERO;
 
-    let spline = control_points_to_spline(control_points);
+    let spline = control_points_to_spline(control_points, spline_mode);
     let colors: Vec<Color32> = spline
         .keys()
         .iter()
@@ -147,6 +149,7 @@ fn draw_ui_previewer_curve(
 pub fn draw_ui_previewer(
     ui: &mut Ui,
     control_points: &[CONTROL_POINT_TYPE],
+    spline_mode: SplineMode,
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
 ) {
@@ -157,6 +160,7 @@ pub fn draw_ui_previewer(
             ui,
             previewer_rect.size() * Vec2::new(1.0, 0.5),
             control_points,
+            spline_mode,
             previewer_data,
             color_copy_format,
         );
@@ -164,6 +168,7 @@ pub fn draw_ui_previewer(
             ui,
             previewer_rect.size() * Vec2::new(1.0, 0.5),
             control_points,
+            spline_mode,
             previewer_data,
             color_copy_format,
         );

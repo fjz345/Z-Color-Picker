@@ -69,7 +69,7 @@ impl ZApp {
             },
             previewer_data: PreviewerData::new(0),
             color_copy_format: ColorStringCopy::HEX,
-            spline_mode: SplineMode::Bezier,
+            spline_mode: SplineMode::Linear,
             debug_control_points: false,
             double_click_event: None,
             control_points: Vec::with_capacity(4),
@@ -211,6 +211,7 @@ impl ZApp {
                     let main_response = main_color_picker(
                         ui,
                         &mut self.control_points[..],
+                        self.spline_mode,
                         &mut self.main_color_picker_data,
                         &mut self.color_copy_format,
                     );
@@ -241,11 +242,12 @@ impl ZApp {
                         ));
                         ui.checkbox(&mut self.main_color_picker_data.is_window_lock, "🆘")
                             .on_hover_text("Clamps the control points so they are contained");
+                    });
 
+                    ui.horizontal(|ui| {
                         egui::ComboBox::new(12312312, "")
                             .selected_text(format!("{:?}", self.color_copy_format))
                             .show_ui(ui, |ui| {
-                                ui.style_mut().wrap = Some(false);
                                 ui.set_min_width(60.0);
                                 ui.selectable_value(
                                     &mut self.color_copy_format,
@@ -264,7 +266,6 @@ impl ZApp {
                         egui::ComboBox::new(12312313, "")
                             .selected_text(format!("{:?}", self.spline_mode))
                             .show_ui(ui, |ui| {
-                                ui.style_mut().wrap = Some(false);
                                 ui.set_min_width(60.0);
                                 ui.selectable_value(
                                     &mut self.spline_mode,
@@ -274,17 +275,17 @@ impl ZApp {
                                 ui.selectable_value(
                                     &mut self.spline_mode,
                                     SplineMode::Bezier,
-                                    "Bezier",
+                                    "Bezier(Bugged)",
                                 );
                                 ui.selectable_value(
                                     &mut self.spline_mode,
                                     SplineMode::HermiteBezier,
-                                    "Hermite",
+                                    "Hermite(NYI)",
                                 );
                                 ui.selectable_value(
                                     &mut self.spline_mode,
                                     SplineMode::Polynomial,
-                                    "Polynomial",
+                                    "Polynomial(Crash)",
                                 );
                             })
                             .response
@@ -339,6 +340,7 @@ impl ZApp {
                 draw_ui_previewer(
                     ui,
                     &self.control_points[..],
+                    self.spline_mode,
                     &mut self.previewer_data,
                     self.color_copy_format,
                 );

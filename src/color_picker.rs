@@ -15,6 +15,7 @@ use eframe::{
     emath::{lerp, remap_clamp},
     epaint::{self, pos2, vec2, Color32, HsvaGamma, Mesh, Pos2, Rect, Rgba, Shape, Stroke, Vec2},
 };
+use splines::{Interpolation, Spline};
 
 use crate::{
     curves::{self, Bezier, PaintCurve},
@@ -127,6 +128,7 @@ pub struct MainColorPickerData {
 pub fn main_color_picker(
     ui: &mut Ui,
     control_points: &mut [CONTROL_POINT_TYPE],
+    spline_mode: SplineMode,
     data: &mut MainColorPickerData,
     color_copy_format: &mut ColorStringCopy,
 ) -> Response {
@@ -291,6 +293,7 @@ pub fn main_color_picker(
             data.paint_curve.ui_content(
                 ui,
                 control_points,
+                spline_mode,
                 data.is_hue_middle_interpolated,
                 &slider_2d_reponse,
             );
