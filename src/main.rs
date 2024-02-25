@@ -27,6 +27,7 @@ FEATURES
 * Flip Control Points button
 * Beginning/end of curve visuals (identifiers)
 * Hue multiple control points
+* Lerp hue at 0.5 dist to get smoother result
 * Different curve types
     - Bezier
     - Polynomial

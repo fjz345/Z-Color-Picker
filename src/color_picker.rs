@@ -8,7 +8,7 @@ use eframe::{
 };
 
 use crate::{
-    curves::PaintCurve,
+    curves::ui_ordered_control_points,
     ui_common::{color_slider_1d, color_slider_2d, color_text_ui, response_copy_color_on_click},
     CONTROL_POINT_TYPE,
 };
@@ -267,11 +267,18 @@ pub fn main_color_picker(
             unwrapped[1] = color_to_show.v;
         }
 
+        // let (dragged_points_response, selected_index, hovering_control_point) =
+        //     PaintCurve::default().ui_content(
+        //         ui,
+        //         control_points,
+        //         spline_mode,
+        //         is_hue_middle_interpolated,
+        //         &slider_2d_reponse,
+        //     );
         let (dragged_points_response, selected_index, hovering_control_point) =
-            PaintCurve::default().ui_content(
+            ui_ordered_control_points(
                 ui,
                 control_points,
-                spline_mode,
                 is_hue_middle_interpolated,
                 &slider_2d_reponse,
             );
