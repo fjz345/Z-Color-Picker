@@ -22,15 +22,17 @@ BUGS
 * Bezier mode hue interpolation
 
 FEATURES
-* Flip Control Points button
 * Beginning/end of curve visuals (identifiers)
 * Hue multiple control points
 * Lerp hue at 0.5 dist to get smoother result
+* Lerp color instead of lerpx,lerpy,lerp_hue
+    - Fix space
 * Different curve types
     - Bezier
     - Polynomial
 * Preset save/load
 * Preset hue with stepping for points
+* Quantizize gradient previewer
 * Visualization curves
     - Brightness
     - Saturation
