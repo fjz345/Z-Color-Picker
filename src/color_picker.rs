@@ -8,7 +8,7 @@ use eframe::{
 };
 
 use crate::{
-    curves::ui_ordered_control_points,
+    curves::{ui_ordered_control_points, ui_ordered_spline_gradient},
     ui_common::{color_slider_1d, color_slider_2d, color_text_ui, response_copy_color_on_click},
     CONTROL_POINT_TYPE,
 };
@@ -106,7 +106,7 @@ pub fn main_color_picker(
     control_points: &mut [CONTROL_POINT_TYPE],
     spline_mode: SplineMode,
     color_copy_format: &mut ColorStringCopy,
-    mut last_modifying_point_index: &mut Option<usize>,
+    last_modifying_point_index: &mut Option<usize>,
     dragging_bezier_index: &mut Option<usize>,
     control_point_right_clicked: &mut Option<usize>,
     is_hue_middle_interpolated: bool,
@@ -131,7 +131,7 @@ pub fn main_color_picker(
             None => None,
         };
 
-        let mut dummy_color = HsvaGamma {
+        let dummy_color = HsvaGamma {
             h: 0.0,
             s: 0.0,
             v: 0.0,
@@ -282,6 +282,10 @@ pub fn main_color_picker(
                 is_hue_middle_interpolated,
                 &slider_2d_reponse,
             );
+
+        let spline_gradient_repsonse =
+            ui_ordered_spline_gradient(ui, control_points, spline_mode, &slider_2d_reponse);
+
         *control_point_right_clicked = match hovering_control_point {
             Some(a) => {
                 if a.0.clicked_by(PointerButton::Secondary) {

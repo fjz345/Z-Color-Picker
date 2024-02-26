@@ -1,21 +1,24 @@
 //https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
 
+use std::collections::btree_set::SymmetricDifference;
+
 use ecolor::{Color32, HsvaGamma};
 use eframe::egui::{self, Sense, Ui};
-use eframe::emath;
-use eframe::epaint::{Pos2, Rect, Shape, Stroke, Vec2};
+use eframe::epaint::{Pos2, QuadraticBezierShape, Rect, Shape, Stroke, Vec2};
+use eframe::{emath, epaint};
 use egui::epaint::PathShape;
 use splines::{Interpolation, Key, Spline};
 
 use crate::color_picker::SplineMode;
-use crate::math::{add_array_array, mul_array};
+use crate::hsv_key_value::HsvKeyValue;
+use crate::math::{add_array_array, dist_vec2, mul_array, norm_vec2};
 use crate::CONTROL_POINT_TYPE;
 
 pub fn ui_ordered_control_points(
     ui: &mut Ui,
     control_points: &[CONTROL_POINT_TYPE],
     is_middle_interpolated: bool,
-    response: &egui::Response,
+    parent_response: &egui::Response,
 ) -> (
     /*
         dragged_point_response,
@@ -32,7 +35,7 @@ pub fn ui_ordered_control_points(
     }
     let to_screen = emath::RectTransform::from_to(
         Rect::from_min_size(Pos2::ZERO, Vec2::new(1.0, 1.0)),
-        response.rect,
+        parent_response.rect,
     );
 
     let mut dragged_point_response = None;
@@ -60,8 +63,11 @@ pub fn ui_ordered_control_points(
             let point_in_screen: Pos2 = to_screen.transform_pos(point_xy);
             let control_point_ui_rect =
                 Rect::from_center_size(point_in_screen, control_point_draw_size);
-            let control_point_response =
-                ui.interact(control_point_ui_rect, response.id.with(i), Sense::drag());
+            let control_point_response = ui.interact(
+                control_point_ui_rect,
+                parent_response.id.with(i),
+                Sense::drag(),
+            );
 
             // TODO: CHECK THIS LOGIC (is_inactive, is_inactive_click_or_drag)
             let mut is_inactive: bool = false;
@@ -78,7 +84,7 @@ pub fn ui_ordered_control_points(
                 is_inactive_click_or_drag = is_inactive;
 
                 if !is_inactive {
-                    point_xy += control_point_response.drag_delta() / response.rect.size();
+                    point_xy += control_point_response.drag_delta() / parent_response.rect.size();
                     selected_index = Some(i);
                     dragged_point_response = Some(control_point_response.clone());
                 }
@@ -131,7 +137,7 @@ pub fn ui_ordered_control_points(
             point = to_screen.from().clamp(point);
 
             let point_in_screen = to_screen.transform_pos(point);
-            let stroke: Stroke = ui.style().interact(response).fg_stroke;
+            let stroke: Stroke = ui.style().interact(parent_response).fg_stroke;
 
             Shape::circle_stroke(point_in_screen, control_point_radius, stroke)
         })
@@ -142,7 +148,7 @@ pub fn ui_ordered_control_points(
         let mut point = Pos2::new(key[0], 1.0 - key[1]);
 
         let point_in_screen = to_screen.transform_pos(point);
-        let stroke: Stroke = ui.style().interact(response).fg_stroke;
+        let stroke: Stroke = ui.style().interact(parent_response).fg_stroke;
 
         Some(Shape::circle_stroke(
             point_in_screen,
@@ -210,6 +216,124 @@ pub fn ui_ordered_control_points(
     )
 }
 
+pub fn generate_spline_points_with_distance(
+    control_points: &[CONTROL_POINT_TYPE],
+    spline_mode: SplineMode,
+    t_distance: f32,
+) -> Vec<CONTROL_POINT_TYPE> {
+    let mut spline_samples = Vec::new();
+
+    if control_points.len() <= 1 {
+        return spline_samples;
+    }
+
+    let spline = control_points_to_spline(&control_points, spline_mode);
+    let spline_max_t = 1.0 * spline.len() as f32;
+    let mut curr_t = 0.0;
+    while curr_t <= spline_max_t {
+        let spline_sample = spline.clamped_sample(curr_t);
+
+        match spline_sample {
+            Some(key) => spline_samples.push(key),
+            None => {}
+        }
+
+        curr_t += t_distance;
+    }
+
+    let last_spline_sample = spline.clamped_sample(spline_max_t);
+    match last_spline_sample {
+        Some(key) => spline_samples.push(key),
+        None => todo!(),
+    }
+
+    spline_samples
+}
+
+pub fn sub_divide_control_points(
+    control_points: &[CONTROL_POINT_TYPE],
+    distance_per_point: f32,
+) -> Vec<CONTROL_POINT_TYPE> {
+    let capacity: usize = control_points.len() * 4;
+    let mut sub_divided: Vec<CONTROL_POINT_TYPE> = Vec::with_capacity(capacity);
+
+    for i in 1..control_points.len() {
+        sub_divided.push(control_points[i - 1]);
+        let hue_to_use = control_points[i - 1][2];
+        let first = control_points[i - 1].pos2();
+        let last = control_points[i].pos2();
+        let dir = (last - first).normalized();
+        let mut sub_div_start = first;
+        let mut distance_to_end = (last - first).dot(last - first).sqrt();
+        while distance_to_end > distance_per_point {
+            let new: Pos2 = sub_div_start + distance_per_point * dir;
+            distance_to_end -= distance_per_point;
+            sub_divided.push(CONTROL_POINT_TYPE::new(new.x, new.y, hue_to_use));
+            sub_div_start = new;
+        }
+        let last_new = sub_div_start + distance_to_end.max(0.0) * dir;
+        sub_divided.push(CONTROL_POINT_TYPE::new(last_new.x, last_new.y, hue_to_use));
+    }
+    if control_points.last().is_some() {
+        sub_divided.push(*control_points.last().unwrap());
+    }
+
+    sub_divided
+}
+
+pub fn ui_ordered_spline_gradient(
+    ui: &mut Ui,
+    control_points: &[CONTROL_POINT_TYPE],
+    spline_mode: SplineMode,
+    parent_response: &egui::Response,
+) -> Option<egui::Response> {
+    let num_control_points = control_points.len();
+    if num_control_points <= 1 {
+        return None;
+    }
+
+    let response: egui::Response = ui.interact(
+        parent_response.rect,
+        parent_response.id.with(190124502),
+        Sense::focusable_noninteractive(),
+    );
+
+    let to_screen = emath::RectTransform::from_to(
+        Rect::from_min_size(Pos2::ZERO, Vec2::new(1.0, 1.0)),
+        response.rect,
+    );
+
+    // let sub_divided_control_points = sub_divide_control_points(control_points, 0.01);
+    let spline_points = generate_spline_points_with_distance(control_points, spline_mode, 0.01);
+
+    for i in 1..spline_points.len() {
+        let first = spline_points[i - 1];
+        let next = spline_points[i];
+
+        // let spline = control_points_to_spline(&sub_divided_control_points, spline_mode);
+        let segment_color = first.color();
+
+        let control_point_radius = 8.0;
+
+        let point_first = first.pos2();
+        let point_next = next.pos2();
+        let mut points_in_screen: Vec<Pos2> = Vec::with_capacity(2);
+        let point_in_screen_first = to_screen * Pos2::new(point_first.x, 1.0 - point_first.y);
+        let point_in_screen_next = to_screen * Pos2::new(point_next.x, 1.0 - point_next.y);
+        points_in_screen.push(point_in_screen_first);
+        points_in_screen.push(point_in_screen_next);
+
+        let shape = PathShape::line(
+            points_in_screen,
+            Stroke::new(control_point_radius * 1.6, segment_color),
+        );
+
+        ui.painter().add(shape);
+    }
+
+    Some(response)
+}
+
 pub struct Bezier<const D: usize, const N: usize> {
     pub control_points: [[f32; D]; N],
 }
@@ -256,6 +380,33 @@ pub fn control_points_to_spline(
                 .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::Bezier(*e.1)))
                 .collect(),
         ),
+        SplineMode::HermiteBezier => {
+            let mut new_spline = Spline::from_vec(
+                control_points
+                    .iter()
+                    .enumerate()
+                    .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::CatmullRom))
+                    .collect(),
+            );
+
+            if control_points.len() >= 1 {
+                new_spline.add(Key::new(
+                    0.0,
+                    *control_points.first().unwrap(),
+                    Interpolation::CatmullRom,
+                ));
+            }
+
+            if control_points.len() >= 2 {
+                new_spline.add(Key::new(
+                    (new_spline.len()) as f32,
+                    *control_points.last().unwrap(),
+                    Interpolation::CatmullRom,
+                ));
+            }
+
+            new_spline
+        }
         SplineMode::Polynomial => todo!(),
         _ => {
             println!("Not Implemented...");

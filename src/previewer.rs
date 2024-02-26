@@ -16,7 +16,6 @@ fn draw_ui_previewer_control_points(
     ui: &mut Ui,
     size: Vec2,
     control_points: &[CONTROL_POINT_TYPE],
-    spline_mode: SplineMode,
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
 ) {
@@ -29,23 +28,22 @@ fn draw_ui_previewer_control_points(
 
     let ui_size: Vec2 = previewer_ui_control_points.available_size();
 
-    let spline = control_points_to_spline(control_points, spline_mode);
-    let num_spline_points = spline.len();
-    let size_per_color_x = ui_size.x / (num_spline_points as f32);
+    let num_control_points = control_points.len();
+    let size_per_color_x = ui_size.x / (num_control_points as f32);
     let size_per_color_y = ui_size.y;
     let previewer_sizes_sum: f32 = previewer_data.points_preview_sizes.iter().sum();
 
-    let mut points: Vec<Vec2> = Vec::with_capacity(num_spline_points);
+    let mut points: Vec<Vec2> = Vec::with_capacity(num_control_points);
     for cp in control_points {
         points.push(Vec2::new(cp[0], cp[1]));
     }
 
-    for i in 0..num_spline_points {
+    for i in 0..num_control_points {
         if points.len() <= i {
             break;
         }
         let color_data = &points[i];
-        let color_data_hue = spline.get(i).unwrap().value[2];
+        let color_data_hue = control_points[i][2];
         let mut color_at_point: HsvaGamma = HsvaGamma {
             h: color_data_hue,
             s: color_data.x,
@@ -53,8 +51,8 @@ fn draw_ui_previewer_control_points(
             a: 1.0,
         };
 
-        let size_weight: f32 =
-            previewer_data.points_preview_sizes[i] * num_spline_points as f32 / previewer_sizes_sum;
+        let size_weight: f32 = previewer_data.points_preview_sizes[i] * num_control_points as f32
+            / previewer_sizes_sum;
         let response: Response = color_button(
             &mut previewer_ui_control_points,
             Vec2 {
@@ -80,7 +78,7 @@ fn draw_ui_previewer_control_points(
             previewer_data.points_preview_sizes[i] =
                 previewer_data.points_preview_sizes[i].max(0.0);
 
-            let min_percentage_x = 0.5 * (1.0 / num_spline_points as f32);
+            let min_percentage_x = 0.5 * (1.0 / num_control_points as f32);
             let min_preview_size: f32 = min_percentage_x * previewer_sizes_sum;
 
             // TODO: loop over all and set min_preview_size
@@ -105,22 +103,9 @@ fn draw_ui_previewer_curve(
     previewer_ui_curve.spacing_mut().item_spacing = Vec2::ZERO;
 
     let spline = control_points_to_spline(control_points, spline_mode);
-    let colors: Vec<Color32> = spline
-        .keys()
-        .iter()
-        .map(|a| {
-            HsvaGamma {
-                h: a.value[2],
-                s: a.value[0],
-                v: a.value[1],
-                a: 1.0,
-            }
-            .into()
-        })
-        .collect();
 
     color_function_gradient(&mut previewer_ui_curve, rect.size(), |x| {
-        if spline.len() <= 0 {
+        if control_points.len() <= 0 {
             return HsvaGamma {
                 h: 0.0,
                 s: 0.0,
@@ -128,19 +113,15 @@ fn draw_ui_previewer_curve(
                 a: 0.0,
             }
             .into();
+        } else if control_points.len() <= 1 {
+            return control_points[0].color();
         }
 
         let sample = spline
-            .clamped_sample(x * spline.get(spline.len() - 1).unwrap().t as f32)
+            .clamped_sample(x * (control_points.len() - 1) as f32)
             .unwrap_or_default();
 
-        HsvaGamma {
-            h: sample[2],
-            s: sample[0],
-            v: sample[1],
-            a: 1.0,
-        }
-        .into()
+        sample.color()
     });
 }
 
@@ -158,7 +139,6 @@ pub fn draw_ui_previewer(
             ui,
             previewer_rect.size() * Vec2::new(1.0, 0.5),
             control_points,
-            spline_mode,
             previewer_data,
             color_copy_format,
         );

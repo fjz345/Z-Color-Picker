@@ -1,4 +1,4 @@
-use eframe::egui::lerp;
+use eframe::egui::{lerp, Vec2};
 
 pub fn factorial(n: u64) -> u64 {
     (1..=n).product()
@@ -50,6 +50,15 @@ pub fn add_array_array<const D: usize, T: std::ops::AddAssign + std::marker::Cop
         lhs[i] += rhs[i];
     }
     lhs
+}
+
+pub fn dist_vec2(vec: &[f32; 2]) -> f32 {
+    (vec[0] * vec[0] + vec[1] * vec[1]).sqrt()
+}
+
+pub fn norm_vec2(vec: &[f32; 2]) -> Vec2 {
+    let dist = dist_vec2(vec);
+    Vec2::new(vec[0] / dist, vec[1] / dist)
 }
 
 pub fn hue_distance(hue0: f32, hue1: f32) -> f32 {

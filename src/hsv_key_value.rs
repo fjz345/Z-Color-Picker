@@ -1,3 +1,6 @@
+use ecolor::{Color32, HsvaGamma};
+use eframe::egui::{Pos2, Vec2};
+
 use crate::math::hue_lerp;
 
 type HsvKeyValueInnerType = [f32; 3];
@@ -11,6 +14,29 @@ impl Default for HsvKeyValue {
         Self {
             val: [0.0, 0.0, 0.0],
         }
+    }
+}
+
+impl HsvKeyValue {
+    pub fn new(x: f32, y: f32, h: f32) -> Self {
+        Self { val: [x, y, h] }
+    }
+    pub fn vec2(&self) -> Vec2 {
+        Vec2::new(self[0], self[1])
+    }
+
+    pub fn pos2(&self) -> Pos2 {
+        Pos2::new(self[0], self[1])
+    }
+
+    pub fn color(&self) -> Color32 {
+        HsvaGamma {
+            h: self[2],
+            s: self[0],
+            v: self[1],
+            a: 1.0,
+        }
+        .into()
     }
 }
 

@@ -46,7 +46,7 @@ impl ZApp {
             state: AppState::Startup,
             previewer_data: PreviewerData::new(0),
             color_copy_format: ColorStringCopy::HEX,
-            spline_mode: SplineMode::Linear,
+            spline_mode: SplineMode::HermiteBezier,
             debug_control_points: false,
             double_click_event: None,
             control_points: Vec::with_capacity(4),
