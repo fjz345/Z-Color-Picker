@@ -22,6 +22,8 @@ BUGS
 * Bezier mode hue interpolation
 
 FEATURES
+* standard Color pick for control points
+* slide control point previewer modifies t values of spline
 * Beginning/end of curve visuals (identifiers)
 * Hue multiple control points
 * Lerp hue at 0.5 dist to get smoother result
