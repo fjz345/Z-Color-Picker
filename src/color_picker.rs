@@ -102,6 +102,10 @@ impl PreviewerData {
             *point_ref = point_ref.max(min_size);
         }
     }
+
+    pub fn sum(&self) -> f32 {
+        self.points_preview_sizes.iter().sum()
+    }
 }
 
 pub fn main_color_picker(

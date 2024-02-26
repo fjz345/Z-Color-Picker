@@ -216,6 +216,15 @@ pub fn ui_ordered_control_points(
     )
 }
 
+pub fn find_spline_max_t(spline: &Spline<f32, CONTROL_POINT_TYPE>) -> f32 {
+    let vec_of_t_values: Vec<f32> = spline.into_iter().map(|k| k.t).collect();
+    let max_t = vec_of_t_values
+        .into_iter()
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap_or(0.0);
+    max_t
+}
+
 pub fn generate_spline_points_with_distance(
     control_points: &[CONTROL_POINT_TYPE],
     spline_mode: SplineMode,
@@ -228,7 +237,7 @@ pub fn generate_spline_points_with_distance(
     }
 
     let spline = control_points_to_spline(&control_points, spline_mode);
-    let spline_max_t = 1.0 * spline.len() as f32;
+    let spline_max_t = find_spline_max_t(&spline) as f32;
     let mut curr_t = 0.0;
     while curr_t <= spline_max_t {
         let spline_sample = spline.clamped_sample(curr_t);
@@ -381,29 +390,22 @@ pub fn control_points_to_spline(
                 .collect(),
         ),
         SplineMode::HermiteBezier => {
+            let mut CatmulRom_spline_vec = control_points.clone().to_vec();
+            if control_points.len() >= 1 {
+                CatmulRom_spline_vec.insert(0, *control_points.first().unwrap());
+            }
+
+            if control_points.len() >= 1 {
+                CatmulRom_spline_vec.push(*control_points.last().unwrap());
+            }
+
             let mut new_spline = Spline::from_vec(
-                control_points
+                CatmulRom_spline_vec
                     .iter()
                     .enumerate()
                     .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::CatmullRom))
                     .collect(),
             );
-
-            if control_points.len() >= 1 {
-                new_spline.add(Key::new(
-                    0.0,
-                    *control_points.first().unwrap(),
-                    Interpolation::CatmullRom,
-                ));
-            }
-
-            if control_points.len() >= 2 {
-                new_spline.add(Key::new(
-                    (new_spline.len()) as f32,
-                    *control_points.last().unwrap(),
-                    Interpolation::CatmullRom,
-                ));
-            }
 
             new_spline
         }

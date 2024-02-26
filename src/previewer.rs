@@ -3,10 +3,11 @@ use eframe::{
     egui::{self, Layout, PointerButton, Response, Sense, Ui, Vec2},
     epaint::{Color32, Rect},
 };
+use splines::Spline;
 
 use crate::{
     color_picker::{ColorStringCopy, PreviewerData, SplineMode},
-    curves::control_points_to_spline,
+    curves::{control_points_to_spline, find_spline_max_t},
     gradient::color_function_gradient,
     ui_common::{color_button, response_copy_color_on_click},
     CONTROL_POINT_TYPE,
@@ -89,20 +90,56 @@ fn draw_ui_previewer_control_points(
     }
 }
 
+fn modify_spline_t_to_preview_sizes(
+    spline: Spline<f32, CONTROL_POINT_TYPE>,
+    spline_mode: SplineMode,
+    previewer_data: &PreviewerData,
+) -> Spline<f32, CONTROL_POINT_TYPE> {
+    let preview_sizes = &previewer_data.points_preview_sizes;
+
+    let hermite_index_offset = match spline_mode {
+        SplineMode::HermiteBezier => {
+            if spline.len() >= 2 {
+                1
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    };
+
+    let mut spline_as_vec = spline.keys().to_vec();
+    let mut accum_size = 0.0;
+    for i in 0..preview_sizes.len() {
+        let center_of_preview = accum_size + preview_sizes[i] * 0.5;
+        spline_as_vec[i + 0].t = center_of_preview;
+
+        accum_size += preview_sizes[i];
+    }
+
+    Spline::from_vec(spline_as_vec)
+}
+
 fn draw_ui_previewer_curve(
     ui: &mut Ui,
     size: Vec2,
     control_points: &[CONTROL_POINT_TYPE],
     spline_mode: SplineMode,
     previewer_data: &PreviewerData,
-    color_copy_format: ColorStringCopy,
 ) {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
     ui.allocate_rect(rect, Sense::click_and_drag());
     let mut previewer_ui_curve = ui.child_ui(rect, Layout::left_to_right(egui::Align::Min));
     previewer_ui_curve.spacing_mut().item_spacing = Vec2::ZERO;
 
-    let spline = control_points_to_spline(control_points, spline_mode);
+    let mut spline = control_points_to_spline(control_points, spline_mode);
+
+    match spline_mode {
+        SplineMode::HermiteBezier => {}
+        _ => spline = modify_spline_t_to_preview_sizes(spline, spline_mode, previewer_data),
+    };
+
+    let max_t = find_spline_max_t(&spline);
 
     color_function_gradient(&mut previewer_ui_curve, rect.size(), |x| {
         if control_points.len() <= 0 {
@@ -117,10 +154,12 @@ fn draw_ui_previewer_curve(
             return control_points[0].color();
         }
 
-        let sample = spline
-            .clamped_sample(x * (control_points.len() - 1) as f32)
-            .unwrap_or_default();
+        let sample_x = match spline_mode {
+            SplineMode::HermiteBezier => 1.0 + x * (max_t - 2.0) as f32,
+            _ => x * max_t,
+        };
 
+        let sample = spline.clamped_sample(sample_x).unwrap_or_default();
         sample.color()
     });
 }
@@ -148,7 +187,6 @@ pub fn draw_ui_previewer(
             control_points,
             spline_mode,
             previewer_data,
-            color_copy_format,
         );
 
         let reset_button = egui::Button::new("❌").small().wrap(true).frame(true);
