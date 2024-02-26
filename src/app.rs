@@ -240,6 +240,10 @@ impl ZApp {
                 })
                 .response
                 .on_hover_text("Spline Mode");
+
+            if ui.button("Flip").clicked_by(PointerButton::Primary) {
+                self.control_points.reverse();
+            }
         });
     }
 

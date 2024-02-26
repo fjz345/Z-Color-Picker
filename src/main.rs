@@ -22,8 +22,6 @@ BUGS
 * Bezier mode hue interpolation
 
 FEATURES
-* Set spline t values based on distance in H-S-V space
-* Hex Copy Gradient color
 * Flip Control Points button
 * Beginning/end of curve visuals (identifiers)
 * Hue multiple control points
