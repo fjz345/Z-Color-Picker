@@ -86,17 +86,18 @@ pub fn color_slider_1d(
     ui: &mut Ui,
     mut value: Option<&mut f32>,
     color_at: impl Fn(f32) -> Color32,
-) -> Response {
+) -> (Response, Option<f32>) {
     #![allow(clippy::identity_op)]
 
     let desired_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
-    let (rect, response) = ui.allocate_at_least(desired_size, Sense::click_and_drag());
+    let (rect, mut response) = ui.allocate_at_least(desired_size, Sense::click_and_drag());
     let visuals = ui.style().interact(&response);
 
     if value.is_some() {
         if let Some(mpos) = response.interact_pointer_pos() {
             let val = value.as_mut().unwrap();
             **val = remap_clamp(mpos.x, rect.left()..=rect.right(), 0.0..=1.0);
+            response.mark_changed();
         }
     }
 
@@ -123,12 +124,12 @@ pub fn color_slider_1d(
         ui.painter().rect_stroke(rect, 0.0, visuals.bg_stroke); // outline
 
         const Y_OFFSET: f32 = -3.0;
-        if value.is_some() {
-            let val = value.unwrap();
+        if value.as_ref().is_some() {
+            let val = **value.as_ref().unwrap();
             // Show where the slider is at:
-            let x = lerp(rect.left()..=rect.right(), *val);
+            let x = lerp(rect.left()..=rect.right(), val);
             let r = rect.height() / 4.0;
-            let picked_color = color_at(*val);
+            let picked_color = color_at(val);
             ui.painter().add(Shape::convex_polygon(
                 vec![
                     pos2(x, Y_OFFSET + rect.center().y), // tip
@@ -141,7 +142,7 @@ pub fn color_slider_1d(
         }
     }
 
-    response
+    (response, value.cloned())
 }
 
 pub fn ui_hue_control_points_overlay(

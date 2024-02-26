@@ -115,12 +115,13 @@ pub fn main_color_picker(
     is_hue_middle_interpolated: bool,
     is_curve_locked: bool,
 ) -> Response {
-    let num_spline_points = control_points.len();
+    let num_control_points = control_points.len();
     if let Some(last_modified_index) = *last_modifying_point_index {
-        if num_spline_points == 0 {
+        if num_control_points == 0 {
             *last_modifying_point_index = None;
         } else {
-            *last_modifying_point_index = Some(last_modified_index.clamp(0, num_spline_points - 1));
+            *last_modifying_point_index =
+                Some(last_modified_index.clamp(0, num_control_points - 1));
         }
     }
 
@@ -141,19 +142,14 @@ pub fn main_color_picker(
             a: 1.0,
         };
         let mut color_to_show = match modifying_control_point.as_ref() {
-            Some(CP) => HsvaGamma {
-                h: CP[2],
-                s: CP[0],
-                v: CP[1],
-                a: 1.0,
-            },
+            Some(CP) => CP.hsv(),
             None => dummy_color,
         };
 
         let mut delta_hue = None;
         {
             let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
-            let response =
+            let response: Response =
                 show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
             response_copy_color_on_click(
                 ui,
@@ -202,9 +198,11 @@ pub fn main_color_picker(
                         *a = 0.5; // was additive, but isn't allowed to be
                     }
                     color_slider_1d(ui, Some(a), |a| HsvaGamma { a, ..opaque }.into())
+                        .0
                         .on_hover_text("Alpha");
                 } else if !additive {
                     color_slider_1d(ui, Some(a), |a| HsvaGamma { a, ..opaque }.into())
+                        .0
                         .on_hover_text("Alpha");
                 }
             }
@@ -214,19 +212,21 @@ pub fn main_color_picker(
                 Some(CP) => Some(&mut CP[2]),
                 None => None,
             };
-            let hue_response = color_slider_1d(ui, hue_optional_value, |h| {
-                HsvaGamma {
-                    h,
-                    s: 1.0,
-                    v: 1.0,
-                    a: 1.0,
+            let (mut hue_response, mut new_hue_val) =
+                color_slider_1d(ui, hue_optional_value, |h| {
+                    HsvaGamma {
+                        h,
+                        s: 1.0,
+                        v: 1.0,
+                        a: 1.0,
+                    }
+                    .into()
+                });
+            hue_response = hue_response.on_hover_text("Hue");
+            if hue_response.changed() {
+                if new_hue_val.is_some() {
+                    delta_hue = Some(new_hue_val.unwrap() - prev_hue);
                 }
-                .into()
-            })
-            .on_hover_text("Hue");
-            delta_hue = match hue_response.changed() {
-                true => Some(color_to_show.h - prev_hue),
-                false => None,
             };
 
             let control_points_hue_response = ui_hue_control_points_overlay(
@@ -238,15 +238,17 @@ pub fn main_color_picker(
         }
 
         if let Some(h) = delta_hue {
-            // Move all other points
-            for i in 0..num_spline_points {
-                if is_modifying_index.is_some() {
-                    if i == is_modifying_index.unwrap() {
-                        continue;
+            if is_curve_locked {
+                // Move all other points
+                for i in 0..num_control_points {
+                    if is_modifying_index.is_some() {
+                        if i == is_modifying_index.unwrap() {
+                            continue;
+                        }
                     }
+                    let hue_ref = &mut control_points[i][2];
+                    *hue_ref = (*hue_ref + h).rem_euclid(1.0);
                 }
-                let hue_ref = &mut control_points[i][2];
-                *hue_ref += h;
             }
         }
 
@@ -333,7 +335,7 @@ pub fn main_color_picker(
 
                     if is_curve_locked {
                         // Move all other points
-                        for i in 0..num_spline_points {
+                        for i in 0..num_control_points {
                             if i == is_modifying_index.unwrap_or(0) {
                                 continue;
                             }

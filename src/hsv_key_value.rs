@@ -42,13 +42,16 @@ impl HsvKeyValue {
     }
 
     pub fn color(&self) -> Color32 {
+        self.hsv().into()
+    }
+
+    pub fn hsv(&self) -> HsvaGamma {
         HsvaGamma {
             h: self[2],
             s: self[0],
             v: self[1],
             a: 1.0,
         }
-        .into()
     }
 }
 

@@ -21,8 +21,7 @@ TODO:
 BUGS
 * Bezier mode hue interpolation
 
-FEATURES
-* Lock modifies all control points hues
+FEATURES'
 * standard Color pick for control points
 * slide control point previewer modifies t values of spline
 * Beginning/end of curve visuals (identifiers)
