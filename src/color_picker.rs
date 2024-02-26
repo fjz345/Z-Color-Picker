@@ -9,7 +9,10 @@ use eframe::{
 
 use crate::{
     curves::{ui_ordered_control_points, ui_ordered_spline_gradient},
-    ui_common::{color_slider_1d, color_slider_2d, color_text_ui, response_copy_color_on_click},
+    ui_common::{
+        color_slider_1d, color_slider_2d, color_text_ui, response_copy_color_on_click,
+        ui_hue_control_points_overlay,
+    },
     CONTROL_POINT_TYPE,
 };
 
@@ -225,6 +228,13 @@ pub fn main_color_picker(
                 true => Some(color_to_show.h - prev_hue),
                 false => None,
             };
+
+            let control_points_hue_response = ui_hue_control_points_overlay(
+                ui,
+                &hue_response,
+                control_points,
+                is_modifying_index,
+            );
         }
 
         if let Some(h) = delta_hue {

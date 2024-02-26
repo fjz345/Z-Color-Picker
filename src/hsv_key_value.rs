@@ -29,6 +29,18 @@ impl HsvKeyValue {
         Pos2::new(self[0], self[1])
     }
 
+    pub fn h(&self) -> f32 {
+        self[2]
+    }
+
+    pub fn s(&self) -> f32 {
+        self[0]
+    }
+
+    pub fn v(&self) -> f32 {
+        self[1]
+    }
+
     pub fn color(&self) -> Color32 {
         HsvaGamma {
             h: self[2],

@@ -1,6 +1,8 @@
 use crate::color_picker::format_color_as;
 use crate::egui::PointerButton;
 use crate::egui::TextStyle;
+use crate::CONTROL_POINT_TYPE;
+use eframe::egui::Pos2;
 use eframe::{
     egui::{color_picker::Alpha, vec2, Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
     emath::{lerp, remap_clamp},
@@ -120,6 +122,7 @@ pub fn color_slider_1d(
 
         ui.painter().rect_stroke(rect, 0.0, visuals.bg_stroke); // outline
 
+        const Y_OFFSET: f32 = -3.0;
         if value.is_some() {
             let val = value.unwrap();
             // Show where the slider is at:
@@ -128,9 +131,9 @@ pub fn color_slider_1d(
             let picked_color = color_at(*val);
             ui.painter().add(Shape::convex_polygon(
                 vec![
-                    pos2(x, rect.center().y),   // tip
-                    pos2(x + r, rect.bottom()), // right bottom
-                    pos2(x - r, rect.bottom()), // left bottom
+                    pos2(x, Y_OFFSET + rect.center().y), // tip
+                    pos2(x + r, Y_OFFSET + rect.top()),  // right bottom
+                    pos2(x - r, Y_OFFSET + rect.top()),  // left bottom
                 ],
                 picked_color,
                 Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
@@ -139,6 +142,59 @@ pub fn color_slider_1d(
     }
 
     response
+}
+
+pub fn ui_hue_control_points_overlay(
+    ui: &mut Ui,
+    parent_response: &Response,
+    control_points: &mut [CONTROL_POINT_TYPE],
+    already_active_control_points_index: Option<usize>,
+) -> Response {
+    let container_response =
+        ui.allocate_rect(parent_response.rect, Sense::focusable_noninteractive());
+    const Y_OFFSET: f32 = 5.0;
+    ui.add_space(8.0);
+    let visuals = ui.style().interact(&parent_response);
+
+    for i in 0..control_points.len() {
+        if already_active_control_points_index.is_some() {
+            if i == already_active_control_points_index.unwrap() {
+                continue;
+            }
+        }
+        let val = control_points[i].h();
+        let picked_color = control_points[i].color();
+        // Show where the slider is at:
+        let x = lerp(
+            container_response.rect.left()..=container_response.rect.right(),
+            val,
+        );
+
+        let r = container_response.rect.height() / 4.0;
+        let gizmo_rect: Vec<Pos2> = vec![
+            pos2(x, Y_OFFSET + container_response.rect.center().y), // tip
+            pos2(x + r, Y_OFFSET + container_response.rect.bottom()), // right bottom
+            pos2(x - r, Y_OFFSET + container_response.rect.bottom()), // left bottom
+        ];
+
+        let response = ui.interact(
+            Rect::from_points(&gizmo_rect),
+            container_response.id.with(i),
+            Sense::click_and_drag(),
+        );
+
+        if response.dragged_by(PointerButton::Primary) {
+            control_points[i][2] += response.drag_delta().x / container_response.rect.width();
+        }
+
+        ui.painter().add(Shape::convex_polygon(
+            gizmo_rect,
+            picked_color,
+            Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
+        ));
+    }
+
+    container_response
 }
 
 /// Number of vertices per dimension in the color sliders.
