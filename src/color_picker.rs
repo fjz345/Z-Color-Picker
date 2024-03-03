@@ -291,6 +291,10 @@ pub fn main_color_picker(
         //         is_hue_middle_interpolated,
         //         &slider_2d_reponse,
         //     );
+
+        let spline_gradient_repsonse =
+            ui_ordered_spline_gradient(ui, control_points, spline_mode, &slider_2d_reponse);
+
         let (dragged_points_response, selected_index, hovering_control_point) =
             ui_ordered_control_points(
                 ui,
@@ -298,9 +302,6 @@ pub fn main_color_picker(
                 is_hue_middle_interpolated,
                 &slider_2d_reponse,
             );
-
-        let spline_gradient_repsonse =
-            ui_ordered_spline_gradient(ui, control_points, spline_mode, &slider_2d_reponse);
 
         *control_point_right_clicked = match hovering_control_point {
             Some(a) => {

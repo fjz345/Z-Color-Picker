@@ -29,6 +29,7 @@ pub fn ui_ordered_control_points(
     Option<usize>,
     Option<(egui::Response, usize)>,
 ) {
+    const SHOW_LINEAR_LINE: bool = false;
     let num_control_points = control_points.len();
     if num_control_points <= 0 {
         return (None, None, None);
@@ -139,7 +140,21 @@ pub fn ui_ordered_control_points(
             let point_in_screen = to_screen.transform_pos(point);
             let stroke: Stroke = ui.style().interact(parent_response).fg_stroke;
 
-            Shape::circle_stroke(point_in_screen, control_point_radius, stroke)
+            let control_point_is_first_or_last = i == 0 || i == num_control_points - 1;
+            let control_point_shape: Shape = if control_point_is_first_or_last {
+                Shape::rect_stroke(
+                    Rect::from_center_size(
+                        point_in_screen,
+                        Vec2::new(control_point_radius, control_point_radius),
+                    ),
+                    0.0,
+                    stroke,
+                )
+            } else {
+                Shape::circle_stroke(point_in_screen, control_point_radius, stroke)
+            };
+
+            control_point_shape
         })
         .collect();
 
@@ -196,9 +211,11 @@ pub fn ui_ordered_control_points(
     //     }
     // };
 
-    let aux_stroke = Stroke::new(1.0, Color32::RED.linear_multiply(0.25));
-    ui.painter()
-        .add(PathShape::line(points_in_screen, aux_stroke));
+    if SHOW_LINEAR_LINE {
+        let aux_stroke = Stroke::new(1.0, Color32::RED.linear_multiply(0.25));
+        ui.painter()
+            .add(PathShape::line(points_in_screen, aux_stroke));
+    }
     ui.painter().extend(control_point_shapes_fill);
     ui.painter().extend(control_point_shapes);
 

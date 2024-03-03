@@ -26,18 +26,18 @@ BUGS
 FEATURES'
 * Beginning/end of curve visuals (identifiers)
 * Lerp hue at 0.5 dist to get smoother result
-* Lerp color instead of lerpx,lerpy,lerp_hue
 * Preset save/load
 * standard Color pick for control points
 * Preset hue with stepping for points
 * Quantizize gradient previewer
 * Visualization curves
-    - Brightness
-    - Saturation
-    - Hue
-    - Value
+- Brightness
+- Saturation
+- Hue
+- Value
 * User feedback when copying color value
 * Different color spaces
+* Lerp color instead of lerpx,lerpy,lerp_hue
 * Import curves to photoshop????
 * Better ui widget dynamic rezizing
 =============================================================

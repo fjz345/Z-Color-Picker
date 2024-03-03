@@ -172,11 +172,28 @@ pub fn ui_hue_control_points_overlay(
         );
 
         let r = container_response.rect.height() / 4.0;
-        let gizmo_rect: Vec<Pos2> = vec![
-            pos2(x, Y_OFFSET + container_response.rect.center().y), // tip
-            pos2(x + r, Y_OFFSET + container_response.rect.bottom()), // right bottom
-            pos2(x - r, Y_OFFSET + container_response.rect.bottom()), // left bottom
-        ];
+        let gizmo_rect: Vec<Pos2> = if i == 0 {
+            // First
+            vec![
+                pos2(x + r, Y_OFFSET + container_response.rect.center().y + r),
+                pos2(x - r, Y_OFFSET + container_response.rect.bottom() - r * 2.0),
+                pos2(x - r, Y_OFFSET + container_response.rect.bottom()),
+            ]
+        } else if i == (control_points.len() - 1) {
+            // Last
+            vec![
+                pos2(x - r, Y_OFFSET + container_response.rect.center().y + r),
+                pos2(x + r, Y_OFFSET + container_response.rect.bottom() - r * 2.0),
+                pos2(x + r, Y_OFFSET + container_response.rect.bottom()),
+            ]
+        } else {
+            // Other
+            vec![
+                pos2(x, Y_OFFSET + container_response.rect.center().y), // tip
+                pos2(x + r, Y_OFFSET + container_response.rect.bottom()), // right bottom
+                pos2(x - r, Y_OFFSET + container_response.rect.bottom()), // left bottom
+            ]
+        };
 
         let response = ui.interact(
             Rect::from_points(&gizmo_rect),
