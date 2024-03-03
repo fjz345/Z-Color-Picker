@@ -1,5 +1,6 @@
 //https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
 
+use std::borrow::Borrow;
 use std::collections::btree_set::SymmetricDifference;
 
 use ecolor::{Color32, HsvaGamma};
@@ -17,6 +18,7 @@ use crate::CONTROL_POINT_TYPE;
 pub fn ui_ordered_control_points(
     ui: &mut Ui,
     control_points: &[CONTROL_POINT_TYPE],
+    marked_control_point_index: &Option<usize>,
     is_middle_interpolated: bool,
     parent_response: &egui::Response,
 ) -> (
@@ -183,41 +185,31 @@ pub fn ui_ordered_control_points(
         })
         .collect();
 
-    // match num_control_points {
-    //     3 => {
-    //         let points = points_in_screen.clone().try_into().unwrap();
-    //         let shape =
-    //             QuadraticBezierShape::from_points_stroke(points, true, self.fill, self.stroke);
-    //         ui.painter().add(epaint::RectShape::stroke(
-    //             shape.visual_bounding_rect(),
-    //             0.0,
-    //             self.bounding_box_stroke,
-    //         ));
-    //         ui.painter().add(shape);
-    //     }
-    //     4 => {
-    //         let points = points_in_screen.clone().try_into().unwrap();
-    //         let shape =
-    //             CubicBezierShape::from_points_stroke(points, true, self.fill, self.stroke);
-    //         ui.painter().add(epaint::RectShape::stroke(
-    //             shape.visual_bounding_rect(),
-    //             0.0,
-    //             self.bounding_box_stroke,
-    //         ));
-    //         ui.painter().add(shape);
-    //     }
-    //     _ => {
-    //         unreachable!();
-    //     }
-    // };
-
     if SHOW_LINEAR_LINE {
         let aux_stroke = Stroke::new(1.0, Color32::RED.linear_multiply(0.25));
         ui.painter()
             .add(PathShape::line(points_in_screen, aux_stroke));
     }
+
     ui.painter().extend(control_point_shapes_fill);
     ui.painter().extend(control_point_shapes);
+    if let Some(marked_index) = marked_control_point_index {
+        let key = control_points[*marked_index];
+        let mut point = Pos2::new(key[0], 1.0 - key[1]);
+        point = to_screen.from().clamp(point);
+        let stroke: Stroke = ui.style().interact(parent_response).fg_stroke;
+
+        let point_in_screen = to_screen.transform_pos(point);
+        let shape = Shape::rect_stroke(
+            Rect::from_center_size(
+                point_in_screen,
+                Vec2::new(control_point_radius * 0.5, control_point_radius * 0.5),
+            ),
+            0.0,
+            stroke,
+        );
+        ui.painter().add(shape);
+    }
 
     match selected_shape {
         Some(s) => {

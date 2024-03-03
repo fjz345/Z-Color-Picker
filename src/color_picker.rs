@@ -299,6 +299,7 @@ pub fn main_color_picker(
             ui_ordered_control_points(
                 ui,
                 control_points,
+                &is_modifying_index,
                 is_hue_middle_interpolated,
                 &slider_2d_reponse,
             );
