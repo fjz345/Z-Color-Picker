@@ -132,7 +132,8 @@ pub fn main_color_picker(
     let main_color_picker_response = ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
         let desired_size_slider_2d = Vec2::splat(ui.spacing().slider_width);
 
-        let mut is_modifying_index = dragging_bezier_index.or(*last_modifying_point_index);
+        let mut is_modifying_index: Option<usize> =
+            dragging_bezier_index.or(*last_modifying_point_index);
 
         let modifying_control_point = match is_modifying_index {
             Some(index) => control_points.get_mut(index),
@@ -268,13 +269,12 @@ pub fn main_color_picker(
             main_color_picker_color_at_function(color_to_show.h, 1.0),
         );
 
-        if is_modifying_index.is_some() {
-            let mut control_point = match is_modifying_index {
-                Some(a) => Some(control_points[a]),
-                _ => None,
-            };
-            let unwrapped = &mut control_point.unwrap();
-            unwrapped[2] = color_to_show.h;
+        if let Some(mut modifying_index) = is_modifying_index {
+            is_modifying_index = Some(modifying_index.clamp(0, control_points.len() - 1));
+            modifying_index = is_modifying_index.unwrap();
+
+            let mut control_point = control_points[modifying_index];
+            control_point[2] = color_to_show.h;
         }
 
         if dragging_bezier_index.is_some() {
