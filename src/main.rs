@@ -24,12 +24,11 @@ BUGS
 * Polynomial
 
 FEATURES'
-* Beginning/end of curve visuals (identifiers)
+* Quantizize gradient previewer
 * Lerp hue at 0.5 dist to get smoother result
 * Preset save/load
 * standard Color pick for control points
 * Preset hue with stepping for points
-* Quantizize gradient previewer
 * Visualization curves
 - Brightness
 - Saturation

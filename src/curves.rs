@@ -76,11 +76,11 @@ pub fn ui_ordered_control_points(
             let mut is_inactive: bool = false;
             let mut is_inactive_click_or_drag: bool = false;
 
-            if is_middle_interpolated {
-                if !(i == first_index || i == last_index) {
-                    is_inactive = true;
-                }
-            }
+            // if is_middle_interpolated {
+            //     if !(i == first_index || i == last_index) {
+            //         is_inactive = true;
+            //     }
+            // }
 
             if control_point_response.dragged_by(egui::PointerButton::Primary) {
                 println!("Dragged index: {i}");

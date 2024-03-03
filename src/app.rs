@@ -54,7 +54,7 @@ impl ZApp {
             control_point_right_clicked: None,
             last_modifying_point_index: None,
             is_curve_locked: false,
-            is_hue_middle_interpolated: false,
+            is_hue_middle_interpolated: true,
             is_insert_right: true,
             is_window_lock: true,
         }
