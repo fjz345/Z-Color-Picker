@@ -24,20 +24,17 @@ BUGS
 * Polynomial
 
 FEATURES'
+* Color Lerp
 * Quantizize gradient previewer
-* Lerp hue at 0.5 dist to get smoother result
-* Preset save/load
-* standard Color pick for control points
-* Preset hue with stepping for points
+* Preset save/load control_points
+* Regular Color pick for control points
 * Visualization curves
-- Brightness
-- Saturation
-- Hue
-- Value
-* User feedback when copying color value
-* Different color spaces
-* Lerp color instead of lerpx,lerpy,lerp_hue
+    - Value
+    - Saturation
+    - Hue
+* User visual feedback when copying color values
 * Import curves to photoshop????
+* Different color spaces
 * Better ui widget dynamic rezizing
 =============================================================
 */
