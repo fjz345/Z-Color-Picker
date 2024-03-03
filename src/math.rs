@@ -1,4 +1,9 @@
+use std::f32::consts::{PI, TAU};
+
+use bspline::Interpolate;
+use ecolor::Color32;
 use eframe::egui::{lerp, Vec2};
+use palette::{convert::FromColorUnclamped, FromColor, LabHue, Lch, LinSrgb, Oklab};
 
 pub fn factorial(n: u64) -> u64 {
     (1..=n).product()
@@ -81,4 +86,74 @@ pub fn hue_lerp(hue0: f32, hue1: f32, t: f32) -> f32 {
     let hue = lerp(hue0..=target_hue, t);
 
     hue.rem_euclid(1.0)
+}
+
+pub fn color_lerp(color_src: Color32, color_trg: Color32, mut t: f32) -> Color32 {
+    const C: f32 = 0.7;
+    const alpha: f32 = 0.1;
+    color_lerp_ex(color_src, color_trg, t, C, alpha)
+}
+
+pub fn color_lerp_ex(
+    color_src: Color32,
+    color_trg: Color32,
+    mut t: f32,
+    C: f32,
+    alpha: f32,
+) -> Color32 {
+    if t < 0.0 || t > 1.0 {
+        println!("t value {} is not a valid input", t);
+        t = t.clamp(0.0, 1.0);
+    }
+
+    let color_src_linsrgb = LinSrgb::new(
+        color_src.r() as f32 / 255.0,
+        color_src.g() as f32 / 255.0,
+        color_src.b() as f32 / 255.0,
+    );
+    let color_trg_linsrgb = LinSrgb::new(
+        color_trg.r() as f32 / 255.0,
+        color_trg.g() as f32 / 255.0,
+        color_trg.b() as f32 / 255.0,
+    );
+    let lch_src = Lch::from_color(color_src_linsrgb);
+    let lch_trg = Lch::from_color(color_trg_linsrgb);
+
+    let deg_diff = lch_trg.hue - lch_src.hue;
+
+    // Lerp hue
+    let lerped_hue_normalized = hue_lerp(
+        f32::to_radians(Into::<f32>::into(lch_src.hue)) / TAU,
+        f32::to_radians(Into::<f32>::into(lch_trg.hue)) / TAU,
+        t,
+    );
+    let new_hue = LabHue::new(f32::to_degrees(lerped_hue_normalized * TAU));
+    // desaturate towards C (t<= 0.5), t> 0.5, mirror
+    let new_chroma_normalized = if t <= 0.5 {
+        (lch_src.chroma as f32 / Lch::<f32>::max_chroma() as f32).interpolate(&(1.0 - C), t * 2.0)
+    } else {
+        (1.0 - C).interpolate(
+            &(lch_trg.chroma as f32 / Lch::<f32>::max_chroma()),
+            -1.0 + t * 2.0,
+        )
+    };
+
+    println!("Prev_src_hue {}", lch_src.chroma);
+    println!(
+        "new_hue {} (LAB){}",
+        lerped_hue_normalized,
+        new_hue.into_degrees()
+    );
+
+    let new_lch: Lch = Lch::new(
+        lch_src.l,
+        new_chroma_normalized * Lch::<f32>::max_chroma(),
+        lerped_hue_normalized,
+    );
+    let new_color = LinSrgb::from_color(new_lch);
+    Color32::from_rgb(
+        (new_color.red * 255.0) as u8,
+        (new_color.green * 255.0) as u8,
+        (new_color.blue * 255.0) as u8,
+    )
 }

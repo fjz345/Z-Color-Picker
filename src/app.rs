@@ -1,12 +1,13 @@
+use ecolor::Color32;
 use eframe::{
-    egui::{self, Layout, PointerButton, Ui, Window},
+    egui::{self, color_picker::show_color, Layout, PointerButton, Rect, Slider, Ui, Window},
     epaint::{Pos2, Vec2},
     CreationContext,
 };
 
 use crate::{
     color_picker::{main_color_picker, ColorStringCopy, PreviewerData, SplineMode},
-    math::hue_lerp,
+    math::{color_lerp, color_lerp_ex, hue_lerp},
     previewer::draw_ui_previewer,
     CONTROL_POINT_TYPE,
 };
@@ -33,6 +34,10 @@ pub struct ZApp {
     color_copy_format: ColorStringCopy,
     spline_mode: SplineMode,
     debug_control_points: bool,
+    debug_window: bool,
+    debug_t: f32,
+    debug_C: f32,
+    debug_alpha: f32,
     double_click_event: Option<Pos2>,
 }
 
@@ -48,6 +53,10 @@ impl ZApp {
             color_copy_format: ColorStringCopy::HEX,
             spline_mode: SplineMode::HermiteBezier,
             debug_control_points: false,
+            debug_window: false,
+            debug_t: 0.0,
+            debug_C: 0.0,
+            debug_alpha: 0.0,
             double_click_event: None,
             control_points: Vec::with_capacity(4),
             dragging_bezier_index: None,
@@ -327,11 +336,43 @@ impl ZApp {
                     &mut self.previewer_data,
                     self.color_copy_format,
                 );
+
+                // TESTING
+                if self.debug_window {
+                    if self.control_points.len() >= 2 {
+                        let src_color = self.control_points.first().unwrap().hsv();
+                        let trg_color = self.control_points.last().unwrap().hsv();
+                        let res_color = color_lerp_ex(
+                            src_color.into(),
+                            trg_color.into(),
+                            self.debug_t,
+                            self.debug_C,
+                            self.debug_alpha,
+                        );
+
+                        ui.allocate_ui_at_rect(
+                            Rect::from_center_size(
+                                Pos2::new(500.0, 500.0),
+                                Vec2::new(500.0, 500.0),
+                            ),
+                            |ui| {
+                                let show_size = 100.0;
+                                show_color(ui, src_color, Vec2::new(show_size, show_size));
+                                show_color(ui, trg_color, Vec2::new(show_size, show_size));
+                                show_color(ui, res_color, Vec2::new(show_size, show_size));
+                            },
+                        );
+                    }
+                }
             });
         });
 
         if self.debug_control_points {
             self.draw_debug_control_points(ctx);
+        }
+
+        if self.debug_window {
+            self.draw_debug_window(ctx);
         }
     }
 
@@ -352,6 +393,20 @@ impl ZApp {
                 ui.label(format!("- h: {}", point[2]));
                 ui.label(format!(""));
             }
+        });
+    }
+    fn draw_debug_window(&mut self, ctx: &egui::Context) {
+        let window = Window::new("=== Debug Window ===")
+            .resizable(true)
+            .constrain(true)
+            .collapsible(true)
+            .title_bar(true)
+            .enabled(true);
+
+        window.show(ctx, |ui| {
+            ui.add(Slider::new(&mut self.debug_t, 0.0..=1.0).text("debug_t"));
+            ui.add(Slider::new(&mut self.debug_C, 0.0..=1.0).text("debug_C"));
+            ui.add(Slider::new(&mut self.debug_alpha, 0.0..=1.0).text("debug_alpha"));
         });
     }
 }
@@ -392,6 +447,14 @@ impl eframe::App for ZApp {
             if reader.key_pressed(egui::Key::F12) {
                 self.debug_control_points = !self.debug_control_points;
                 println!("debug_control_points {}", self.debug_control_points);
+            }
+        });
+
+        // Debug toggles
+        ctx.input(|reader| {
+            if reader.key_pressed(egui::Key::F11) {
+                self.debug_window = !self.debug_window;
+                println!("debug_window {}", self.debug_window);
             }
         });
     }
