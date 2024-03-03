@@ -132,7 +132,7 @@ pub fn main_color_picker(
     let main_color_picker_response = ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
         let desired_size_slider_2d = Vec2::splat(ui.spacing().slider_width);
 
-        let is_modifying_index = dragging_bezier_index.or(*last_modifying_point_index);
+        let mut is_modifying_index = dragging_bezier_index.or(*last_modifying_point_index);
 
         let modifying_control_point = match is_modifying_index {
             Some(index) => control_points.get_mut(index),
@@ -233,12 +233,16 @@ pub fn main_color_picker(
                 }
             };
 
-            let control_points_hue_response = ui_hue_control_points_overlay(
+            let (control_points_hue_response, hue_selected_index) = ui_hue_control_points_overlay(
                 ui,
                 &hue_response,
                 control_points,
                 is_modifying_index,
             );
+
+            if let Some(new_selected_index) = hue_selected_index {
+                is_modifying_index = Some(new_selected_index);
+            }
         }
 
         if let Some(h) = delta_hue {

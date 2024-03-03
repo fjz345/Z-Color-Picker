@@ -48,7 +48,7 @@ pub fn ui_ordered_control_points(
     // Fill Circle
     let first_index = 0;
     let last_index = num_control_points - 1;
-    let mut selected_index = None;
+    let mut selected_index = *marked_control_point_index;
     let mut hovering_control_point = None;
 
     let control_point_draw_size: Vec2 = Vec2::splat(2.0 * control_point_radius);
@@ -160,22 +160,6 @@ pub fn ui_ordered_control_points(
         })
         .collect();
 
-    let selected_shape = if selected_index.is_some() {
-        let key = control_points.get(selected_index.unwrap()).unwrap();
-        let mut point = Pos2::new(key[0], 1.0 - key[1]);
-
-        let point_in_screen = to_screen.transform_pos(point);
-        let stroke: Stroke = ui.style().interact(parent_response).fg_stroke;
-
-        Some(Shape::circle_stroke(
-            point_in_screen,
-            1.6 * control_point_radius,
-            stroke,
-        ))
-    } else {
-        None
-    };
-
     let points_in_screen: Vec<Pos2> = control_points
         .into_iter()
         .take(num_control_points)
@@ -211,12 +195,27 @@ pub fn ui_ordered_control_points(
         ui.painter().add(shape);
     }
 
-    match selected_shape {
-        Some(s) => {
-            ui.painter().add(s);
-        }
-        _ => {}
-    }
+    // let selected_shape = if selected_index.is_some() {
+    //     let key = control_points.get(selected_index.unwrap()).unwrap();
+    //     let mut point = Pos2::new(key[0], 1.0 - key[1]);
+
+    //     let point_in_screen = to_screen.transform_pos(point);
+    //     let stroke: Stroke = ui.style().interact(parent_response).fg_stroke;
+
+    //     Some(Shape::circle_stroke(
+    //         point_in_screen,
+    //         1.6 * control_point_radius,
+    //         stroke,
+    //     ))
+    // } else {
+    //     None
+    // };
+    // match selected_shape {
+    //     Some(s) => {
+    //         ui.painter().add(s);
+    //     }
+    //     _ => {}
+    // }
 
     (
         dragged_point_response,

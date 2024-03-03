@@ -123,23 +123,23 @@ pub fn color_slider_1d(
 
         ui.painter().rect_stroke(rect, 0.0, visuals.bg_stroke); // outline
 
-        const Y_OFFSET: f32 = -3.0;
-        if value.as_ref().is_some() {
-            let val = **value.as_ref().unwrap();
-            // Show where the slider is at:
-            let x = lerp(rect.left()..=rect.right(), val);
-            let r = rect.height() / 4.0;
-            let picked_color = color_at(val);
-            ui.painter().add(Shape::convex_polygon(
-                vec![
-                    pos2(x, Y_OFFSET + rect.center().y), // tip
-                    pos2(x + r, Y_OFFSET + rect.top()),  // right bottom
-                    pos2(x - r, Y_OFFSET + rect.top()),  // left bottom
-                ],
-                picked_color,
-                Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
-            ));
-        }
+        // const Y_OFFSET: f32 = -3.0;
+        // if value.as_ref().is_some() {
+        //     let val = **value.as_ref().unwrap();
+        //     // Show where the slider is at:
+        //     let x = lerp(rect.left()..=rect.right(), val);
+        //     let r = rect.height() / 4.0;
+        //     let picked_color = color_at(val);
+        //     ui.painter().add(Shape::convex_polygon(
+        //         vec![
+        //             pos2(x, Y_OFFSET + rect.center().y), // tip
+        //             pos2(x + r, Y_OFFSET + rect.top()),  // right bottom
+        //             pos2(x - r, Y_OFFSET + rect.top()),  // left bottom
+        //         ],
+        //         picked_color,
+        //         Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
+        //     ));
+        // }
     }
 
     (response, value.cloned())
@@ -149,20 +149,17 @@ pub fn ui_hue_control_points_overlay(
     ui: &mut Ui,
     parent_response: &Response,
     control_points: &mut [CONTROL_POINT_TYPE],
-    already_active_control_points_index: Option<usize>,
-) -> Response {
+    modifying_control_point_index: Option<usize>,
+) -> (Response, Option<usize>) {
     let container_response =
         ui.allocate_rect(parent_response.rect, Sense::focusable_noninteractive());
     const Y_OFFSET: f32 = 5.0;
+    const Y_OFFSET_SELECTED: f32 = -14.0;
     ui.add_space(8.0);
     let visuals = ui.style().interact(&parent_response);
 
+    let mut selected_key_frame = None;
     for i in 0..control_points.len() {
-        if already_active_control_points_index.is_some() {
-            if i == already_active_control_points_index.unwrap() {
-                continue;
-            }
-        }
         let val = control_points[i].h();
         let picked_color = control_points[i].color();
         // Show where the slider is at:
@@ -171,27 +168,48 @@ pub fn ui_hue_control_points_overlay(
             val,
         );
 
+        let y_offset_to_use = if let Some(index) = modifying_control_point_index {
+            if i == index {
+                Y_OFFSET_SELECTED
+            } else {
+                Y_OFFSET
+            }
+        } else {
+            Y_OFFSET
+        };
         let r = container_response.rect.height() / 4.0;
         let gizmo_rect: Vec<Pos2> = if i == 0 {
             // First
             vec![
-                pos2(x + r, Y_OFFSET + container_response.rect.center().y + r),
-                pos2(x - r, Y_OFFSET + container_response.rect.bottom() - r * 2.0),
-                pos2(x - r, Y_OFFSET + container_response.rect.bottom()),
+                pos2(
+                    x + r,
+                    y_offset_to_use + container_response.rect.center().y + r,
+                ),
+                pos2(
+                    x - r,
+                    y_offset_to_use + container_response.rect.bottom() - r * 2.0,
+                ),
+                pos2(x - r, y_offset_to_use + container_response.rect.bottom()),
             ]
         } else if i == (control_points.len() - 1) {
             // Last
             vec![
-                pos2(x - r, Y_OFFSET + container_response.rect.center().y + r),
-                pos2(x + r, Y_OFFSET + container_response.rect.bottom() - r * 2.0),
-                pos2(x + r, Y_OFFSET + container_response.rect.bottom()),
+                pos2(
+                    x - r,
+                    y_offset_to_use + container_response.rect.center().y + r,
+                ),
+                pos2(
+                    x + r,
+                    y_offset_to_use + container_response.rect.bottom() - r * 2.0,
+                ),
+                pos2(x + r, y_offset_to_use + container_response.rect.bottom()),
             ]
         } else {
             // Other
             vec![
-                pos2(x, Y_OFFSET + container_response.rect.center().y), // tip
-                pos2(x + r, Y_OFFSET + container_response.rect.bottom()), // right bottom
-                pos2(x - r, Y_OFFSET + container_response.rect.bottom()), // left bottom
+                pos2(x, y_offset_to_use + container_response.rect.center().y), // tip
+                pos2(x + r, y_offset_to_use + container_response.rect.bottom()), // right bottom
+                pos2(x - r, y_offset_to_use + container_response.rect.bottom()), // left bottom
             ]
         };
 
@@ -202,6 +220,7 @@ pub fn ui_hue_control_points_overlay(
         );
 
         if response.dragged_by(PointerButton::Primary) {
+            selected_key_frame = Some(i);
             control_points[i][2] += response.drag_delta().x / container_response.rect.width();
         }
 
@@ -212,7 +231,7 @@ pub fn ui_hue_control_points_overlay(
         ));
     }
 
-    container_response
+    (container_response, selected_key_frame)
 }
 
 /// Number of vertices per dimension in the color sliders.
