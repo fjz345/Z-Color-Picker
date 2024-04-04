@@ -1,6 +1,8 @@
 use ecolor::Color32;
 use eframe::{
-    egui::{self, color_picker::show_color, Layout, PointerButton, Rect, Slider, Ui, Window},
+    egui::{
+        self, color_picker::show_color, ComboBox, Layout, PointerButton, Rect, Slider, Ui, Window,
+    },
     epaint::{Pos2, Vec2},
     CreationContext,
 };
@@ -8,6 +10,10 @@ use eframe::{
 use crate::{
     color_picker::{main_color_picker, ColorStringCopy, PreviewerData, SplineMode},
     math::{color_lerp, color_lerp_ex, hue_lerp},
+    preset::{
+        delete_preset_from_disk, get_preset_save_path, load_presets, save_preset_to_disk, Preset,
+        PresetData,
+    },
     previewer::draw_ui_previewer,
     CONTROL_POINT_TYPE,
 };
@@ -39,6 +45,10 @@ pub struct ZApp {
     debug_C: f32,
     debug_alpha: f32,
     double_click_event: Option<Pos2>,
+    presets: Vec<Preset>,
+    preset_selected_index: Option<usize>,
+    new_preset_window_open: bool,
+    new_preset_window_text: String,
 }
 
 impl ZApp {
@@ -66,6 +76,10 @@ impl ZApp {
             is_hue_middle_interpolated: true,
             is_insert_right: true,
             is_window_lock: true,
+            presets: Vec::new(),
+            preset_selected_index: None,
+            new_preset_window_open: false,
+            new_preset_window_text: String::new(),
         }
     }
 
@@ -89,9 +103,88 @@ impl ZApp {
             },
         ];
 
-        for control_point in DEFAULT_STARTUP_CONTROL_POINTS {
-            self.spawn_control_point(control_point);
+        load_presets(&mut self.presets);
+
+        // Use first as default if exists
+        if self.presets.len() >= 1 {
+            self.preset_selected_index = Some(0);
+            self.apply_selected_preset();
+        } else {
+            for control_point in DEFAULT_STARTUP_CONTROL_POINTS {
+                self.spawn_control_point(control_point);
+            }
         }
+    }
+
+    fn remove_all_control_points(&mut self) {
+        for i in (0..self.control_points.len()).rev() {
+            self.remove_control_point(i);
+        }
+        self.last_modifying_point_index = None;
+    }
+
+    fn apply_preset(&mut self, preset: Preset) {
+        self.remove_all_control_points();
+        for preset_control_point in preset.data.control_points {
+            self.spawn_control_point(preset_control_point);
+        }
+        self.spline_mode = preset.data.spline_mode;
+    }
+
+    pub fn apply_selected_preset(&mut self) {
+        if let Some(s) = self.preset_selected_index {
+            if s < self.presets.len() {
+                let preset_to_apply = self.presets[s].clone();
+                self.apply_preset(preset_to_apply);
+            }
+        }
+    }
+
+    pub fn save_selected_preset(&mut self) {
+        if let Some(s) = self.preset_selected_index {
+            let preset = &mut self.presets[s];
+            preset.data = PresetData {
+                spline_mode: self.spline_mode,
+                control_points: self.control_points.clone(),
+            };
+            save_preset_to_disk(&preset.clone());
+            print!("Preset Save");
+        }
+    }
+
+    pub fn preset_data_from_current_state(&self) -> PresetData {
+        PresetData {
+            spline_mode: self.spline_mode,
+            control_points: self.control_points.clone(),
+        }
+    }
+
+    pub fn create_preset(&mut self, name: &String) {
+        let preset = Preset::new(name, self.preset_data_from_current_state());
+        let index = self.presets.len();
+        self.presets.push(preset);
+
+        self.preset_selected_index = Some(index);
+        self.save_selected_preset();
+    }
+
+    pub fn delete_selected_preset(&mut self) {
+        if let Some(s) = self.preset_selected_index {
+            let preset_to_remove = self.presets.remove(s);
+            delete_preset_from_disk(&get_preset_save_path(&preset_to_remove));
+            self.preset_selected_index = None;
+        }
+    }
+
+    fn remove_control_point(&mut self, index: usize) {
+        self.control_points.remove(index);
+        self.previewer_data.points_preview_sizes.remove(index);
+        self.previewer_data.reset_preview_sizes();
+        println!(
+            "CP {} removed, new len {}",
+            index,
+            self.control_points.len()
+        );
     }
 
     fn spawn_control_point(&mut self, color: CONTROL_POINT_TYPE) {
@@ -254,6 +347,78 @@ impl ZApp {
                 self.control_points.reverse();
             }
         });
+        ui.horizontal(|ui| {
+            let combobox_selected_text_to_show = match self.preset_selected_index {
+                Some(i) => self.presets[i].name.to_string(),
+                None => "".to_string(),
+            };
+
+            let mut combobox_selected_index = 0;
+            let mut combobox_has_selected = false;
+            let combobox_response = egui::ComboBox::new(1232313, "")
+                .selected_text(combobox_selected_text_to_show)
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(60.0);
+
+                    for (i, preset) in &mut self.presets.iter().enumerate() {
+                        let selectable_value_response = ui.selectable_value(
+                            &mut combobox_selected_index,
+                            i + 1,
+                            preset.name.as_str(),
+                        );
+
+                        if selectable_value_response.clicked() {
+                            combobox_has_selected = true;
+                        }
+                    }
+
+                    // New
+                    let selectable_value_response =
+                        ui.selectable_value(&mut combobox_selected_index, 0, "NEW");
+
+                    if selectable_value_response.clicked() {
+                        combobox_has_selected = true;
+                        // combobox_selected_index = i;
+                    }
+                })
+                .response
+                .on_hover_text("Presets");
+
+            if combobox_has_selected {
+                if combobox_selected_index == 0 {
+                    self.new_preset_window_open = true;
+                    self.new_preset_window_text.clear();
+                    println!("New Preset");
+                } else {
+                    self.preset_selected_index = Some(combobox_selected_index - 1);
+                    self.apply_selected_preset();
+                    println!("Selected Preset {:?}", combobox_selected_index - 1);
+                }
+            };
+
+            if ui.button("Save").clicked_by(PointerButton::Primary) {
+                if let Some(s) = self.preset_selected_index {
+                    self.save_selected_preset();
+                }
+            }
+            if ui.button("Delete").clicked_by(PointerButton::Primary) {
+                self.delete_selected_preset();
+            }
+        });
+
+        if self.new_preset_window_open {
+            egui::Window::new("Create Preset")
+                .open(&mut true)
+                .show(ui.ctx(), |ui| {
+                    let text_response = ui.text_edit_singleline(&mut self.new_preset_window_text);
+
+                    if ui.button("Create").clicked() {
+                        self.new_preset_window_open = false;
+
+                        self.create_preset(&self.new_preset_window_text.clone());
+                    }
+                });
+        }
     }
 
     fn draw_ui_menu(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -322,10 +487,7 @@ impl ZApp {
                 }
                 match self.control_point_right_clicked {
                     Some(a) => {
-                        self.control_points.remove(a);
-                        self.previewer_data.points_preview_sizes.remove(a);
-                        self.previewer_data.reset_preview_sizes();
-                        println!("CP {} removed, new len {}", a, self.control_points.len());
+                        self.remove_control_point(a);
                     }
                     _ => {}
                 }

@@ -1,10 +1,11 @@
 use ecolor::{Color32, HsvaGamma};
 use eframe::egui::{Pos2, Vec2};
+use serde::{Deserialize, Serialize};
 
 use crate::math::hue_lerp;
 
 type HsvKeyValueInnerType = [f32; 3];
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct HsvKeyValue {
     pub val: HsvKeyValueInnerType,
 }

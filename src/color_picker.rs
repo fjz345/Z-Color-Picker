@@ -6,6 +6,7 @@ use eframe::{
     },
     epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     curves::{ui_ordered_control_points, ui_ordered_spline_gradient},
@@ -31,7 +32,7 @@ pub enum ColorStringCopy {
     SRGBA,
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum SplineMode {
     Linear,
     Bezier,
