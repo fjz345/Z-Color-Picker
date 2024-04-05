@@ -3,25 +3,26 @@ use eframe::{
     egui::{self, Layout, PointerButton, Response, Sense, Ui, Vec2},
     epaint::{Color32, Rect},
 };
+use serde_json::to_vec;
 use splines::Spline;
 
 use crate::{
-    color_picker::{ColorStringCopy, PreviewerData, SplineMode},
+    color_picker::{ColorStringCopy, SplineMode},
     curves::{control_points_to_spline, find_spline_max_t},
     gradient::color_function_gradient,
     ui_common::{color_button, response_copy_color_on_click},
     CONTROL_POINT_TYPE,
 };
 
-fn draw_ui_previewer_control_points(
+fn ui_previewer_control_points(
     ui: &mut Ui,
     size: Vec2,
     control_points: &[CONTROL_POINT_TYPE],
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
-) {
+) -> Response {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
-    ui.allocate_rect(rect, Sense::click_and_drag());
+    let response = ui.allocate_rect(rect, Sense::click_and_drag());
     let mut previewer_ui_control_points =
         ui.child_ui(rect, Layout::left_to_right(egui::Align::Min));
 
@@ -54,7 +55,7 @@ fn draw_ui_previewer_control_points(
 
         let size_weight: f32 = previewer_data.points_preview_sizes[i] * num_control_points as f32
             / previewer_sizes_sum;
-        let response: Response = color_button(
+        let response_button: Response = color_button(
             &mut previewer_ui_control_points,
             Vec2 {
                 x: size_weight * size_per_color_x,
@@ -66,16 +67,16 @@ fn draw_ui_previewer_control_points(
 
         response_copy_color_on_click(
             ui,
-            &response,
+            &response_button,
             color_at_point,
             color_copy_format,
             PointerButton::Middle,
         );
 
-        if response.dragged_by(PointerButton::Primary) {
+        if response_button.dragged_by(PointerButton::Primary) {
             const PREVIEWER_DRAG_SENSITIVITY: f32 = 0.6;
             previewer_data.points_preview_sizes[i] +=
-                response.drag_delta().x * PREVIEWER_DRAG_SENSITIVITY;
+                response_button.drag_delta().x * PREVIEWER_DRAG_SENSITIVITY;
             previewer_data.points_preview_sizes[i] =
                 previewer_data.points_preview_sizes[i].max(0.0);
 
@@ -86,8 +87,10 @@ fn draw_ui_previewer_control_points(
             previewer_data.enforce_min_size(min_preview_size);
         }
 
-        let color_response_rect = response.ctx.screen_rect();
+        let color_response_rect = response_button.ctx.screen_rect();
     }
+
+    response
 }
 
 fn modify_spline_t_to_preview_sizes(
@@ -120,7 +123,7 @@ fn modify_spline_t_to_preview_sizes(
     Spline::from_vec(spline_as_vec)
 }
 
-fn draw_ui_previewer_curve(
+fn ui_previewer_curve(
     ui: &mut Ui,
     size: Vec2,
     control_points: &[CONTROL_POINT_TYPE],
@@ -164,24 +167,24 @@ fn draw_ui_previewer_curve(
     });
 }
 
-pub fn draw_ui_previewer(
+pub fn ui_previewer(
     ui: &mut Ui,
     control_points: &[CONTROL_POINT_TYPE],
     spline_mode: SplineMode,
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
-) {
+) -> Response {
     let previewer_rect = ui.available_rect_before_wrap();
 
-    ui.vertical(|ui| {
-        draw_ui_previewer_control_points(
+    let inner_response = ui.vertical(|ui| {
+        let control_points_response = ui_previewer_control_points(
             ui,
             previewer_rect.size() * Vec2::new(1.0, 0.5),
             control_points,
             previewer_data,
             color_copy_format,
         );
-        draw_ui_previewer_curve(
+        ui_previewer_curve(
             ui,
             previewer_rect.size() * Vec2::new(1.0, 0.5),
             control_points,
@@ -199,5 +202,82 @@ pub fn draw_ui_previewer(
         if ui.put(reset_button_rect, reset_button).clicked() {
             previewer_data.reset_preview_sizes();
         }
+
+        control_points_response
     });
+
+    inner_response.inner
+}
+
+const PREVIEWER_DEFAULT_VALUE: f32 = 100.0;
+pub struct PreviewerData {
+    pub control_points: Vec<CONTROL_POINT_TYPE>,
+    pub spline_mode: SplineMode,
+    pub points_preview_sizes: Vec<f32>,
+}
+
+impl PreviewerData {
+    pub fn new(num: usize) -> Self {
+        Self {
+            points_preview_sizes: vec![PREVIEWER_DEFAULT_VALUE; num],
+            control_points: vec![CONTROL_POINT_TYPE::default(); num],
+            spline_mode: SplineMode::HermiteBezier,
+        }
+    }
+    pub fn reset_preview_sizes(&mut self) {
+        for val in self.points_preview_sizes.iter_mut() {
+            *val = PREVIEWER_DEFAULT_VALUE;
+        }
+    }
+
+    pub fn enforce_min_size(&mut self, min_size: f32) {
+        for point_ref in &mut self.points_preview_sizes {
+            *point_ref = point_ref.max(min_size);
+        }
+    }
+
+    pub fn sum(&self) -> f32 {
+        self.points_preview_sizes.iter().sum()
+    }
+}
+
+pub struct ZPreviewer {
+    pub data: PreviewerData,
+}
+
+impl ZPreviewer {
+    pub fn new() -> Self {
+        Self {
+            data: PreviewerData::new(0),
+        }
+    }
+
+    pub fn update(&mut self, control_points: &[CONTROL_POINT_TYPE], spline_mode: SplineMode) {
+        self.data.spline_mode = spline_mode;
+
+        let old_size = self.data.control_points.len();
+        let new_size = control_points.len();
+        self.data.control_points.clear();
+        self.data.control_points.extend_from_slice(control_points);
+
+        if old_size != new_size {
+            self.data.points_preview_sizes = vec![PREVIEWER_DEFAULT_VALUE; new_size];
+        }
+    }
+
+    pub fn draw_ui(&mut self, ui: &mut Ui, color_copy_format: ColorStringCopy) -> Response {
+        ui_previewer(
+            ui,
+            &self.data.control_points.clone(),
+            self.data.spline_mode,
+            &mut self.data,
+            color_copy_format,
+        )
+    }
+}
+
+impl Default for ZPreviewer {
+    fn default() -> Self {
+        Self::new()
+    }
 }

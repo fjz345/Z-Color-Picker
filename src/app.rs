@@ -8,13 +8,13 @@ use eframe::{
 };
 
 use crate::{
-    color_picker::{main_color_picker, ColorStringCopy, PreviewerData, SplineMode},
+    color_picker::{main_color_picker, ColorStringCopy, SplineMode, ZColorPicker},
     math::{color_lerp, color_lerp_ex, hue_lerp},
     preset::{
         delete_preset_from_disk, get_preset_save_path, load_presets, save_preset_to_disk, Preset,
         PresetData,
     },
-    previewer::draw_ui_previewer,
+    previewer::{ui_previewer, PreviewerData, ZPreviewer},
     CONTROL_POINT_TYPE,
 };
 
@@ -28,27 +28,15 @@ enum AppState {
 pub struct ZApp {
     scale_factor: f32,
     state: AppState,
-    control_points: Vec<CONTROL_POINT_TYPE>,
-    dragging_bezier_index: Option<usize>,
-    control_point_right_clicked: Option<usize>,
-    last_modifying_point_index: Option<usize>,
-    is_curve_locked: bool,
-    is_hue_middle_interpolated: bool,
-    is_insert_right: bool,
-    is_window_lock: bool,
-    previewer_data: PreviewerData,
+    z_color_picker: ZColorPicker,
+    previewer: ZPreviewer,
     color_copy_format: ColorStringCopy,
-    spline_mode: SplineMode,
     debug_control_points: bool,
     debug_window: bool,
     debug_t: f32,
     debug_C: f32,
     debug_alpha: f32,
     double_click_event: Option<Pos2>,
-    presets: Vec<Preset>,
-    preset_selected_index: Option<usize>,
-    new_preset_window_open: bool,
-    new_preset_window_text: String,
 }
 
 impl ZApp {
@@ -59,27 +47,15 @@ impl ZApp {
         Self {
             scale_factor: scale_factor,
             state: AppState::Startup,
-            previewer_data: PreviewerData::new(0),
+            previewer: ZPreviewer::new(),
             color_copy_format: ColorStringCopy::HEX,
-            spline_mode: SplineMode::HermiteBezier,
             debug_control_points: false,
             debug_window: false,
             debug_t: 0.0,
             debug_C: 0.0,
             debug_alpha: 0.0,
             double_click_event: None,
-            control_points: Vec::with_capacity(4),
-            dragging_bezier_index: None,
-            control_point_right_clicked: None,
-            last_modifying_point_index: None,
-            is_curve_locked: false,
-            is_hue_middle_interpolated: true,
-            is_insert_right: true,
-            is_window_lock: true,
-            presets: Vec::new(),
-            preset_selected_index: None,
-            new_preset_window_open: false,
-            new_preset_window_text: String::new(),
+            z_color_picker: ZColorPicker::new(),
         }
     }
 
@@ -88,337 +64,13 @@ impl ZApp {
         ctx.set_visuals(visuals);
         ctx.set_pixels_per_point(self.scale_factor);
 
-        const DEFAULT_STARTUP_CONTROL_POINTS: [CONTROL_POINT_TYPE; 4] = [
-            CONTROL_POINT_TYPE {
-                val: [0.25, 0.33, 0.0],
-            },
-            CONTROL_POINT_TYPE {
-                val: [0.44, 0.38, 0.1],
-            },
-            CONTROL_POINT_TYPE {
-                val: [0.8, 0.6, 0.1],
-            },
-            CONTROL_POINT_TYPE {
-                val: [0.9, 0.8, 0.2],
-            },
-        ];
+        // spawn
+        // self.previewer_data.points_preview_sizes.push(0.0);
+        // self.previewer_data.reset_preview_sizes();
 
-        load_presets(&mut self.presets);
-
-        // Use first as default if exists
-        if self.presets.len() >= 1 {
-            self.preset_selected_index = Some(0);
-            self.apply_selected_preset();
-        } else {
-            for control_point in DEFAULT_STARTUP_CONTROL_POINTS {
-                self.spawn_control_point(control_point);
-            }
-        }
-    }
-
-    fn remove_all_control_points(&mut self) {
-        for i in (0..self.control_points.len()).rev() {
-            self.remove_control_point(i);
-        }
-        self.last_modifying_point_index = None;
-    }
-
-    fn apply_preset(&mut self, preset: Preset) {
-        self.remove_all_control_points();
-        for preset_control_point in preset.data.control_points {
-            self.spawn_control_point(preset_control_point);
-        }
-        self.spline_mode = preset.data.spline_mode;
-    }
-
-    pub fn apply_selected_preset(&mut self) {
-        if let Some(s) = self.preset_selected_index {
-            if s < self.presets.len() {
-                let preset_to_apply = self.presets[s].clone();
-                self.apply_preset(preset_to_apply);
-            }
-        }
-    }
-
-    pub fn save_selected_preset(&mut self) {
-        if let Some(s) = self.preset_selected_index {
-            let preset = &mut self.presets[s];
-            preset.data = PresetData {
-                spline_mode: self.spline_mode,
-                control_points: self.control_points.clone(),
-            };
-            save_preset_to_disk(&preset.clone());
-            print!("Preset Save");
-        }
-    }
-
-    pub fn preset_data_from_current_state(&self) -> PresetData {
-        PresetData {
-            spline_mode: self.spline_mode,
-            control_points: self.control_points.clone(),
-        }
-    }
-
-    pub fn create_preset(&mut self, name: &String) {
-        let preset = Preset::new(name, self.preset_data_from_current_state());
-        let index = self.presets.len();
-        self.presets.push(preset);
-
-        self.preset_selected_index = Some(index);
-        self.save_selected_preset();
-    }
-
-    pub fn delete_selected_preset(&mut self) {
-        if let Some(s) = self.preset_selected_index {
-            let preset_to_remove = self.presets.remove(s);
-            delete_preset_from_disk(&get_preset_save_path(&preset_to_remove));
-            self.preset_selected_index = None;
-        }
-    }
-
-    fn remove_control_point(&mut self, index: usize) {
-        self.control_points.remove(index);
-        self.previewer_data.points_preview_sizes.remove(index);
-        self.previewer_data.reset_preview_sizes();
-        println!(
-            "CP {} removed, new len {}",
-            index,
-            self.control_points.len()
-        );
-    }
-
-    fn spawn_control_point(&mut self, color: CONTROL_POINT_TYPE) {
-        let control_point_pivot = self.last_modifying_point_index;
-
-        let new_index = match control_point_pivot {
-            Some(index) => {
-                if self.is_insert_right {
-                    index + 1
-                } else {
-                    index
-                }
-            }
-            None => {
-                if self.control_points.len() <= 0 {
-                    0
-                } else {
-                    if self.is_insert_right {
-                        self.control_points.len()
-                    } else {
-                        0
-                    }
-                }
-            }
-        };
-
-        self.control_points.insert(new_index, color);
-        // Adding keys messes with the indicies
-        self.last_modifying_point_index = Some(new_index);
-        self.dragging_bezier_index = None;
-
-        self.previewer_data.points_preview_sizes.push(0.0);
-        self.previewer_data.reset_preview_sizes();
-
-        println!(
-            "ControlPoint#{} spawned @{},{},{}",
-            self.control_points.len(),
-            color[0],
-            color[1],
-            color[2],
-        );
-    }
-
-    fn get_control_points_sdf_2d(&self, xy: Pos2) -> Option<f32> {
-        let mut closest_distance_to_control_point: Option<f32> = None;
-        for cp in self.control_points.iter() {
-            let pos_2d = Pos2::new(cp[0].clamp(0.0, 1.0), 1.0 - cp[1].clamp(0.0, 1.0));
-            let distance_2d = pos_2d.distance(xy);
-
-            closest_distance_to_control_point = match closest_distance_to_control_point {
-                Some(closest_dist_2d) => Some(closest_dist_2d.min(distance_2d)),
-                None => Some(distance_2d),
-            };
-        }
-
-        match closest_distance_to_control_point {
-            Some(closest_dist_2d) => {
-                let dist = closest_dist_2d;
-                println!("Closest Dist: {}", dist);
-                Some(dist)
-            }
-            None => {
-                println!("Did not find closest dist");
-                None
-            }
-        }
-    }
-
-    fn post_update_control_points(&mut self) {
-        if self.is_hue_middle_interpolated {
-            let num_points = self.control_points.len();
-            if num_points >= 2 {
-                let points = &mut self.control_points[..];
-
-                let first_index = 0;
-                let last_index = points.len() - 1;
-                let first_hue = points[first_index][2];
-                let last_hue: f32 = points[last_index][2];
-
-                for i in 1..last_index {
-                    let t = (i as f32) / (points.len() - 1) as f32;
-                    let hue = hue_lerp(first_hue, last_hue, t);
-                    points[i][2] = hue;
-                }
-            }
-        }
-
-        if self.is_window_lock {
-            for i in 0..self.control_points.len() {
-                let cp = &mut self.control_points[i];
-                cp[0] = cp[0].clamp(0.0, 1.0);
-                cp[1] = cp[1].clamp(0.0, 1.0);
-                cp[2] = cp[2].clamp(0.0, 1.0);
-            }
-        }
-    }
-
-    fn draw_ui_main_options(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.is_curve_locked, "🔒")
-                .on_hover_text("Apply changes to all control points");
-            ui.checkbox(&mut self.is_hue_middle_interpolated, "🎨")
-                .on_hover_text("Only modify first/last control points");
-            const INSERT_RIGHT_UNICODE: &str = "👉";
-            const INSERT_LEFT_UNICODE: &str = "👈";
-            let insert_mode_unicode = if self.is_insert_right {
-                INSERT_RIGHT_UNICODE
-            } else {
-                INSERT_LEFT_UNICODE
-            };
-            ui.checkbox(&mut self.is_insert_right, insert_mode_unicode)
-                .on_hover_text(format!(
-                    "Insert new points in {} direction",
-                    insert_mode_unicode
-                ));
-            ui.checkbox(&mut self.is_window_lock, "🆘")
-                .on_hover_text("Clamps the control points so they are contained");
-        });
-
-        ui.horizontal(|ui| {
-            egui::ComboBox::new(12312312, "")
-                .selected_text(format!("{:?}", self.color_copy_format))
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(60.0);
-                    ui.selectable_value(&mut self.color_copy_format, ColorStringCopy::HEX, "Hex");
-                    ui.selectable_value(
-                        &mut self.color_copy_format,
-                        ColorStringCopy::HEXNOA,
-                        "Hex(no A)",
-                    );
-                })
-                .response
-                .on_hover_text("Color Copy Format");
-
-            egui::ComboBox::new(12312313, "")
-                .selected_text(format!("{:?}", self.spline_mode))
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(60.0);
-                    ui.selectable_value(&mut self.spline_mode, SplineMode::Linear, "Linear");
-                    ui.selectable_value(
-                        &mut self.spline_mode,
-                        SplineMode::Bezier,
-                        "Bezier(Bugged)",
-                    );
-                    ui.selectable_value(
-                        &mut self.spline_mode,
-                        SplineMode::HermiteBezier,
-                        "Hermite(NYI)",
-                    );
-                    ui.selectable_value(
-                        &mut self.spline_mode,
-                        SplineMode::Polynomial,
-                        "Polynomial(Crash)",
-                    );
-                })
-                .response
-                .on_hover_text("Spline Mode");
-
-            if ui.button("Flip").clicked_by(PointerButton::Primary) {
-                self.control_points.reverse();
-            }
-        });
-        ui.horizontal(|ui| {
-            let combobox_selected_text_to_show = match self.preset_selected_index {
-                Some(i) => self.presets[i].name.to_string(),
-                None => "".to_string(),
-            };
-
-            let mut combobox_selected_index = 0;
-            let mut combobox_has_selected = false;
-            let combobox_response = egui::ComboBox::new(1232313, "")
-                .selected_text(combobox_selected_text_to_show)
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(60.0);
-
-                    for (i, preset) in &mut self.presets.iter().enumerate() {
-                        let selectable_value_response = ui.selectable_value(
-                            &mut combobox_selected_index,
-                            i + 1,
-                            preset.name.as_str(),
-                        );
-
-                        if selectable_value_response.clicked() {
-                            combobox_has_selected = true;
-                        }
-                    }
-
-                    // New
-                    let selectable_value_response =
-                        ui.selectable_value(&mut combobox_selected_index, 0, "NEW");
-
-                    if selectable_value_response.clicked() {
-                        combobox_has_selected = true;
-                        // combobox_selected_index = i;
-                    }
-                })
-                .response
-                .on_hover_text("Presets");
-
-            if combobox_has_selected {
-                if combobox_selected_index == 0 {
-                    self.new_preset_window_open = true;
-                    self.new_preset_window_text.clear();
-                    println!("New Preset");
-                } else {
-                    self.preset_selected_index = Some(combobox_selected_index - 1);
-                    self.apply_selected_preset();
-                    println!("Selected Preset {:?}", combobox_selected_index - 1);
-                }
-            };
-
-            if ui.button("Save").clicked_by(PointerButton::Primary) {
-                if let Some(s) = self.preset_selected_index {
-                    self.save_selected_preset();
-                }
-            }
-            if ui.button("Delete").clicked_by(PointerButton::Primary) {
-                self.delete_selected_preset();
-            }
-        });
-
-        if self.new_preset_window_open {
-            egui::Window::new("Create Preset")
-                .open(&mut true)
-                .show(ui.ctx(), |ui| {
-                    let text_response = ui.text_edit_singleline(&mut self.new_preset_window_text);
-
-                    if ui.button("Create").clicked() {
-                        self.new_preset_window_open = false;
-
-                        self.create_preset(&self.new_preset_window_text.clone());
-                    }
-                });
-        }
+        // remove
+        // self.previewer_data.points_preview_sizes.remove(index);
+        // self.previewer_data.reset_preview_sizes();
     }
 
     fn draw_ui_menu(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -433,35 +85,29 @@ impl ZApp {
                     color_picker_desired_size.x.min(color_picker_desired_size.y);
 
                 let left_side_reponse = ui.vertical(|ui| {
-                    let main_response = main_color_picker(
-                        ui,
-                        &mut self.control_points[..],
-                        self.spline_mode,
-                        &mut self.color_copy_format,
-                        &mut self.last_modifying_point_index,
-                        &mut self.dragging_bezier_index,
-                        &mut self.control_point_right_clicked,
-                        self.is_hue_middle_interpolated,
-                        self.is_curve_locked,
-                    );
+                    let z_color_picker_response =
+                        self.z_color_picker.draw_ui(ui, &mut self.color_copy_format);
 
-                    self.post_update_control_points();
-
-                    self.draw_ui_main_options(ui);
-
-                    main_response
+                    z_color_picker_response
                 });
 
-                let main_response = left_side_reponse.inner;
+                let z_color_picker_response = left_side_reponse.inner;
+
+                self.previewer.update(
+                    &self.z_color_picker.control_points,
+                    self.z_color_picker.spline_mode,
+                );
 
                 match self.double_click_event {
                     Some(pos) => {
-                        if main_response.rect.contains(pos) {
-                            let main_response_xy = pos - main_response.rect.min;
-                            let normalized_xy = main_response_xy / main_response.rect.size();
+                        if z_color_picker_response.rect.contains(pos) {
+                            let z_color_picker_response_xy = pos - z_color_picker_response.rect.min;
+                            let normalized_xy =
+                                z_color_picker_response_xy / z_color_picker_response.rect.size();
 
-                            let closest_distance_to_control_point =
-                                self.get_control_points_sdf_2d(normalized_xy.to_pos2());
+                            let closest_distance_to_control_point = self
+                                .z_color_picker
+                                .get_control_points_sdf_2d(normalized_xy.to_pos2());
                             const MIN_DIST: f32 = 0.1;
 
                             let should_spawn_control_point = match closest_distance_to_control_point
@@ -479,31 +125,20 @@ impl ZApp {
                                     1.0 - normalized_xy.y.clamp(0.0, 1.0),
                                 );
                                 let color = [color_xy[0], color_xy[1], color_hue];
-                                self.spawn_control_point(color.into());
+                                self.z_color_picker.spawn_control_point(color.into());
                             }
                         }
                     }
                     _ => {}
                 }
-                match self.control_point_right_clicked {
-                    Some(a) => {
-                        self.remove_control_point(a);
-                    }
-                    _ => {}
-                }
-                draw_ui_previewer(
-                    ui,
-                    &self.control_points[..],
-                    self.spline_mode,
-                    &mut self.previewer_data,
-                    self.color_copy_format,
-                );
+
+                self.previewer.draw_ui(ui, self.color_copy_format);
 
                 // TESTING
                 if self.debug_window {
-                    if self.control_points.len() >= 2 {
-                        let src_color = self.control_points.first().unwrap().hsv();
-                        let trg_color = self.control_points.last().unwrap().hsv();
+                    if self.z_color_picker.control_points.len() >= 2 {
+                        let src_color = self.z_color_picker.control_points.first().unwrap().hsv();
+                        let trg_color = self.z_color_picker.control_points.last().unwrap().hsv();
                         let res_color = color_lerp_ex(
                             src_color.into(),
                             trg_color.into(),
@@ -547,8 +182,8 @@ impl ZApp {
             .enabled(true);
 
         window.show(ctx, |ui| {
-            for i in 0..self.control_points.len() {
-                let point = self.control_points[i];
+            for i in 0..self.z_color_picker.control_points.len() {
+                let point = self.z_color_picker.control_points[i];
                 ui.label(format!("[{i}]"));
                 ui.label(format!("- x: {}", point[0]));
                 ui.label(format!("- y: {}", point[1]));
