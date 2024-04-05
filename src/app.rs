@@ -104,10 +104,7 @@ impl ZApp {
 
                             let should_spawn_control_point = match closest_distance_to_control_point
                             {
-                                Some(dist) => {
-                                    let dist = closest_distance_to_control_point.unwrap();
-                                    dist > MIN_DIST
-                                }
+                                Some(dist) => dist > MIN_DIST,
                                 _ => true,
                             };
                             if should_spawn_control_point {
