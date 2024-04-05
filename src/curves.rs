@@ -1,25 +1,21 @@
 //https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
 
-use std::borrow::Borrow;
-use std::collections::btree_set::SymmetricDifference;
-
 use ecolor::{Color32, HsvaGamma};
 use eframe::egui::{self, Sense, Ui};
-use eframe::epaint::{Pos2, QuadraticBezierShape, Rect, Shape, Stroke, Vec2};
-use eframe::{emath, epaint};
+use eframe::emath;
+use eframe::epaint::{Pos2, Rect, Shape, Stroke, Vec2};
 use egui::epaint::PathShape;
 use splines::{Interpolation, Key, Spline};
 
 use crate::color_picker::SplineMode;
-use crate::hsv_key_value::HsvKeyValue;
-use crate::math::{add_array_array, dist_vec2, mul_array, norm_vec2};
-use crate::CONTROL_POINT_TYPE;
+use crate::math::{add_array_array, mul_array};
+use crate::ControlPointType;
 
 pub fn ui_ordered_control_points(
     ui: &mut Ui,
-    control_points: &[CONTROL_POINT_TYPE],
+    control_points: &[ControlPointType],
     marked_control_point_index: &Option<usize>,
-    is_middle_interpolated: bool,
+    _is_middle_interpolated: bool,
     parent_response: &egui::Response,
 ) -> (
     /*
@@ -46,8 +42,6 @@ pub fn ui_ordered_control_points(
     let control_point_radius = 8.0;
 
     // Fill Circle
-    let first_index = 0;
-    let last_index = num_control_points - 1;
     let mut selected_index = *marked_control_point_index;
     let mut hovering_control_point = None;
 
@@ -73,7 +67,7 @@ pub fn ui_ordered_control_points(
             );
 
             // TODO: CHECK THIS LOGIC (is_inactive, is_inactive_click_or_drag)
-            let mut is_inactive: bool = false;
+            let is_inactive: bool = false;
             let mut is_inactive_click_or_drag: bool = false;
 
             // if is_middle_interpolated {
@@ -104,7 +98,7 @@ pub fn ui_ordered_control_points(
                 v: control_point[1],
                 a: 1.0,
             };
-            let mut color_to_show = if !is_inactive_click_or_drag {
+            let color_to_show = if !is_inactive_click_or_drag {
                 point_as_color
             } else {
                 HsvaGamma {
@@ -224,7 +218,7 @@ pub fn ui_ordered_control_points(
     )
 }
 
-pub fn find_spline_max_t(spline: &Spline<f32, CONTROL_POINT_TYPE>) -> f32 {
+pub fn find_spline_max_t(spline: &Spline<f32, ControlPointType>) -> f32 {
     let vec_of_t_values: Vec<f32> = spline.into_iter().map(|k| k.t).collect();
     let max_t = vec_of_t_values
         .into_iter()
@@ -234,10 +228,10 @@ pub fn find_spline_max_t(spline: &Spline<f32, CONTROL_POINT_TYPE>) -> f32 {
 }
 
 pub fn generate_spline_points_with_distance(
-    control_points: &[CONTROL_POINT_TYPE],
+    control_points: &[ControlPointType],
     spline_mode: SplineMode,
     t_distance: f32,
-) -> Vec<CONTROL_POINT_TYPE> {
+) -> Vec<ControlPointType> {
     let mut spline_samples = Vec::new();
 
     if control_points.len() <= 1 {
@@ -268,11 +262,11 @@ pub fn generate_spline_points_with_distance(
 }
 
 pub fn sub_divide_control_points(
-    control_points: &[CONTROL_POINT_TYPE],
+    control_points: &[ControlPointType],
     distance_per_point: f32,
-) -> Vec<CONTROL_POINT_TYPE> {
+) -> Vec<ControlPointType> {
     let capacity: usize = control_points.len() * 4;
-    let mut sub_divided: Vec<CONTROL_POINT_TYPE> = Vec::with_capacity(capacity);
+    let mut sub_divided: Vec<ControlPointType> = Vec::with_capacity(capacity);
 
     for i in 1..control_points.len() {
         sub_divided.push(control_points[i - 1]);
@@ -285,11 +279,11 @@ pub fn sub_divide_control_points(
         while distance_to_end > distance_per_point {
             let new: Pos2 = sub_div_start + distance_per_point * dir;
             distance_to_end -= distance_per_point;
-            sub_divided.push(CONTROL_POINT_TYPE::new(new.x, new.y, hue_to_use));
+            sub_divided.push(ControlPointType::new(new.x, new.y, hue_to_use));
             sub_div_start = new;
         }
         let last_new = sub_div_start + distance_to_end.max(0.0) * dir;
-        sub_divided.push(CONTROL_POINT_TYPE::new(last_new.x, last_new.y, hue_to_use));
+        sub_divided.push(ControlPointType::new(last_new.x, last_new.y, hue_to_use));
     }
     if control_points.last().is_some() {
         sub_divided.push(*control_points.last().unwrap());
@@ -300,7 +294,7 @@ pub fn sub_divide_control_points(
 
 pub fn ui_ordered_spline_gradient(
     ui: &mut Ui,
-    control_points: &[CONTROL_POINT_TYPE],
+    control_points: &[ControlPointType],
     spline_mode: SplineMode,
     parent_response: &egui::Response,
 ) -> Option<egui::Response> {
@@ -379,9 +373,9 @@ impl<const D: usize, const N: usize> Bezier<D, N> {
 }
 
 pub fn control_points_to_spline(
-    control_points: &[CONTROL_POINT_TYPE],
+    control_points: &[ControlPointType],
     spline_mode: SplineMode,
-) -> Spline<f32, CONTROL_POINT_TYPE> {
+) -> Spline<f32, ControlPointType> {
     match spline_mode {
         SplineMode::Linear => Spline::from_vec(
             control_points
@@ -398,17 +392,17 @@ pub fn control_points_to_spline(
                 .collect(),
         ),
         SplineMode::HermiteBezier => {
-            let mut CatmulRom_spline_vec = control_points.clone().to_vec();
+            let mut catmul_rom_spline_vec = control_points.to_vec();
             if control_points.len() >= 1 {
-                CatmulRom_spline_vec.insert(0, *control_points.first().unwrap());
+                catmul_rom_spline_vec.insert(0, *control_points.first().unwrap());
             }
 
             if control_points.len() >= 1 {
-                CatmulRom_spline_vec.push(*control_points.last().unwrap());
+                catmul_rom_spline_vec.push(*control_points.last().unwrap());
             }
 
-            let mut new_spline = Spline::from_vec(
-                CatmulRom_spline_vec
+            let new_spline = Spline::from_vec(
+                catmul_rom_spline_vec
                     .iter()
                     .enumerate()
                     .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::CatmullRom))

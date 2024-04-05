@@ -8,7 +8,7 @@ pub fn color_function_gradient(
     let (rect, response) = ui.allocate_at_least(size, Sense::click_and_drag());
 
     if ui.is_rect_visible(rect) {
-        let visuals = ui.style().interact(&response);
+        let _visuals = ui.style().interact(&response);
 
         // background_checkers(ui.painter(), rect); // for alpha:
 
@@ -38,7 +38,7 @@ pub fn mesh_gradient(ui: &mut Ui, size: Vec2, vertex_colors: &[Color32]) -> Resp
     let (rect, response) = ui.allocate_at_least(size, Sense::click_and_drag());
 
     if ui.is_rect_visible(rect) {
-        let visuals = ui.style().interact(&response);
+        let _visuals = ui.style().interact(&response);
 
         // background_checkers(ui.painter(), rect); // for alpha:
 

@@ -1,9 +1,9 @@
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::TAU;
 
 use bspline::Interpolate;
 use ecolor::Color32;
 use eframe::egui::{lerp, Vec2};
-use palette::{convert::FromColorUnclamped, FromColor, LabHue, Lch, LinSrgb, Oklab};
+use palette::{FromColor, LabHue, Lch, LinSrgb};
 
 pub fn factorial(n: u64) -> u64 {
     (1..=n).product()
@@ -88,18 +88,18 @@ pub fn hue_lerp(hue0: f32, hue1: f32, t: f32) -> f32 {
     hue.rem_euclid(1.0)
 }
 
-pub fn color_lerp(color_src: Color32, color_trg: Color32, mut t: f32) -> Color32 {
+pub fn color_lerp(color_src: Color32, color_trg: Color32, t: f32) -> Color32 {
     const C: f32 = 0.7;
-    const alpha: f32 = 0.1;
-    color_lerp_ex(color_src, color_trg, t, C, alpha)
+    const ALPHA: f32 = 0.1;
+    color_lerp_ex(color_src, color_trg, t, C, ALPHA)
 }
 
 pub fn color_lerp_ex(
     color_src: Color32,
     color_trg: Color32,
     mut t: f32,
-    C: f32,
-    alpha: f32,
+    c: f32,
+    _alpha: f32,
 ) -> Color32 {
     if t < 0.0 || t > 1.0 {
         println!("t value {} is not a valid input", t);
@@ -119,8 +119,6 @@ pub fn color_lerp_ex(
     let lch_src = Lch::from_color(color_src_linsrgb);
     let lch_trg = Lch::from_color(color_trg_linsrgb);
 
-    let deg_diff = lch_trg.hue - lch_src.hue;
-
     // Lerp hue
     let lerped_hue_normalized = hue_lerp(
         f32::to_radians(Into::<f32>::into(lch_src.hue)) / TAU,
@@ -130,9 +128,9 @@ pub fn color_lerp_ex(
     let new_hue = LabHue::new(f32::to_degrees(lerped_hue_normalized * TAU));
     // desaturate towards C (t<= 0.5), t> 0.5, mirror
     let new_chroma_normalized = if t <= 0.5 {
-        (lch_src.chroma as f32 / Lch::<f32>::max_chroma() as f32).interpolate(&(1.0 - C), t * 2.0)
+        (lch_src.chroma as f32 / Lch::<f32>::max_chroma() as f32).interpolate(&(1.0 - c), t * 2.0)
     } else {
-        (1.0 - C).interpolate(
+        (1.0 - c).interpolate(
             &(lch_trg.chroma as f32 / Lch::<f32>::max_chroma()),
             -1.0 + t * 2.0,
         )

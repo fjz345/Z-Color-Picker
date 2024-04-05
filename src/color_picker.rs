@@ -19,7 +19,7 @@ use crate::{
         color_slider_1d, color_slider_2d, color_text_ui, response_copy_color_on_click,
         ui_hue_control_points_overlay,
     },
-    CONTROL_POINT_TYPE,
+    ControlPointType,
 };
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -46,7 +46,7 @@ pub enum SplineMode {
 }
 
 pub struct ZColorPicker {
-    pub control_points: Vec<CONTROL_POINT_TYPE>,
+    pub control_points: Vec<ControlPointType>,
     pub last_modifying_point_index: Option<usize>,
     pub is_curve_locked: bool,
     pub is_hue_middle_interpolated: bool,
@@ -79,17 +79,17 @@ impl ZColorPicker {
             control_point_right_clicked: None,
         };
 
-        const DEFAULT_STARTUP_CONTROL_POINTS: [CONTROL_POINT_TYPE; 4] = [
-            CONTROL_POINT_TYPE {
+        const DEFAULT_STARTUP_CONTROL_POINTS: [ControlPointType; 4] = [
+            ControlPointType {
                 val: [0.25, 0.33, 0.0],
             },
-            CONTROL_POINT_TYPE {
+            ControlPointType {
                 val: [0.44, 0.38, 0.1],
             },
-            CONTROL_POINT_TYPE {
+            ControlPointType {
                 val: [0.8, 0.6, 0.1],
             },
-            CONTROL_POINT_TYPE {
+            ControlPointType {
                 val: [0.9, 0.8, 0.2],
             },
         ];
@@ -178,7 +178,7 @@ impl ZColorPicker {
         );
     }
 
-    pub fn spawn_control_point(&mut self, color: CONTROL_POINT_TYPE) {
+    pub fn spawn_control_point(&mut self, color: ControlPointType) {
         let control_point_pivot = self.last_modifying_point_index;
 
         let new_index = match control_point_pivot {
@@ -375,7 +375,7 @@ impl ZColorPicker {
 
             let mut combobox_selected_index = 0;
             let mut combobox_has_selected = false;
-            let combobox_response = egui::ComboBox::new(1232313, "")
+            let _combobox_response = egui::ComboBox::new(1232313, "")
                 .selected_text(combobox_selected_text_to_show)
                 .show_ui(ui, |ui| {
                     ui.set_min_width(60.0);
@@ -417,7 +417,7 @@ impl ZColorPicker {
             };
 
             if ui.button("Save").clicked_by(PointerButton::Primary) {
-                if let Some(s) = self.preset_selected_index {
+                if let Some(_s) = self.preset_selected_index {
                     self.save_selected_preset();
                 }
             }
@@ -430,7 +430,7 @@ impl ZColorPicker {
             egui::Window::new("Create Preset")
                 .open(&mut true)
                 .show(ui.ctx(), |ui| {
-                    let text_response = ui.text_edit_singleline(&mut self.new_preset_window_text);
+                    let _text_response = ui.text_edit_singleline(&mut self.new_preset_window_text);
 
                     if ui.button("Create").clicked() {
                         self.new_preset_window_open = false;
@@ -485,7 +485,7 @@ pub fn format_color_as(
 
 pub fn main_color_picker(
     ui: &mut Ui,
-    control_points: &mut [CONTROL_POINT_TYPE],
+    control_points: &mut [ControlPointType],
     spline_mode: SplineMode,
     color_copy_format: ColorStringCopy,
     last_modifying_point_index: &mut Option<usize>,
@@ -522,7 +522,7 @@ pub fn main_color_picker(
             a: 1.0,
         };
         let mut color_to_show = match modifying_control_point.as_ref() {
-            Some(CP) => CP.hsv(),
+            Some(cp) => cp.hsv(),
             None => dummy_color,
         };
 
@@ -589,19 +589,18 @@ pub fn main_color_picker(
 
             let prev_hue = color_to_show.h;
             let hue_optional_value: Option<&mut f32> = match modifying_control_point {
-                Some(CP) => Some(&mut CP[2]),
+                Some(cp) => Some(&mut cp[2]),
                 None => None,
             };
-            let (mut hue_response, mut new_hue_val) =
-                color_slider_1d(ui, hue_optional_value, |h| {
-                    HsvaGamma {
-                        h,
-                        s: 1.0,
-                        v: 1.0,
-                        a: 1.0,
-                    }
-                    .into()
-                });
+            let (mut hue_response, new_hue_val) = color_slider_1d(ui, hue_optional_value, |h| {
+                HsvaGamma {
+                    h,
+                    s: 1.0,
+                    v: 1.0,
+                    a: 1.0,
+                }
+                .into()
+            });
             hue_response = hue_response.on_hover_text("Hue");
             if hue_response.changed() {
                 if new_hue_val.is_some() {
@@ -609,7 +608,7 @@ pub fn main_color_picker(
                 }
             };
 
-            let (control_points_hue_response, hue_selected_index) = ui_hue_control_points_overlay(
+            let (_control_points_hue_response, hue_selected_index) = ui_hue_control_points_overlay(
                 ui,
                 &hue_response,
                 control_points,
@@ -653,7 +652,7 @@ pub fn main_color_picker(
         }
 
         if dragging_bezier_index.is_some() {
-            let mut control_point = match is_modifying_index {
+            let control_point = match is_modifying_index {
                 Some(a) => Some(control_points[a]),
                 _ => None,
             };
@@ -671,7 +670,7 @@ pub fn main_color_picker(
         //         &slider_2d_reponse,
         //     );
 
-        let spline_gradient_repsonse =
+        let _spline_gradient_repsonse =
             ui_ordered_spline_gradient(ui, control_points, spline_mode, &slider_2d_reponse);
 
         let (dragged_points_response, selected_index, hovering_control_point) =
@@ -701,18 +700,18 @@ pub fn main_color_picker(
         }
 
         match dragged_points_response {
-            Some(R) => {
-                if R.dragged_by(PointerButton::Primary) {
+            Some(r) => {
+                if r.dragged_by(PointerButton::Primary) {
                     match is_modifying_index {
                         Some(index) => {
                             {
                                 let point_x_ref = &mut control_points[index][0];
 
-                                *point_x_ref += R.drag_delta().x / slider_2d_reponse.rect.size().x;
+                                *point_x_ref += r.drag_delta().x / slider_2d_reponse.rect.size().x;
                             }
                             {
                                 let point_y_ref = &mut control_points[index][1];
-                                *point_y_ref -= R.drag_delta().y / slider_2d_reponse.rect.size().y;
+                                *point_y_ref -= r.drag_delta().y / slider_2d_reponse.rect.size().y;
                             }
                         }
                         _ => {}
@@ -728,11 +727,11 @@ pub fn main_color_picker(
                             {
                                 let point_x_ref = &mut control_points[i][0];
 
-                                *point_x_ref += R.drag_delta().x / slider_2d_reponse.rect.size().x;
+                                *point_x_ref += r.drag_delta().x / slider_2d_reponse.rect.size().x;
                             }
                             {
                                 let point_y_ref = &mut control_points[i][1];
-                                *point_y_ref -= R.drag_delta().y / slider_2d_reponse.rect.size().y;
+                                *point_y_ref -= r.drag_delta().y / slider_2d_reponse.rect.size().y;
                             }
                         }
                     }

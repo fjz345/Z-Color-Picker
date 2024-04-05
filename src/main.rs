@@ -1,4 +1,6 @@
 // #![windows_subsystem = "windows"]
+#![allow(dead_code)]
+#![allow(unreachable_patterns)]
 
 use eframe::egui;
 use hsv_key_value::HsvKeyValue;
@@ -38,4 +40,4 @@ fn main() {
     }
 }
 
-type CONTROL_POINT_TYPE = HsvKeyValue;
+type ControlPointType = HsvKeyValue;

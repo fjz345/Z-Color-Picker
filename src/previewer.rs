@@ -1,9 +1,8 @@
 use ecolor::HsvaGamma;
 use eframe::{
     egui::{self, Layout, PointerButton, Response, Sense, Ui, Vec2},
-    epaint::{Color32, Rect},
+    epaint::Rect,
 };
-use serde_json::to_vec;
 use splines::Spline;
 
 use crate::{
@@ -11,13 +10,13 @@ use crate::{
     curves::{control_points_to_spline, find_spline_max_t},
     gradient::color_function_gradient,
     ui_common::{color_button, response_copy_color_on_click},
-    CONTROL_POINT_TYPE,
+    ControlPointType,
 };
 
 fn ui_previewer_control_points(
     ui: &mut Ui,
     size: Vec2,
-    control_points: &[CONTROL_POINT_TYPE],
+    control_points: &[ControlPointType],
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
 ) -> Response {
@@ -46,7 +45,7 @@ fn ui_previewer_control_points(
         }
         let color_data = &points[i];
         let color_data_hue = control_points[i][2];
-        let mut color_at_point: HsvaGamma = HsvaGamma {
+        let color_at_point: HsvaGamma = HsvaGamma {
             h: color_data_hue,
             s: color_data.x,
             v: color_data.y,
@@ -87,20 +86,20 @@ fn ui_previewer_control_points(
             previewer_data.enforce_min_size(min_preview_size);
         }
 
-        let color_response_rect = response_button.ctx.screen_rect();
+        let _color_response_rect = response_button.ctx.screen_rect();
     }
 
     response
 }
 
 fn modify_spline_t_to_preview_sizes(
-    spline: Spline<f32, CONTROL_POINT_TYPE>,
+    spline: Spline<f32, ControlPointType>,
     spline_mode: SplineMode,
     previewer_data: &PreviewerData,
-) -> Spline<f32, CONTROL_POINT_TYPE> {
+) -> Spline<f32, ControlPointType> {
     let preview_sizes = &previewer_data.points_preview_sizes;
 
-    let hermite_index_offset = match spline_mode {
+    let _hermite_index_offset = match spline_mode {
         SplineMode::HermiteBezier => {
             if spline.len() >= 2 {
                 1
@@ -126,7 +125,7 @@ fn modify_spline_t_to_preview_sizes(
 fn ui_previewer_curve(
     ui: &mut Ui,
     size: Vec2,
-    control_points: &[CONTROL_POINT_TYPE],
+    control_points: &[ControlPointType],
     spline_mode: SplineMode,
     previewer_data: &PreviewerData,
 ) {
@@ -169,7 +168,7 @@ fn ui_previewer_curve(
 
 pub fn ui_previewer(
     ui: &mut Ui,
-    control_points: &[CONTROL_POINT_TYPE],
+    control_points: &[ControlPointType],
     spline_mode: SplineMode,
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
@@ -194,7 +193,7 @@ pub fn ui_previewer(
 
         let reset_button = egui::Button::new("❌").small().wrap(true).frame(true);
         let reset_button_size: Vec2 = Vec2::new(25.0, 25.0);
-        let mut reset_button_rect: Rect = Rect {
+        let reset_button_rect: Rect = Rect {
             min: previewer_rect.min,
             max: previewer_rect.min + reset_button_size,
         };
@@ -211,7 +210,7 @@ pub fn ui_previewer(
 
 const PREVIEWER_DEFAULT_VALUE: f32 = 100.0;
 pub struct PreviewerData {
-    pub control_points: Vec<CONTROL_POINT_TYPE>,
+    pub control_points: Vec<ControlPointType>,
     pub spline_mode: SplineMode,
     pub points_preview_sizes: Vec<f32>,
 }
@@ -220,7 +219,7 @@ impl PreviewerData {
     pub fn new(num: usize) -> Self {
         Self {
             points_preview_sizes: vec![PREVIEWER_DEFAULT_VALUE; num],
-            control_points: vec![CONTROL_POINT_TYPE::default(); num],
+            control_points: vec![ControlPointType::default(); num],
             spline_mode: SplineMode::HermiteBezier,
         }
     }
@@ -252,7 +251,7 @@ impl ZPreviewer {
         }
     }
 
-    pub fn update(&mut self, control_points: &[CONTROL_POINT_TYPE], spline_mode: SplineMode) {
+    pub fn update(&mut self, control_points: &[ControlPointType], spline_mode: SplineMode) {
         self.data.spline_mode = spline_mode;
 
         let old_size = self.data.control_points.len();

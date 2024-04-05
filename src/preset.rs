@@ -1,14 +1,11 @@
 use std::{
-    fs::{self, remove_file, DirEntry, File, OpenOptions},
-    io::{Read, Write},
+    fs::{self, remove_file, DirEntry, File},
+    io::Read,
 };
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    color_picker::SplineMode, fs::write_string_to_file, hsv_key_value::HsvKeyValue,
-    CONTROL_POINT_TYPE,
-};
+use crate::{color_picker::SplineMode, fs::write_string_to_file, ControlPointType};
 
 const PRESETS_PATH: &str = "./presets";
 
@@ -30,7 +27,7 @@ impl Preset {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PresetData {
     pub spline_mode: SplineMode,
-    pub control_points: Vec<CONTROL_POINT_TYPE>,
+    pub control_points: Vec<ControlPointType>,
 }
 
 pub fn load_presets(presets: &mut Vec<Preset>) {
@@ -90,6 +87,7 @@ pub fn load_preset_from_disk(dir_entry: DirEntry) -> Option<Preset> {
         Err(_) => panic!("Failed To load preset file"),
     }
 
+    #[allow(unreachable_code)]
     None
 }
 

@@ -1,21 +1,13 @@
-use ecolor::Color32;
 use eframe::{
-    egui::{
-        self, color_picker::show_color, ComboBox, Layout, PointerButton, Rect, Slider, Ui, Window,
-    },
+    egui::{self, color_picker::show_color, Layout, PointerButton, Rect, Slider, Window},
     epaint::{Pos2, Vec2},
     CreationContext,
 };
 
 use crate::{
-    color_picker::{main_color_picker, ColorStringCopy, SplineMode, ZColorPicker},
-    math::{color_lerp, color_lerp_ex, hue_lerp},
-    preset::{
-        delete_preset_from_disk, get_preset_save_path, load_presets, save_preset_to_disk, Preset,
-        PresetData,
-    },
-    previewer::{ui_previewer, PreviewerData, ZPreviewer},
-    CONTROL_POINT_TYPE,
+    color_picker::{ColorStringCopy, ZColorPicker},
+    math::color_lerp_ex,
+    previewer::ZPreviewer,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -34,7 +26,7 @@ pub struct ZApp {
     debug_control_points: bool,
     debug_window: bool,
     debug_t: f32,
-    debug_C: f32,
+    debug_c: f32,
     debug_alpha: f32,
     double_click_event: Option<Pos2>,
 }
@@ -52,20 +44,20 @@ impl ZApp {
             debug_control_points: false,
             debug_window: false,
             debug_t: 0.0,
-            debug_C: 0.0,
+            debug_c: 0.0,
             debug_alpha: 0.0,
             double_click_event: None,
             z_color_picker: ZColorPicker::new(),
         }
     }
 
-    fn startup(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        let mut visuals: egui::Visuals = egui::Visuals::dark();
+    fn startup(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let visuals: egui::Visuals = egui::Visuals::dark();
         ctx.set_visuals(visuals);
         ctx.set_pixels_per_point(self.scale_factor);
     }
 
-    fn draw_ui_menu(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn draw_ui_menu(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let color_picker_desired_size = Vec2 {
                 x: ui.available_width() * 0.5,
@@ -132,7 +124,7 @@ impl ZApp {
                             src_color.into(),
                             trg_color.into(),
                             self.debug_t,
-                            self.debug_C,
+                            self.debug_c,
                             self.debug_alpha,
                         );
 
@@ -191,7 +183,7 @@ impl ZApp {
 
         window.show(ctx, |ui| {
             ui.add(Slider::new(&mut self.debug_t, 0.0..=1.0).text("debug_t"));
-            ui.add(Slider::new(&mut self.debug_C, 0.0..=1.0).text("debug_C"));
+            ui.add(Slider::new(&mut self.debug_c, 0.0..=1.0).text("debug_C"));
             ui.add(Slider::new(&mut self.debug_alpha, 0.0..=1.0).text("debug_alpha"));
         });
     }

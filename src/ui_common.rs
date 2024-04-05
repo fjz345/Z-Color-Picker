@@ -1,7 +1,7 @@
 use crate::color_picker::format_color_as;
 use crate::egui::PointerButton;
 use crate::egui::TextStyle;
-use crate::CONTROL_POINT_TYPE;
+use crate::ControlPointType;
 use eframe::egui::Pos2;
 use eframe::{
     egui::{color_picker::Alpha, vec2, Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
@@ -49,7 +49,7 @@ pub fn background_checkers(painter: &Painter, rect: Rect) {
     painter.add(Shape::mesh(mesh));
 }
 
-pub fn color_button(ui: &mut Ui, size: Vec2, color: Color32, open: bool) -> Response {
+pub fn color_button(ui: &mut Ui, size: Vec2, color: Color32, _open: bool) -> Response {
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     response.widget_info(|| WidgetInfo::new(WidgetType::ColorButton));
 
@@ -148,7 +148,7 @@ pub fn color_slider_1d(
 pub fn ui_hue_control_points_overlay(
     ui: &mut Ui,
     parent_response: &Response,
-    control_points: &mut [CONTROL_POINT_TYPE],
+    control_points: &mut [ControlPointType],
     modifying_control_point_index: Option<usize>,
 ) -> (Response, Option<usize>) {
     let container_response =
@@ -302,7 +302,7 @@ pub fn color_slider_2d(
 pub fn color_button_copy(
     ui: &mut Ui,
     color: impl Into<Color32>,
-    alpha: Alpha,
+    _alpha: Alpha,
     color_copy_format: ColorStringCopy,
 ) {
     let button_response = ui.button("📋").on_hover_text("Copy (middle mouse click)");
