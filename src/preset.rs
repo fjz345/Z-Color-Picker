@@ -34,6 +34,7 @@ pub struct PresetData {
 }
 
 pub fn load_presets(presets: &mut Vec<Preset>) {
+    presets.clear();
     let paths = fs::read_dir(PRESETS_PATH).unwrap();
 
     const DEBUG_PRINT: bool = true;
