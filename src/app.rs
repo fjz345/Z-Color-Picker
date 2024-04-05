@@ -63,14 +63,6 @@ impl ZApp {
         let mut visuals: egui::Visuals = egui::Visuals::dark();
         ctx.set_visuals(visuals);
         ctx.set_pixels_per_point(self.scale_factor);
-
-        // spawn
-        // self.previewer_data.points_preview_sizes.push(0.0);
-        // self.previewer_data.reset_preview_sizes();
-
-        // remove
-        // self.previewer_data.points_preview_sizes.remove(index);
-        // self.previewer_data.reset_preview_sizes();
     }
 
     fn draw_ui_menu(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {

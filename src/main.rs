@@ -16,31 +16,6 @@ mod preset;
 mod previewer;
 mod ui_common;
 
-/*
-=============================================================
-TODO:
-
-BUGS
-* Bezier mode hue interpolation
-* HermiteBezier, can not modify t's in previewer
-* Polynomial
-* Create Preset close button not working
-
-FEATURES'
-* Color Lerp
-* Quantizize gradient previewer
-* Regular Color pick for control points
-* Visualization curves
-    - Value
-    - Saturation
-    - Hue
-* User visual feedback when copying color values
-* Import curves to photoshop????
-* Different color spaces
-* Better ui widget dynamic rezizing
-* Preset save more data, lock/etc...
-=============================================================
-*/
 fn main() {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
