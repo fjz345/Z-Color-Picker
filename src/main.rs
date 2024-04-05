@@ -24,11 +24,11 @@ BUGS
 * Bezier mode hue interpolation
 * HermiteBezier, can not modify t's in previewer
 * Polynomial
+* Create Preset close button not working
 
 FEATURES'
 * Color Lerp
 * Quantizize gradient previewer
-* Preset save/load control_points
 * Regular Color pick for control points
 * Visualization curves
     - Value
@@ -38,6 +38,7 @@ FEATURES'
 * Import curves to photoshop????
 * Different color spaces
 * Better ui widget dynamic rezizing
+* Preset save more data, lock/etc...
 =============================================================
 */
 fn main() {
