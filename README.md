@@ -53,3 +53,4 @@ To create a new preset, click the preset combo box and select NEW
 * Different color spaces
 * Better ui widget dynamic rezising
 * Preset save more data, lock/etc...
+* Size slider for color picker spline
