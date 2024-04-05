@@ -1,6 +1,8 @@
 use crate::color_picker::format_color_as;
 use crate::egui::PointerButton;
 use crate::egui::TextStyle;
+#[allow(unused_imports)]
+use crate::error::Result;
 use crate::ControlPointType;
 use eframe::egui::Pos2;
 use eframe::{

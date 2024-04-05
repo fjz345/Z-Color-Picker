@@ -1,3 +1,5 @@
+use crate::error::Result;
+
 pub struct Bezier<const D: usize, const N: usize> {
     pub control_points: [[f32; D]; N],
 }

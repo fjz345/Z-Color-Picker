@@ -1,5 +1,7 @@
 //https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
 
+#[allow(unused_imports)]
+use crate::error::Result;
 use ecolor::{Color32, HsvaGamma};
 use eframe::egui::{self, Sense, Ui};
 use eframe::emath;

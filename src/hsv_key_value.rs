@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::error::Result;
 use ecolor::{Color32, HsvaGamma};
 use eframe::egui::{Pos2, Vec2};
 use serde::{Deserialize, Serialize};

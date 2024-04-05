@@ -1,3 +1,4 @@
+use crate::error::{Result, ZError};
 use eframe::{
     egui::{
         self,
@@ -136,16 +137,21 @@ impl ZColorPicker {
         }
     }
 
-    pub fn save_selected_preset(&mut self) {
+    pub fn save_selected_preset(&mut self) -> Result<()> {
         if let Some(s) = self.preset_selected_index {
             let preset = &mut self.presets[s];
             preset.data = PresetData {
                 spline_mode: self.spline_mode,
                 control_points: self.control_points.clone(),
             };
-            save_preset_to_disk(&preset.clone());
-            print!("Preset Save");
+            save_preset_to_disk(&preset.clone())?;
+
+            return Ok(());
         }
+
+        Err(ZError::Message(
+            "Preset Save failed, No preset selected".to_string(),
+        ))
     }
 
     pub fn preset_data_from_current_state(&self) -> PresetData {
@@ -155,21 +161,29 @@ impl ZColorPicker {
         }
     }
 
-    pub fn create_preset(&mut self, name: &String) {
+    pub fn create_preset(&mut self, name: &String) -> Result<()> {
         let preset = Preset::new(name, self.preset_data_from_current_state());
         let index = self.presets.len();
         self.presets.push(preset);
 
         self.preset_selected_index = Some(index);
-        self.save_selected_preset();
+        self.save_selected_preset()?;
+
+        Ok(())
     }
 
-    pub fn delete_selected_preset(&mut self) {
+    pub fn delete_selected_preset(&mut self) -> Result<()> {
         if let Some(s) = self.preset_selected_index {
             let preset_to_remove = self.presets.remove(s);
-            delete_preset_from_disk(&get_preset_save_path(&preset_to_remove));
+            delete_preset_from_disk(&get_preset_save_path(&preset_to_remove))?;
             self.preset_selected_index = None;
+
+            return Ok(());
         }
+
+        Err(ZError::Message(
+            "Selected Preset Delete failed, No preset selected".to_string(),
+        ))
     }
 
     pub fn remove_control_point(&mut self, index: usize) {
@@ -421,11 +435,19 @@ impl ZColorPicker {
 
             if ui.button("Save").clicked_by(PointerButton::Primary) {
                 if let Some(_s) = self.preset_selected_index {
-                    self.save_selected_preset();
+                    let r = self.save_selected_preset();
+                    match r {
+                        Ok(_) => println!("Sucessfully Saved"),
+                        Err(e) => println!("{}", e),
+                    }
                 }
             }
             if ui.button("Delete").clicked_by(PointerButton::Primary) {
-                self.delete_selected_preset();
+                let r = self.delete_selected_preset();
+                match r {
+                    Ok(_) => println!("Sucessfully Deleted"),
+                    Err(e) => println!("{}", e),
+                }
             }
         });
 
@@ -438,7 +460,11 @@ impl ZColorPicker {
                     if ui.button("Create").clicked() {
                         self.new_preset_window_open = false;
 
-                        self.create_preset(&self.new_preset_window_text.clone());
+                        let r = self.create_preset(&self.new_preset_window_text.clone());
+                        match r {
+                            Ok(_) => println!("Sucessfully Created"),
+                            Err(e) => println!("{}", e),
+                        }
                     }
                 });
         }

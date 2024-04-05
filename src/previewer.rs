@@ -5,6 +5,8 @@ use eframe::{
 };
 use splines::Spline;
 
+#[allow(unused_imports)]
+use crate::error::Result;
 use crate::{
     color_picker::{ColorStringCopy, SplineMode},
     curves::{control_points_to_spline, find_spline_max_t},

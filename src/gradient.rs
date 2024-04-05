@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::error::Result;
 use eframe::egui::*;
 
 pub fn color_function_gradient(

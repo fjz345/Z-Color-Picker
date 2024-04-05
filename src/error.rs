@@ -1,4 +1,4 @@
-use std::error::Error;
+use std::fmt::Display;
 
 #[derive(Debug)]
 pub enum ZError {
@@ -7,31 +7,12 @@ pub enum ZError {
     Message(String),
 }
 
-impl Error for ZError {
-    fn description(&self) -> &str {
+impl Display for ZError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
-            ZError::FileError(ref err) => err.description(),
-            ZError::JsonError(ref err) => err.description(),
-            ZError::Message(ref s) => &s,
-        }
-    }
-
-    // Not sure what these do
-    // fn source(&self) -> Option<&(dyn Error + 'static)> {
-    //     None
-    // }
-
-    // fn cause(&self) -> Option<&dyn Error> {
-    //     self.source()
-    // }
-}
-
-impl std::fmt::Display for ZError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match *self {
-            ZError::FileError(ref err) => err.fmt(f),
-            ZError::JsonError(ref err) => err.fmt(f),
-            ZError::Message(ref err) => err.fmt(f),
+            ZError::FileError(ref err) => std::fmt::Display::fmt(&err, f),
+            ZError::JsonError(ref err) => std::fmt::Display::fmt(&err, f),
+            ZError::Message(ref err) => std::fmt::Display::fmt(&err, f),
         }
     }
 }

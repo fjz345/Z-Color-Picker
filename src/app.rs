@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::error::Result;
 use eframe::{
     egui::{self, color_picker::show_color, Layout, PointerButton, Rect, Slider, Window},
     epaint::{Pos2, Vec2},

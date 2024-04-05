@@ -1,5 +1,7 @@
 use std::f32::consts::TAU;
 
+#[allow(unused_imports)]
+use crate::error::Result;
 use bspline::Interpolate;
 use ecolor::Color32;
 use eframe::egui::{lerp, Vec2};
