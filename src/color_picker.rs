@@ -94,7 +94,10 @@ impl ZColorPicker {
             },
         ];
 
-        load_presets(&mut new_color_picker.presets);
+        let r = load_presets(&mut new_color_picker.presets);
+        if let Err(e) = r {
+            println!("{}", e);
+        }
 
         // Use first as default if exists
         if new_color_picker.presets.len() >= 1 {

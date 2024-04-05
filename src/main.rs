@@ -10,6 +10,7 @@ use crate::app::ZApp;
 mod app;
 mod color_picker;
 mod curves;
+mod error;
 mod fs;
 mod gradient;
 mod hsv_key_value;

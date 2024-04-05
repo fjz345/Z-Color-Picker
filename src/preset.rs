@@ -1,8 +1,6 @@
-use std::{
-    fs::{self, remove_file, DirEntry, File},
-    io::Read,
-};
+use std::fs::{self, remove_file, DirEntry};
 
+use crate::error::{Result, ZError};
 use serde::{Deserialize, Serialize};
 
 use crate::{color_picker::SplineMode, fs::write_string_to_file, ControlPointType};
@@ -30,7 +28,7 @@ pub struct PresetData {
     pub control_points: Vec<ControlPointType>,
 }
 
-pub fn load_presets(presets: &mut Vec<Preset>) {
+pub fn load_presets(presets: &mut Vec<Preset>) -> Result<()> {
     presets.clear();
     let paths = fs::read_dir(PRESETS_PATH).unwrap();
 
@@ -55,58 +53,46 @@ pub fn load_presets(presets: &mut Vec<Preset>) {
     if DEBUG_PRINT {
         println!("=====================");
     }
-}
 
-pub fn load_preset_from_disk(dir_entry: DirEntry) -> Option<Preset> {
-    let file = File::open(dir_entry.path());
-
-    match file {
-        Ok(mut f) => {
-            let mut buf: String = String::new();
-            let read_ok = f.read_to_string(&mut buf);
-            match read_ok {
-                Ok(_) => {}
-                Err(e) => println!("{}", e.kind()),
-            }
-
-            let preset_data = serde_json::from_str(&buf).expect("JSON format error");
-            let preset_from_file: Preset = Preset::new(
-                dir_entry
-                    .file_name()
-                    .to_str()
-                    .unwrap()
-                    .to_string()
-                    .strip_suffix(".json")
-                    .unwrap(),
-                preset_data,
-            );
-            println!("{:?}", preset_from_file);
-
-            return Some(preset_from_file);
-        }
-        Err(_) => panic!("Failed To load preset file"),
+    if presets.len() <= 0 {
+        return Err(ZError::Message(
+            "Did not manage to load any presets".to_string(),
+        ));
     }
-
-    #[allow(unreachable_code)]
-    None
+    Ok(())
 }
 
-pub fn save_preset_to_disk(preset: &Preset) {
-    let preset_data_string = serde_json::to_string_pretty(&preset.data);
+pub fn load_preset_from_disk(dir_entry: DirEntry) -> Result<Preset> {
+    let string = std::fs::read_to_string(dir_entry.path())?;
+    let preset_data = serde_json::from_str(&string)?;
+    let preset_from_file: Preset = Preset::new(
+        dir_entry
+            .file_name()
+            .to_str()
+            .unwrap()
+            .to_string()
+            .strip_suffix(".json")
+            .unwrap(),
+        preset_data,
+    );
+    println!("{:?}", preset_from_file);
+
+    Ok(preset_from_file)
+}
+
+pub fn save_preset_to_disk(preset: &Preset) -> Result<()> {
+    let preset_data_string = serde_json::to_string_pretty(&preset.data)?;
     let file_path = &get_preset_save_path(&preset);
 
-    match preset_data_string {
-        Ok(string) => {
-            write_string_to_file(&string, file_path)
-                .expect("Something went wrong with writing string to file");
-            println!("SAVED TO PATH {}", file_path);
-        }
-        Err(_) => panic!("Failed To stringify preset"),
-    }
+    write_string_to_file(&preset_data_string, file_path)?;
+    println!("SAVED TO PATH {}", file_path);
+
+    Ok(())
 }
 
-pub fn delete_preset_from_disk(file_path: &str) {
-    remove_file(file_path).expect("Failed????");
+pub fn delete_preset_from_disk(file_path: &str) -> Result<()> {
+    remove_file(file_path)?;
+    Ok(())
 }
 
 pub fn get_preset_save_path(preset: &Preset) -> String {
