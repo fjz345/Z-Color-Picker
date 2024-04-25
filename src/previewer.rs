@@ -297,7 +297,7 @@ pub fn ui_previewer(
     let inner_response = ui.vertical(|ui| {
         let control_points_response = ui_previewer_control_points_with_drag(
             ui,
-            previewer_rect.size() * Vec2::new(1.0, 0.5),
+            previewer_rect.size() * Vec2::new(1.0, 0.16),
             control_points,
             previewer_data,
             color_copy_format,

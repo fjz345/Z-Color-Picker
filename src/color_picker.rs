@@ -451,9 +451,10 @@ impl ZColorPicker {
             }
         });
 
+        let mut create_preset_open = self.new_preset_window_open;
         if self.new_preset_window_open {
             egui::Window::new("Create Preset")
-                .open(&mut true)
+                .open(&mut create_preset_open)
                 .show(ui.ctx(), |ui| {
                     let _text_response = ui.text_edit_singleline(&mut self.new_preset_window_text);
 
@@ -467,6 +468,7 @@ impl ZColorPicker {
                         }
                     }
                 });
+            self.new_preset_window_open = create_preset_open;
         }
     }
 }

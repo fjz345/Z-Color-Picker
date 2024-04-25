@@ -40,14 +40,12 @@ To create a new preset, click the preset combo box and select NEW
 
 - HermiteBezier, can not modify t's in previewer
 - Polynomial
-- Create Preset close button not working
 
 ## TODO: Features
 
 - Add confirm window for Delete Preset button
 - Add confirm window for exiting when having an unsaved preset active.
 - Color Lerp
-- Quantizize gradient previewer
 - Regular Color pick for control points
 - Visualization curves
   - Value
