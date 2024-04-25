@@ -355,7 +355,7 @@ impl PreviewerData {
             points_preview_sizes: vec![PREVIEWER_DEFAULT_VALUE; num],
             control_points: vec![ControlPointType::default(); num],
             spline_mode: SplineMode::HermiteBezier,
-            quantize_num_levels: num,
+            quantize_num_levels: 4,
         }
     }
     pub fn reset_preview_sizes(&mut self) {
@@ -396,7 +396,6 @@ impl ZPreviewer {
 
         if old_size != new_size {
             self.data.points_preview_sizes = vec![PREVIEWER_DEFAULT_VALUE; new_size];
-            self.data.quantize_num_levels = new_size;
         }
     }
 
