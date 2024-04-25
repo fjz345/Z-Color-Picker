@@ -4,7 +4,7 @@ use ecolor::{Color32, HsvaGamma};
 use eframe::egui::{Pos2, Vec2};
 use serde::{Deserialize, Serialize};
 
-use crate::math::hue_lerp;
+use crate::math::{hue_abs_distance, hue_lerp};
 
 type HsvKeyValueInnerType = [f32; 3];
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ impl HsvKeyValue {
 
     pub fn hsv(&self) -> HsvaGamma {
         HsvaGamma {
-            h: self[2],
+            h: self[2].rem_euclid(1.0),
             s: self[0],
             v: self[1],
             a: 1.0,
@@ -293,12 +293,29 @@ impl splines::interpolate::Interpolate<f32> for HsvKeyValue {
     }
 
     fn cubic_bezier(t: f32, a: Self, u: Self, v: Self, b: Self) -> Self {
-        let one_t = 1. - t;
-        let one_t2 = one_t * one_t;
-        let one_t3 = one_t2 * one_t;
-        let t2 = t * t;
+        // Choose direction
+        let res = if hue_abs_distance(a[2], b[2]) < 0.5 {
+            let one_t = 1. - t;
+            let one_t2 = one_t * one_t;
+            let one_t3 = one_t2 * one_t;
+            let t2 = t * t;
 
-        a * one_t3 + (u * one_t2 * t + v * one_t * t2) * 3. + b * t2 * t
+            let res = a * one_t3 + (u * one_t2 * t + v * one_t * t2) * 3. + b * t2 * t;
+            res
+        } else {
+            // Other way
+            let one_t = 1. - t;
+            let one_t2 = one_t * one_t;
+            let one_t3 = one_t2 * one_t;
+            let t2 = t * t;
+
+            let dir_res = if a[2] < b[2] { 1.0 } else { -1.0 };
+
+            let mut res = a * one_t3 + (u * one_t2 * t + v * one_t * t2) * 3. + b * t2 * t;
+            res[2] = res[2] - dir_res;
+            HsvKeyValue::new(one_t, one_t, one_t)
+        };
+        res
     }
 
     fn cubic_bezier_mirrored(t: f32, a: Self, u: Self, v: Self, b: Self) -> Self {

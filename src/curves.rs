@@ -2,6 +2,7 @@
 
 #[allow(unused_imports)]
 use crate::error::Result;
+use crate::hsv_key_value::HsvKeyValue;
 use ecolor::{Color32, HsvaGamma};
 use eframe::egui::{self, Sense, Ui};
 use eframe::emath;
@@ -10,7 +11,7 @@ use egui::epaint::PathShape;
 use splines::{Interpolation, Key, Spline};
 
 use crate::color_picker::SplineMode;
-use crate::math::{add_array_array, mul_array};
+use crate::math::{add_array_array, hue_abs_distance, mul_array};
 use crate::ControlPointType;
 
 pub fn ui_ordered_control_points(
@@ -220,6 +221,39 @@ pub fn ui_ordered_control_points(
     )
 }
 
+pub fn flatten_control_points(control_points: &[ControlPointType]) -> Vec<ControlPointType> {
+    let mut spline_samples: Vec<ControlPointType> = Vec::new();
+
+    let inc_all_prev_values = |vec: &mut Vec<ControlPointType>, val: f32| {
+        for a in &mut vec.iter_mut() {
+            a[2] += val;
+        }
+    };
+
+    for (i, cp) in control_points.iter().enumerate() {
+        if i == 0 {
+            spline_samples.push(*cp);
+            continue;
+        }
+
+        let prev = &mut spline_samples[i - 1];
+        let hue_diff = cp.h() - prev.h();
+        if hue_diff.abs() <= 0.5 {
+            spline_samples.push(*cp);
+        } else {
+            if hue_diff > 0.0 {
+                inc_all_prev_values(&mut spline_samples, 1.0);
+                spline_samples.push(ControlPointType::new(cp.s(), cp.v(), cp.h()));
+            } else {
+                inc_all_prev_values(&mut spline_samples, -1.0);
+                spline_samples.push(ControlPointType::new(cp.s(), cp.v(), cp.h()));
+            }
+        }
+    }
+
+    spline_samples
+}
+
 pub fn find_spline_max_t(spline: &Spline<f32, ControlPointType>) -> f32 {
     let vec_of_t_values: Vec<f32> = spline.into_iter().map(|k| k.t).collect();
     let max_t = vec_of_t_values
@@ -317,7 +351,9 @@ pub fn ui_ordered_spline_gradient(
     );
 
     // let sub_divided_control_points = sub_divide_control_points(control_points, 0.01);
-    let spline_points = generate_spline_points_with_distance(control_points, spline_mode, 0.01);
+    let flattened_points = flatten_control_points(control_points);
+    let spline_points =
+        generate_spline_points_with_distance(&flattened_points[..], spline_mode, 0.01);
 
     for i in 1..spline_points.len() {
         let first = spline_points[i - 1];

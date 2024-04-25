@@ -68,12 +68,12 @@ pub fn norm_vec2(vec: &[f32; 2]) -> Vec2 {
     Vec2::new(vec[0] / dist, vec[1] / dist)
 }
 
-pub fn hue_distance(hue0: f32, hue1: f32) -> f32 {
+pub fn hue_abs_distance(hue0: f32, hue1: f32) -> f32 {
     (hue1 - hue0).abs().min(1.0 - (hue1 - hue0).abs())
 }
 
 pub fn hue_lerp(hue0: f32, hue1: f32, t: f32) -> f32 {
-    let hue_dist = hue_distance(hue0, hue1);
+    let hue_dist = hue_abs_distance(hue0, hue1);
     if hue_dist <= 0.0001 {
         return hue0;
     }

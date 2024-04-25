@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'Z-Color-Picker'",
+            "name": "Debug executable 'z_color_picker'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=Z-Color-Picker",
-                    "--package=Z-Color-Picker"
+                    "--bin=z_color_picker",
+                    "--package=z_color_picker"
                 ],
                 "filter": {
-                    "name": "Z-Color-Picker",
+                    "name": "z_color_picker",
                     "kind": "bin"
                 }
             },
@@ -25,16 +25,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'Z-Color-Picker'",
+            "name": "Debug unit tests in executable 'z_color_picker'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=Z-Color-Picker",
-                    "--package=Z-Color-Picker"
+                    "--bin=z_color_picker",
+                    "--package=z_color_picker"
                 ],
                 "filter": {
-                    "name": "Z-Color-Picker",
+                    "name": "z_color_picker",
                     "kind": "bin"
                 }
             },

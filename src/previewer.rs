@@ -9,7 +9,7 @@ use splines::Spline;
 use crate::error::Result;
 use crate::{
     color_picker::{ColorStringCopy, SplineMode},
-    curves::{control_points_to_spline, find_spline_max_t},
+    curves::{control_points_to_spline, find_spline_max_t, flatten_control_points},
     gradient::color_function_gradient,
     ui_common::{color_button, response_copy_color_on_click},
     ControlPointType,
@@ -136,7 +136,8 @@ fn ui_previewer_curve(
     let mut previewer_ui_curve = ui.child_ui(rect, Layout::left_to_right(egui::Align::Min));
     previewer_ui_curve.spacing_mut().item_spacing = Vec2::ZERO;
 
-    let mut spline = control_points_to_spline(control_points, spline_mode);
+    let flatten_control_points = flatten_control_points(control_points);
+    let mut spline = control_points_to_spline(&flatten_control_points[..], spline_mode);
 
     match spline_mode {
         SplineMode::HermiteBezier => {}
@@ -146,7 +147,7 @@ fn ui_previewer_curve(
     let max_t = find_spline_max_t(&spline);
 
     color_function_gradient(&mut previewer_ui_curve, rect.size(), |x| {
-        if control_points.len() <= 0 {
+        if flatten_control_points.len() <= 0 {
             return HsvaGamma {
                 h: 0.0,
                 s: 0.0,
@@ -154,8 +155,8 @@ fn ui_previewer_curve(
                 a: 0.0,
             }
             .into();
-        } else if control_points.len() <= 1 {
-            return control_points[0].color();
+        } else if flatten_control_points.len() <= 1 {
+            return flatten_control_points[0].color();
         }
 
         let sample_x = match spline_mode {
