@@ -245,13 +245,13 @@ pub fn flatten_control_points(control_points: &[ControlPoint]) -> Vec<ControlPoi
                 inc_all_prev_hue_values(&mut control_points_flattened, 1.0);
                 control_points_flattened.push(ControlPoint::new(
                     ControlPointType::new(cp.val.s(), cp.val.v(), cp.val.h()),
-                    todo!(),
+                    cp.t,
                 ));
             } else {
                 inc_all_prev_hue_values(&mut control_points_flattened, -1.0);
                 control_points_flattened.push(ControlPoint::new(
                     ControlPointType::new(cp.val.s(), cp.val.v(), cp.val.h()),
-                    todo!(),
+                    cp.t,
                 ));
             }
         }
