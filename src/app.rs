@@ -96,24 +96,31 @@ impl ZApp {
                                 .get_control_points_sdf_2d(normalized_xy.to_pos2());
                             const MIN_DIST: f32 = 0.1;
 
+                            let color_xy = Pos2::new(
+                                normalized_xy.x.clamp(0.0, 1.0),
+                                1.0 - normalized_xy.y.clamp(0.0, 1.0),
+                            );
+
                             match closest {
                                 Some((cp, dist)) => {
                                     let should_spawn_control_point = dist > MIN_DIST;
                                     if should_spawn_control_point {
-                                        let color_hue = 0.5;
-                                        let color_xy = Pos2::new(
-                                            normalized_xy.x.clamp(0.0, 1.0),
-                                            1.0 - normalized_xy.y.clamp(0.0, 1.0),
-                                        );
-                                        let color = [color_xy[0], color_xy[1], color_hue];
+                                        let color_hue: f32 = cp.val.h();
+
+                                        let color: [f32; 3] = [color_xy[0], color_xy[1], color_hue];
                                         self.z_color_picker.spawn_control_point(ControlPoint::new(
                                             color.into(),
                                             cp.t,
                                         ));
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                    let color: [f32; 3] = [color_xy[0], color_xy[1], 0.0];
+                                    self.z_color_picker
+                                        .spawn_control_point(ControlPoint::new(color.into(), 0.0));
+                                }
                             };
+                            self.z_color_picker.post_update_control_points();
                         }
                     }
                     _ => {}

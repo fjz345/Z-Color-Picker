@@ -190,6 +190,7 @@ impl ZColorPicker {
             self.remove_control_point(i);
         }
         self.last_modifying_point_index = None;
+        self.dragging_bezier_index = None;
     }
 
     fn apply_preset(&mut self, preset: Preset) {
@@ -265,6 +266,13 @@ impl ZColorPicker {
             index,
             self.control_points.len()
         );
+        if self.control_points.len() > 1 {
+            self.last_modifying_point_index = Some(index.max(1) - 1);
+            self.dragging_bezier_index = Some(index.max(1) - 1);
+        } else {
+            self.dragging_bezier_index = None;
+            self.last_modifying_point_index = None;
+        }
     }
 
     pub fn spawn_control_point(&mut self, color: ControlPoint) {
@@ -306,22 +314,27 @@ impl ZColorPicker {
     }
 
     pub fn get_control_points_sdf_2d(&self, xy: Pos2) -> Option<(&ControlPoint, f32)> {
-        let mut closest_distance_to_control_point: Option<f32> = None;
+        let mut closest_dist: Option<f32> = None;
         let mut closest_cp: Option<&ControlPoint> = None;
         for cp in self.control_points.iter() {
             let pos_2d = Pos2::new(cp.val[0].clamp(0.0, 1.0), 1.0 - cp.val[1].clamp(0.0, 1.0));
             let distance_2d = pos_2d.distance(xy);
 
-            closest_distance_to_control_point = match closest_distance_to_control_point {
+            match closest_dist {
                 Some(closest_dist_2d) => {
-                    closest_cp = Some(cp);
-                    Some(closest_dist_2d.min(distance_2d))
+                    if distance_2d < closest_dist_2d {
+                        closest_cp = Some(cp);
+                        closest_dist = Some(distance_2d);
+                    }
                 }
-                None => Some(distance_2d),
+                None => {
+                    closest_cp = Some(cp);
+                    closest_dist = Some(distance_2d);
+                }
             };
         }
 
-        match closest_distance_to_control_point {
+        match closest_dist {
             Some(closest_dist_2d) => {
                 let dist = closest_dist_2d;
                 println!("Closest Dist: {}", dist);
@@ -334,7 +347,7 @@ impl ZColorPicker {
         }
     }
 
-    fn post_update_control_points(&mut self) {
+    pub fn post_update_control_points(&mut self) {
         if self.is_hue_middle_interpolated {
             let num_points = self.control_points.len();
             if num_points >= 2 {
@@ -757,6 +770,14 @@ pub fn main_color_picker(
         );
 
         if let Some(mut modifying_index) = is_modifying_index {
+            let valid_index = modifying_index <= control_points.len() - 1;
+            assert_eq!(
+                valid_index,
+                true,
+                "modifying index is invalid, ({:?}|{:?})",
+                modifying_index,
+                control_points.len()
+            );
             is_modifying_index = Some(modifying_index.clamp(0, control_points.len() - 1));
             modifying_index = is_modifying_index.unwrap();
 
