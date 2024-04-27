@@ -498,12 +498,12 @@ impl ZColorPicker {
                         }
                     }
 
-                    // None
-                    let selectable_none_response =
-                        ui.selectable_value(&mut combobox_selected_index, 0, "<None>");
                     // New
                     let selectable_new_response =
                         ui.selectable_value(&mut combobox_selected_index, 0, "<NEW>");
+                    // None
+                    let selectable_none_response =
+                        ui.selectable_value(&mut combobox_selected_index, 0, "<None>");
 
                     if selectable_new_response.clicked() {
                         combobox_has_selected = true;

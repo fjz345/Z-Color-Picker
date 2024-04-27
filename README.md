@@ -59,3 +59,4 @@ To create a new preset, click the preset combo box and select NEW
 - Better ui widget dynamic rezising
 - Preset save more data, lock/etc...
 - Size slider for color picker spline
+- Option to auto load last preset or not.
