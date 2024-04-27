@@ -39,13 +39,11 @@ To create a new preset, click the preset combo box and select NEW
 ## TODO: Bugs
 
 - HermiteBezier, can not modify t's in previewer
-- Polynomial
 
 ## TODO: Features
 
 - Add confirm window for Delete Preset button
 - Add confirm window for exiting when having an unsaved preset active.
-- Color Lerp
 - Regular Color pick for control points
 - Visualization curves
   - Value
@@ -60,3 +58,5 @@ To create a new preset, click the preset combo box and select NEW
 - Preset save more data, lock/etc...
 - Size slider for color picker spline
 - Option to auto load last preset or not.
+- Polynomial spline mode
+- Random gradient button with "undo" to last randomized
