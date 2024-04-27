@@ -305,14 +305,18 @@ impl ZColorPicker {
         );
     }
 
-    pub fn get_control_points_sdf_2d(&self, xy: Pos2) -> Option<f32> {
+    pub fn get_control_points_sdf_2d(&self, xy: Pos2) -> Option<(&ControlPoint, f32)> {
         let mut closest_distance_to_control_point: Option<f32> = None;
+        let mut closest_cp: Option<&ControlPoint> = None;
         for cp in self.control_points.iter() {
             let pos_2d = Pos2::new(cp.val[0].clamp(0.0, 1.0), 1.0 - cp.val[1].clamp(0.0, 1.0));
             let distance_2d = pos_2d.distance(xy);
 
             closest_distance_to_control_point = match closest_distance_to_control_point {
-                Some(closest_dist_2d) => Some(closest_dist_2d.min(distance_2d)),
+                Some(closest_dist_2d) => {
+                    closest_cp = Some(cp);
+                    Some(closest_dist_2d.min(distance_2d))
+                }
                 None => Some(distance_2d),
             };
         }
@@ -321,7 +325,7 @@ impl ZColorPicker {
             Some(closest_dist_2d) => {
                 let dist = closest_dist_2d;
                 println!("Closest Dist: {}", dist);
-                Some(dist)
+                Some((closest_cp.unwrap(), dist))
             }
             None => {
                 println!("Did not find closest dist");
