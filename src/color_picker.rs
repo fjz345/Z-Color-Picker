@@ -1,4 +1,7 @@
-use crate::error::{Result, ZError};
+use crate::{
+    error::{Result, ZError},
+    hsv_key_value::{self, HsvKeyValue},
+};
 use eframe::{
     egui::{
         self,
@@ -46,8 +49,32 @@ pub enum SplineMode {
     Polynomial,
 }
 
+type ControlPointTangent = ControlPointType;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ControlPoint {
+    pub val: ControlPointType,
+    pub tangents: [Option<ControlPointTangent>; 2],
+    pub t: f32,
+}
+
+impl ControlPoint {
+    pub fn default() -> Self {
+        Self::new(ControlPointType::default(), 0.0)
+    }
+    pub fn new(val: ControlPointType, t: f32) -> Self {
+        Self::new_with_tangent(val, [None, None], t)
+    }
+    pub fn new_with_tangent(
+        val: ControlPointType,
+        tangents: [Option<ControlPointTangent>; 2],
+        t: f32,
+    ) -> Self {
+        Self { val, tangents, t }
+    }
+}
+
 pub struct ZColorPicker {
-    pub control_points: Vec<ControlPointType>,
+    pub control_points: Vec<ControlPoint>,
     pub last_modifying_point_index: Option<usize>,
     pub is_curve_locked: bool,
     pub is_hue_middle_interpolated: bool,
@@ -80,18 +107,63 @@ impl ZColorPicker {
             control_point_right_clicked: None,
         };
 
-        const DEFAULT_STARTUP_CONTROL_POINTS: [ControlPointType; 4] = [
-            ControlPointType {
-                val: [0.25, 0.33, 0.0],
+        const LAZY_TANGENT_DELTA: f32 = 0.1;
+        const DEFAULT_STARTUP_CONTROL_POINTS: [ControlPoint; 4] = [
+            ControlPoint {
+                val: HsvKeyValue {
+                    val: [0.25, 0.33, 0.0],
+                },
+                tangents: [
+                    Some(HsvKeyValue {
+                        val: [0.25 - LAZY_TANGENT_DELTA, 0.33, 0.0],
+                    }),
+                    Some(HsvKeyValue {
+                        val: [0.25 + LAZY_TANGENT_DELTA, 0.33, 0.0],
+                    }),
+                ],
+                t: 0.0,
             },
-            ControlPointType {
-                val: [0.44, 0.38, 0.1],
+            ControlPoint {
+                val: HsvKeyValue {
+                    val: [0.44, 0.38, 0.1],
+                },
+                tangents: [
+                    Some(HsvKeyValue {
+                        val: [0.44 - LAZY_TANGENT_DELTA, 0.38, 0.1],
+                    }),
+                    Some(HsvKeyValue {
+                        val: [0.44 + LAZY_TANGENT_DELTA, 0.38, 0.1],
+                    }),
+                ],
+                t: 1.0,
             },
-            ControlPointType {
-                val: [0.8, 0.6, 0.1],
+            ControlPoint {
+                val: HsvKeyValue {
+                    val: [0.8, 0.6, 0.1],
+                },
+                tangents: [
+                    Some(HsvKeyValue {
+                        val: [0.8 - LAZY_TANGENT_DELTA, 0.6, 0.1],
+                    }),
+                    Some(HsvKeyValue {
+                        val: [0.8 + LAZY_TANGENT_DELTA, 0.6, 0.1],
+                    }),
+                ],
+                t: 2.0,
             },
-            ControlPointType {
-                val: [0.9, 0.8, 0.2],
+            ControlPoint {
+                val: HsvKeyValue {
+                    val: [0.9, 0.8, 0.2],
+                },
+                tangents: [
+                    Some(HsvKeyValue {
+                        val: [0.9 - LAZY_TANGENT_DELTA, 0.8, 0.2],
+                    }),
+                    Some(HsvKeyValue {
+                        val: [0.9 + LAZY_TANGENT_DELTA, 0.8, 0.2],
+                    }),
+                ],
+                t: 3.0,
             },
         ];
 
@@ -195,7 +267,7 @@ impl ZColorPicker {
         );
     }
 
-    pub fn spawn_control_point(&mut self, color: ControlPointType) {
+    pub fn spawn_control_point(&mut self, color: ControlPoint) {
         let control_point_pivot = self.last_modifying_point_index;
 
         let new_index = match control_point_pivot {
@@ -220,23 +292,23 @@ impl ZColorPicker {
         };
 
         self.dragging_bezier_index = None;
-        self.control_points.insert(new_index, color);
+        self.control_points.insert(new_index, color.clone());
         // Adding keys messes with the indicies
         self.last_modifying_point_index = Some(new_index);
 
         println!(
             "ControlPoint#{} spawned @{},{},{}",
             self.control_points.len(),
-            color[0],
-            color[1],
-            color[2],
+            color.val[0],
+            color.val[1],
+            color.val[2],
         );
     }
 
     pub fn get_control_points_sdf_2d(&self, xy: Pos2) -> Option<f32> {
         let mut closest_distance_to_control_point: Option<f32> = None;
         for cp in self.control_points.iter() {
-            let pos_2d = Pos2::new(cp[0].clamp(0.0, 1.0), 1.0 - cp[1].clamp(0.0, 1.0));
+            let pos_2d = Pos2::new(cp.val[0].clamp(0.0, 1.0), 1.0 - cp.val[1].clamp(0.0, 1.0));
             let distance_2d = pos_2d.distance(xy);
 
             closest_distance_to_control_point = match closest_distance_to_control_point {
@@ -266,13 +338,13 @@ impl ZColorPicker {
 
                 let first_index = 0;
                 let last_index = points.len() - 1;
-                let first_hue = points[first_index][2];
-                let last_hue: f32 = points[last_index][2];
+                let first_hue = points[first_index].val[2];
+                let last_hue: f32 = points[last_index].val[2];
 
                 for i in 1..last_index {
                     let t = (i as f32) / (points.len() - 1) as f32;
                     let hue = hue_lerp(first_hue, last_hue, t);
-                    points[i][2] = hue;
+                    points[i].val[2] = hue;
                 }
             }
         }
@@ -280,9 +352,9 @@ impl ZColorPicker {
         if self.is_window_lock {
             for i in 0..self.control_points.len() {
                 let cp = &mut self.control_points[i];
-                cp[0] = cp[0].clamp(0.0, 1.0);
-                cp[1] = cp[1].clamp(0.0, 1.0);
-                cp[2] = cp[2].clamp(0.0, 1.0);
+                cp.val[0] = cp.val[0].clamp(0.0, 1.0);
+                cp.val[1] = cp.val[1].clamp(0.0, 1.0);
+                cp.val[2] = cp.val[2].clamp(0.0, 1.0);
             }
         }
 
@@ -473,6 +545,12 @@ impl ZColorPicker {
     }
 }
 
+impl Default for ZColorPicker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn format_color_as(
     color: Color32,
     format_type: ColorStringCopy,
@@ -516,7 +594,7 @@ pub fn format_color_as(
 
 pub fn main_color_picker(
     ui: &mut Ui,
-    control_points: &mut [ControlPointType],
+    control_points: &mut [ControlPoint],
     spline_mode: SplineMode,
     color_copy_format: ColorStringCopy,
     last_modifying_point_index: &mut Option<usize>,
@@ -553,7 +631,7 @@ pub fn main_color_picker(
             a: 1.0,
         };
         let mut color_to_show = match modifying_control_point.as_ref() {
-            Some(cp) => cp.hsv(),
+            Some(cp) => cp.val.hsv(),
             None => dummy_color,
         };
 
@@ -620,7 +698,7 @@ pub fn main_color_picker(
 
             let prev_hue = color_to_show.h;
             let hue_optional_value: Option<&mut f32> = match modifying_control_point {
-                Some(cp) => Some(&mut cp[2]),
+                Some(cp) => Some(&mut cp.val[2]),
                 None => None,
             };
             let (mut hue_response, new_hue_val) = color_slider_1d(ui, hue_optional_value, |h| {
@@ -660,7 +738,7 @@ pub fn main_color_picker(
                             continue;
                         }
                     }
-                    let hue_ref = &mut control_points[i][2];
+                    let hue_ref = &mut control_points[i].val[2];
                     *hue_ref = (*hue_ref + h).rem_euclid(1.0);
                 }
             }
@@ -678,18 +756,18 @@ pub fn main_color_picker(
             is_modifying_index = Some(modifying_index.clamp(0, control_points.len() - 1));
             modifying_index = is_modifying_index.unwrap();
 
-            let mut control_point = control_points[modifying_index];
-            control_point[2] = color_to_show.h;
+            let mut control_point_val = control_points[modifying_index].val;
+            control_point_val.val[2] = color_to_show.h;
         }
 
         if dragging_bezier_index.is_some() {
             let control_point = match is_modifying_index {
-                Some(a) => Some(control_points[a]),
+                Some(a) => Some(control_points[a].val),
                 _ => None,
             };
             let unwrapped = &mut control_point.unwrap();
-            unwrapped[0] = color_to_show.s;
-            unwrapped[1] = color_to_show.v;
+            unwrapped.val[0] = color_to_show.s;
+            unwrapped.val[1] = color_to_show.v;
         }
 
         // let (dragged_points_response, selected_index, hovering_control_point) =
@@ -736,12 +814,12 @@ pub fn main_color_picker(
                     match is_modifying_index {
                         Some(index) => {
                             {
-                                let point_x_ref = &mut control_points[index][0];
+                                let point_x_ref = &mut control_points[index].val[0];
 
                                 *point_x_ref += r.drag_delta().x / slider_2d_reponse.rect.size().x;
                             }
                             {
-                                let point_y_ref = &mut control_points[index][1];
+                                let point_y_ref = &mut control_points[index].val[1];
                                 *point_y_ref -= r.drag_delta().y / slider_2d_reponse.rect.size().y;
                             }
                         }
@@ -756,12 +834,12 @@ pub fn main_color_picker(
                             }
 
                             {
-                                let point_x_ref = &mut control_points[i][0];
+                                let point_x_ref = &mut control_points[i].val[0];
 
                                 *point_x_ref += r.drag_delta().x / slider_2d_reponse.rect.size().x;
                             }
                             {
-                                let point_y_ref = &mut control_points[i][1];
+                                let point_y_ref = &mut control_points[i].val[1];
                                 *point_y_ref -= r.drag_delta().y / slider_2d_reponse.rect.size().y;
                             }
                         }

@@ -7,7 +7,7 @@ use eframe::{
 };
 
 use crate::{
-    color_picker::{ColorStringCopy, ZColorPicker},
+    color_picker::{ColorStringCopy, ControlPoint, ZColorPicker},
     math::color_lerp_ex,
     previewer::ZPreviewer,
 };
@@ -108,7 +108,8 @@ impl ZApp {
                                     1.0 - normalized_xy.y.clamp(0.0, 1.0),
                                 );
                                 let color = [color_xy[0], color_xy[1], color_hue];
-                                self.z_color_picker.spawn_control_point(color.into());
+                                self.z_color_picker
+                                    .spawn_control_point(ControlPoint::new(color.into(), todo!()));
                             }
                         }
                     }
@@ -120,8 +121,15 @@ impl ZApp {
                 // TESTING
                 if self.debug_window {
                     if self.z_color_picker.control_points.len() >= 2 {
-                        let src_color = self.z_color_picker.control_points.first().unwrap().hsv();
-                        let trg_color = self.z_color_picker.control_points.last().unwrap().hsv();
+                        let src_color = self
+                            .z_color_picker
+                            .control_points
+                            .first()
+                            .unwrap()
+                            .val
+                            .hsv();
+                        let trg_color =
+                            self.z_color_picker.control_points.last().unwrap().val.hsv();
                         let res_color = color_lerp_ex(
                             src_color.into(),
                             trg_color.into(),
@@ -166,11 +174,11 @@ impl ZApp {
 
         window.show(ctx, |ui| {
             for i in 0..self.z_color_picker.control_points.len() {
-                let point = self.z_color_picker.control_points[i];
+                let point = &self.z_color_picker.control_points[i];
                 ui.label(format!("[{i}]"));
-                ui.label(format!("- x: {}", point[0]));
-                ui.label(format!("- y: {}", point[1]));
-                ui.label(format!("- h: {}", point[2]));
+                ui.label(format!("- x: {}", point.val[0]));
+                ui.label(format!("- y: {}", point.val[1]));
+                ui.label(format!("- h: {}", point.val[2]));
                 ui.label(format!(""));
             }
         });

@@ -8,7 +8,7 @@ use splines::Spline;
 #[allow(unused_imports)]
 use crate::error::Result;
 use crate::{
-    color_picker::{ColorStringCopy, SplineMode},
+    color_picker::{ColorStringCopy, ControlPoint, SplineMode},
     curves::{control_points_to_spline, find_spline_max_t, flatten_control_points},
     gradient::color_function_gradient,
     hsv_key_value::HsvKeyValue,
@@ -79,7 +79,7 @@ fn ui_previewer_colors(
 fn ui_previewer_control_points_with_drag(
     ui: &mut Ui,
     size: Vec2,
-    control_points: &[ControlPointType],
+    control_points: &[ControlPoint],
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
 ) -> Response {
@@ -99,7 +99,7 @@ fn ui_previewer_control_points_with_drag(
 
     let mut points: Vec<Vec2> = Vec::with_capacity(num_control_points);
     for cp in control_points {
-        points.push(Vec2::new(cp[0], cp[1]));
+        points.push(Vec2::new(cp.val[0], cp.val[1]));
     }
 
     for i in 0..num_control_points {
@@ -107,7 +107,7 @@ fn ui_previewer_control_points_with_drag(
             break;
         }
         let color_data = &points[i];
-        let color_data_hue = control_points[i][2];
+        let color_data_hue = control_points[i].val.h();
         let color_at_point: HsvaGamma = HsvaGamma {
             h: color_data_hue,
             s: color_data.x,
@@ -188,7 +188,7 @@ fn modify_spline_t_to_preview_sizes(
 fn ui_previewer_curve(
     ui: &mut Ui,
     size: Vec2,
-    control_points: &[ControlPointType],
+    control_points: &[ControlPoint],
     spline_mode: SplineMode,
     previewer_data: &PreviewerData,
 ) {
@@ -217,7 +217,7 @@ fn ui_previewer_curve(
             }
             .into();
         } else if flatten_control_points.len() <= 1 {
-            return flatten_control_points[0].color();
+            return flatten_control_points[0].val.color();
         }
 
         let sample_x = match spline_mode {
@@ -233,7 +233,7 @@ fn ui_previewer_curve(
 fn ui_previewer_curve_quantized(
     ui: &mut Ui,
     size: Vec2,
-    control_points: &[ControlPointType],
+    control_points: &[ControlPoint],
     spline_mode: SplineMode,
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
@@ -287,7 +287,7 @@ fn ui_previewer_options(ui: &mut Ui, size: Vec2, previewer_data: &mut PreviewerD
 
 pub fn ui_previewer(
     ui: &mut Ui,
-    control_points: &[ControlPointType],
+    control_points: &[ControlPoint],
     spline_mode: SplineMode,
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
@@ -343,7 +343,7 @@ pub fn ui_previewer(
 
 const PREVIEWER_DEFAULT_VALUE: f32 = 100.0;
 pub struct PreviewerData {
-    pub control_points: Vec<ControlPointType>,
+    pub control_points: Vec<ControlPoint>,
     pub spline_mode: SplineMode,
     pub points_preview_sizes: Vec<f32>,
     pub quantize_num_levels: usize,
@@ -353,7 +353,7 @@ impl PreviewerData {
     pub fn new(num: usize) -> Self {
         Self {
             points_preview_sizes: vec![PREVIEWER_DEFAULT_VALUE; num],
-            control_points: vec![ControlPointType::default(); num],
+            control_points: vec![ControlPoint::default(); num],
             spline_mode: SplineMode::HermiteBezier,
             quantize_num_levels: 4,
         }
@@ -386,7 +386,7 @@ impl ZPreviewer {
         }
     }
 
-    pub fn update(&mut self, control_points: &[ControlPointType], spline_mode: SplineMode) {
+    pub fn update(&mut self, control_points: &[ControlPoint], spline_mode: SplineMode) {
         self.data.spline_mode = spline_mode;
 
         let old_size = self.data.control_points.len();

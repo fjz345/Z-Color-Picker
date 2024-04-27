@@ -1,6 +1,9 @@
 use std::fs::{self, remove_file, DirEntry};
 
-use crate::error::{Result, ZError};
+use crate::{
+    color_picker::ControlPoint,
+    error::{Result, ZError},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{color_picker::SplineMode, fs::write_string_to_file, ControlPointType};
@@ -25,7 +28,7 @@ impl Preset {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PresetData {
     pub spline_mode: SplineMode,
-    pub control_points: Vec<ControlPointType>,
+    pub control_points: Vec<ControlPoint>,
 }
 
 pub fn load_presets(presets: &mut Vec<Preset>) -> Result<()> {
@@ -43,9 +46,17 @@ pub fn load_presets(presets: &mut Vec<Preset>) -> Result<()> {
                     println!("Name: {}", dir.path().display());
                 }
 
-                let maybe_loaded_preset = load_preset_from_disk(dir);
-
-                presets.push(maybe_loaded_preset.expect("Failed to load preset from file"));
+                let maybe_loaded_preset = load_preset_from_disk(&dir);
+                match maybe_loaded_preset {
+                    Ok(p) => presets.push(p),
+                    Err(e) => {
+                        println!(
+                            "Error: {:?}, Failed to load preset {:?} from file, maybe old version?",
+                            e,
+                            dir.file_name()
+                        );
+                    }
+                }
             }
             Err(_) => panic!("Path is invalid???"),
         }
@@ -62,7 +73,7 @@ pub fn load_presets(presets: &mut Vec<Preset>) -> Result<()> {
     Ok(())
 }
 
-pub fn load_preset_from_disk(dir_entry: DirEntry) -> Result<Preset> {
+pub fn load_preset_from_disk(dir_entry: &DirEntry) -> Result<Preset> {
     let string = std::fs::read_to_string(dir_entry.path())?;
     let preset_data = serde_json::from_str(&string)?;
     let preset_from_file: Preset = Preset::new(

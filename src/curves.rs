@@ -4,19 +4,19 @@
 use crate::error::Result;
 use crate::hsv_key_value::HsvKeyValue;
 use ecolor::{Color32, HsvaGamma};
-use eframe::egui::{self, Sense, Ui};
+use eframe::egui::{self, lerp, Sense, Ui};
 use eframe::emath;
 use eframe::epaint::{Pos2, Rect, Shape, Stroke, Vec2};
 use egui::epaint::PathShape;
 use splines::{Interpolation, Key, Spline};
 
-use crate::color_picker::SplineMode;
+use crate::color_picker::{ControlPoint, SplineMode};
 use crate::math::{add_array_array, hue_abs_distance, mul_array};
 use crate::ControlPointType;
 
 pub fn ui_ordered_control_points(
     ui: &mut Ui,
-    control_points: &[ControlPointType],
+    control_points: &[ControlPoint],
     marked_control_point_index: &Option<usize>,
     _is_middle_interpolated: bool,
     parent_response: &egui::Response,
@@ -56,8 +56,8 @@ pub fn ui_ordered_control_points(
         .map(|(i, key)| {
             let control_point = &key;
             let mut point_xy: Pos2 = Pos2::new(
-                control_point[0].clamp(0.0, 1.0),
-                1.0 - control_point[1].clamp(0.0, 1.0),
+                control_point.val[0].clamp(0.0, 1.0),
+                1.0 - control_point.val[1].clamp(0.0, 1.0),
             );
 
             let point_in_screen: Pos2 = to_screen.transform_pos(point_xy);
@@ -96,9 +96,9 @@ pub fn ui_ordered_control_points(
             }
 
             let point_as_color = HsvaGamma {
-                h: control_point[2],
-                s: control_point[0],
-                v: control_point[1],
+                h: control_point.val[2],
+                s: control_point.val[0],
+                v: control_point.val[1],
                 a: 1.0,
             };
             let color_to_show = if !is_inactive_click_or_drag {
@@ -133,7 +133,7 @@ pub fn ui_ordered_control_points(
         .enumerate()
         .take(num_control_points)
         .map(|(i, key)| {
-            let mut point = Pos2::new(key[0], 1.0 - key[1]);
+            let mut point = Pos2::new(key.val[0], 1.0 - key.val[1]);
             point = to_screen.from().clamp(point);
 
             let point_in_screen = to_screen.transform_pos(point);
@@ -161,7 +161,7 @@ pub fn ui_ordered_control_points(
         .into_iter()
         .take(num_control_points)
         .map(|key| {
-            let point = Pos2::new(key[0], 1.0 - key[1]);
+            let point = Pos2::new(key.val[0], 1.0 - key.val[1]);
             to_screen * point
         })
         .collect();
@@ -175,8 +175,8 @@ pub fn ui_ordered_control_points(
     ui.painter().extend(control_point_shapes_fill);
     ui.painter().extend(control_point_shapes);
     if let Some(marked_index) = marked_control_point_index {
-        let key = control_points[*marked_index];
-        let mut point = Pos2::new(key[0], 1.0 - key[1]);
+        let key = &control_points[*marked_index];
+        let mut point = Pos2::new(key.val[0], 1.0 - key.val[1]);
         point = to_screen.from().clamp(point);
         let stroke: Stroke = ui.style().interact(parent_response).fg_stroke;
 
@@ -221,37 +221,43 @@ pub fn ui_ordered_control_points(
     )
 }
 
-pub fn flatten_control_points(control_points: &[ControlPointType]) -> Vec<ControlPointType> {
-    let mut spline_samples: Vec<ControlPointType> = Vec::new();
+pub fn flatten_control_points(control_points: &[ControlPoint]) -> Vec<ControlPoint> {
+    let mut control_points_flattened: Vec<ControlPoint> = Vec::new();
 
-    let inc_all_prev_values = |vec: &mut Vec<ControlPointType>, val: f32| {
+    let inc_all_prev_hue_values = |vec: &mut Vec<ControlPoint>, val: f32| {
         for a in &mut vec.iter_mut() {
-            a[2] += val;
+            a.val[2] += val;
         }
     };
 
     for (i, cp) in control_points.iter().enumerate() {
         if i == 0 {
-            spline_samples.push(*cp);
+            control_points_flattened.push(cp.clone());
             continue;
         }
 
-        let prev = &mut spline_samples[i - 1];
-        let hue_diff = cp.h() - prev.h();
+        let prev = &mut control_points_flattened[i - 1];
+        let hue_diff = cp.val.h() - prev.val.h();
         if hue_diff.abs() <= 0.5 {
-            spline_samples.push(*cp);
+            control_points_flattened.push(cp.clone());
         } else {
             if hue_diff > 0.0 {
-                inc_all_prev_values(&mut spline_samples, 1.0);
-                spline_samples.push(ControlPointType::new(cp.s(), cp.v(), cp.h()));
+                inc_all_prev_hue_values(&mut control_points_flattened, 1.0);
+                control_points_flattened.push(ControlPoint::new(
+                    ControlPointType::new(cp.val.s(), cp.val.v(), cp.val.h()),
+                    todo!(),
+                ));
             } else {
-                inc_all_prev_values(&mut spline_samples, -1.0);
-                spline_samples.push(ControlPointType::new(cp.s(), cp.v(), cp.h()));
+                inc_all_prev_hue_values(&mut control_points_flattened, -1.0);
+                control_points_flattened.push(ControlPoint::new(
+                    ControlPointType::new(cp.val.s(), cp.val.v(), cp.val.h()),
+                    todo!(),
+                ));
             }
         }
     }
 
-    spline_samples
+    control_points_flattened
 }
 
 pub fn find_spline_max_t(spline: &Spline<f32, ControlPointType>) -> f32 {
@@ -264,7 +270,7 @@ pub fn find_spline_max_t(spline: &Spline<f32, ControlPointType>) -> f32 {
 }
 
 pub fn generate_spline_points_with_distance(
-    control_points: &[ControlPointType],
+    control_points: &[ControlPoint],
     spline_mode: SplineMode,
     t_distance: f32,
 ) -> Vec<ControlPointType> {
@@ -298,31 +304,40 @@ pub fn generate_spline_points_with_distance(
 }
 
 pub fn sub_divide_control_points(
-    control_points: &[ControlPointType],
+    control_points: &[ControlPoint],
     distance_per_point: f32,
-) -> Vec<ControlPointType> {
+) -> Vec<ControlPoint> {
     let capacity: usize = control_points.len() * 4;
-    let mut sub_divided: Vec<ControlPointType> = Vec::with_capacity(capacity);
+    let mut sub_divided: Vec<ControlPoint> = Vec::with_capacity(capacity);
 
     for i in 1..control_points.len() {
-        sub_divided.push(control_points[i - 1]);
-        let hue_to_use = control_points[i - 1][2];
-        let first = control_points[i - 1].pos2();
-        let last = control_points[i].pos2();
+        sub_divided.push(control_points[i - 1].clone());
+        let hue_to_use = control_points[i - 1].val[2];
+        let first = control_points[i - 1].val.pos2();
+        let last = control_points[i].val.pos2();
         let dir = (last - first).normalized();
         let mut sub_div_start = first;
         let mut distance_to_end = (last - first).dot(last - first).sqrt();
         while distance_to_end > distance_per_point {
             let new: Pos2 = sub_div_start + distance_per_point * dir;
             distance_to_end -= distance_per_point;
-            sub_divided.push(ControlPointType::new(new.x, new.y, hue_to_use));
+
+            let new_cp = ControlPoint::new(
+                ControlPointType::new(new.x, new.y, hue_to_use),
+                lerp(control_points[i - 1].t..=control_points[i].t, 0.5),
+            );
+            sub_divided.push(new_cp);
             sub_div_start = new;
         }
         let last_new = sub_div_start + distance_to_end.max(0.0) * dir;
-        sub_divided.push(ControlPointType::new(last_new.x, last_new.y, hue_to_use));
+        let last_cp = ControlPoint::new(
+            ControlPointType::new(last_new.x, last_new.y, hue_to_use),
+            control_points[i].t,
+        );
+        sub_divided.push(last_cp);
     }
     if control_points.last().is_some() {
-        sub_divided.push(*control_points.last().unwrap());
+        sub_divided.push(control_points.last().unwrap().clone());
     }
 
     sub_divided
@@ -330,7 +345,7 @@ pub fn sub_divide_control_points(
 
 pub fn ui_ordered_spline_gradient(
     ui: &mut Ui,
-    control_points: &[ControlPointType],
+    control_points: &[ControlPoint],
     spline_mode: SplineMode,
     parent_response: &egui::Response,
 ) -> Option<egui::Response> {
@@ -411,7 +426,7 @@ impl<const D: usize, const N: usize> Bezier<D, N> {
 }
 
 pub fn control_points_to_spline(
-    control_points: &[ControlPointType],
+    control_points: &[ControlPoint],
     spline_mode: SplineMode,
 ) -> Spline<f32, ControlPointType> {
     match spline_mode {
@@ -419,31 +434,39 @@ pub fn control_points_to_spline(
             control_points
                 .iter()
                 .enumerate()
-                .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::Linear))
+                .map(|(index, e)| Key::new(index as f32, e.val, Interpolation::Linear))
                 .collect(),
         ),
         SplineMode::Bezier => Spline::from_vec(
             control_points
                 .iter()
                 .enumerate()
-                .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::Bezier(*e.1)))
+                .map(|(index, e)| {
+                    Key::new(
+                        index as f32,
+                        e.val,
+                        Interpolation::Bezier(
+                            control_points[(index + 1).min(control_points.len() - 1)].val,
+                        ),
+                    )
+                })
                 .collect(),
         ),
         SplineMode::HermiteBezier => {
             let mut catmul_rom_spline_vec = control_points.to_vec();
             if control_points.len() >= 1 {
-                catmul_rom_spline_vec.insert(0, *control_points.first().unwrap());
+                catmul_rom_spline_vec.insert(0, control_points.first().unwrap().clone());
             }
 
             if control_points.len() >= 1 {
-                catmul_rom_spline_vec.push(*control_points.last().unwrap());
+                catmul_rom_spline_vec.push(control_points.last().unwrap().clone());
             }
 
             let new_spline = Spline::from_vec(
                 catmul_rom_spline_vec
                     .iter()
                     .enumerate()
-                    .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::CatmullRom))
+                    .map(|(index, e)| Key::new(index as f32, e.val, Interpolation::CatmullRom))
                     .collect(),
             );
 
@@ -456,7 +479,7 @@ pub fn control_points_to_spline(
                 control_points
                     .iter()
                     .enumerate()
-                    .map(|e| Key::new(e.0 as f32, *e.1, Interpolation::Linear))
+                    .map(|(index, e)| Key::new(index as f32, e.val, Interpolation::Linear))
                     .collect(),
             )
         }
