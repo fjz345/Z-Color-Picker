@@ -255,7 +255,7 @@ fn ui_previewer_curve_quantized(
             SplineMode::HermiteBezier => {
                 1.0 + i as f32 / (number_levels) as f32 as f32 * (max_t - 2.0) as f32
             }
-            _ => i as f32 / (number_levels - 1) as f32 as f32 * max_t,
+            _ => i as f32 / (number_levels - 1).max(1) as f32 as f32 * max_t,
         };
 
         let sample = spline.clamped_sample(sample_x).unwrap_or_default();
