@@ -498,13 +498,18 @@ impl ZColorPicker {
                         }
                     }
 
+                    // None
+                    let selectable_none_response =
+                        ui.selectable_value(&mut combobox_selected_index, 0, "<None>");
                     // New
-                    let selectable_value_response =
-                        ui.selectable_value(&mut combobox_selected_index, 0, "NEW");
+                    let selectable_new_response =
+                        ui.selectable_value(&mut combobox_selected_index, 0, "<NEW>");
 
-                    if selectable_value_response.clicked() {
+                    if selectable_new_response.clicked() {
                         combobox_has_selected = true;
-                        // combobox_selected_index = i;
+                    } else if selectable_none_response.clicked() {
+                        combobox_has_selected = false;
+                        self.preset_selected_index = None;
                     }
                 })
                 .response
@@ -529,6 +534,8 @@ impl ZColorPicker {
                         Ok(_) => println!("Sucessfully Saved"),
                         Err(e) => println!("{}", e),
                     }
+                } else {
+                    println!("Could not save, no preset selected");
                 }
             }
             if ui.button("Delete").clicked_by(PointerButton::Primary) {
@@ -541,6 +548,7 @@ impl ZColorPicker {
         });
 
         let mut create_preset_open = self.new_preset_window_open;
+        let mut create_preset_create_clicked = false;
         if self.new_preset_window_open {
             egui::Window::new("Create Preset")
                 .open(&mut create_preset_open)
@@ -549,6 +557,7 @@ impl ZColorPicker {
 
                     if ui.button("Create").clicked() {
                         self.new_preset_window_open = false;
+                        create_preset_create_clicked = true;
 
                         let r = self.create_preset(&self.new_preset_window_text.clone());
                         match r {
@@ -558,6 +567,9 @@ impl ZColorPicker {
                     }
                 });
             self.new_preset_window_open = create_preset_open;
+            if (create_preset_create_clicked) {
+                self.new_preset_window_open = false;
+            }
         }
     }
 }
