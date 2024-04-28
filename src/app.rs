@@ -1,5 +1,13 @@
-use eframe::{egui::Response, glow::HasContext};
-use std::borrow::BorrowMut;
+use ecolor::Color32;
+use eframe::{
+    egui::{Response, Stroke, Ui},
+    glow::HasContext,
+};
+use env_logger::fmt::Color;
+use std::{
+    borrow::BorrowMut,
+    time::{Instant, SystemTime},
+};
 
 #[allow(unused_imports)]
 use crate::error::Result;
@@ -10,6 +18,7 @@ use eframe::{
 };
 
 use crate::{
+    clipboard::write_color_to_clipboard,
     color_picker::{ColorStringCopy, ControlPoint, ZColorPicker},
     math::color_lerp_ex,
     previewer::ZPreviewer,
@@ -35,6 +44,9 @@ pub struct ZApp {
     debug_alpha: f32,
     double_click_event: Option<Pos2>,
     middle_click_event: Option<Pos2>,
+    clipboard_copy_popup_timestamp: Option<Instant>,
+    clipboard_copy_popup_position: Option<Pos2>,
+    clipboard_copy_popup_color: Option<Color32>,
 }
 
 impl ZApp {
@@ -55,6 +67,9 @@ impl ZApp {
             double_click_event: None,
             middle_click_event: None,
             z_color_picker: ZColorPicker::new(),
+            clipboard_copy_popup_timestamp: None,
+            clipboard_copy_popup_position: None,
+            clipboard_copy_popup_color: None,
         }
     }
 
@@ -64,7 +79,7 @@ impl ZApp {
         ctx.set_pixels_per_point(self.scale_factor);
     }
 
-    fn handle_doubleclick_event(&mut self, z_color_picker_response: &Response) {
+    fn handle_doubleclick_event(&mut self, z_color_picker_response: &Response) -> bool {
         match self.double_click_event {
             Some(pos) => {
                 if z_color_picker_response.rect.contains(pos) {
@@ -104,6 +119,8 @@ impl ZApp {
             }
             _ => {}
         }
+
+        false
     }
 
     fn draw_ui_menu(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -134,6 +151,8 @@ impl ZApp {
                 self.handle_doubleclick_event(&z_color_picker_response);
 
                 self.previewer.draw_ui(ui, self.color_copy_format);
+
+                self.handle_middleclick_event(ui);
 
                 // TESTING
                 if self.debug_window {
@@ -179,6 +198,68 @@ impl ZApp {
         if self.debug_window {
             self.draw_debug_window(ctx);
         }
+    }
+
+    fn handle_middleclick_event(&mut self, ui: &mut Ui) -> bool {
+        if self.middle_click_event.is_some() {
+            let timestamp = Instant::now();
+            // Start timer
+            self.clipboard_copy_popup_timestamp = Some(timestamp);
+            self.clipboard_copy_popup_position = Some(self.middle_click_event.unwrap());
+
+            // Copy to clipboard
+            write_color_to_clipboard(
+                self.clipboard_copy_popup_color.unwrap_or_default(),
+                self.color_copy_format,
+            );
+        }
+
+        const POPUP_TIME_DURATION: f32 = 0.7;
+        if let Some(start_timestamp) = self.clipboard_copy_popup_timestamp {
+            let time_since = Instant::now().duration_since(start_timestamp).as_secs_f32();
+            if time_since > POPUP_TIME_DURATION {
+                self.clipboard_copy_popup_timestamp = None;
+                self.clipboard_copy_popup_position = None;
+            }
+
+            let alpha = (1.0 - (time_since / POPUP_TIME_DURATION)).clamp(0.0, 1.0);
+            self.draw_ui_clipboard_copy(ui, alpha);
+        }
+
+        false
+    }
+
+    fn draw_ui_clipboard_copy(&mut self, ui: &mut Ui, opacity: f32) {
+        let prev_visuals = ui.visuals_mut().clone();
+
+        let alpha_u8 = (opacity * 255.0) as u8;
+        let mut color_bg = prev_visuals.window_fill;
+        color_bg[3] = alpha_u8;
+        let mut color_text = prev_visuals.text_color();
+        color_text[3] = alpha_u8;
+        ui.visuals_mut().window_fill = color_bg;
+        ui.visuals_mut().window_stroke.color = color_bg;
+        ui.visuals_mut().window_stroke.width = 0.0;
+        ui.visuals_mut().widgets.active.fg_stroke.color = color_text;
+        ui.visuals_mut().window_shadow.extrusion = 0.0;
+        ui.ctx().set_visuals(ui.visuals().clone());
+
+        let mut should_open: bool = self.clipboard_copy_popup_timestamp.is_some();
+        Window::new("")
+            .fixed_pos(&[
+                self.clipboard_copy_popup_position.unwrap_or_default().x,
+                self.clipboard_copy_popup_position.unwrap_or_default().y,
+            ])
+            .resizable(false)
+            .title_bar(false)
+            .open(&mut should_open)
+            .auto_sized()
+            .show(ui.ctx(), |ui| {
+                ui.label("Copied to clipboard");
+
+                ui.ctx().request_repaint();
+            });
+        ui.ctx().set_visuals(prev_visuals);
     }
 
     fn draw_debug_control_points(&mut self, ctx: &egui::Context) {
@@ -302,8 +383,10 @@ impl eframe::App for ZApp {
                 (buf[0], buf[1], buf[2])
             };
 
-            let color = format!("r: {r}, g: {g}, b: {b}");
-            println!("{}", color);
+            let color = Color32::from_rgb(r, g, b);
+            dbg!(color);
+
+            self.clipboard_copy_popup_color = Some(color);
         }
     }
 }

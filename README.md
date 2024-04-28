@@ -24,7 +24,7 @@ To create a new preset, click the preset combo box and select NEW
 
 - Double-click-M1: Add control-point
 - Right-click-M2: Remove control-point
-- Middle-click: Copy color as in the selected format (only on certain widgets for now)
+- Middle-click: Copy screen color as the selected format
 - F11/F12: Debug windows
 
 ## Options
@@ -42,6 +42,12 @@ To create a new preset, click the preset combo box and select NEW
 
 ## TODO: Features
 
+# Currently being worked on
+
+- Previewer Export .png
+
+#
+
 - Add confirm window for Delete Preset button
 - Add confirm window for exiting when having an unsaved preset active.
 - Regular Color pick for control points
@@ -49,10 +55,7 @@ To create a new preset, click the preset combo box and select NEW
   - Value
   - Saturation
   - Hue
-- User visual feedback when copying color values
 - View multiple presets at the same time
-- Middle mouse to copy color from anywhere within the application.
-- Previewer Export .png
 - Import curves to photoshop????
 - Different color spaces
 - Better ui widget dynamic rezising

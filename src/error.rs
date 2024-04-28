@@ -1,10 +1,13 @@
 use std::fmt::Display;
 
+use arboard::Clipboard;
+
 #[derive(Debug)]
 pub enum ZError {
     FileError(std::io::Error),
     JsonError(serde_json::Error),
     Message(String),
+    Clipboard(arboard::Error),
 }
 
 impl Display for ZError {
@@ -13,6 +16,7 @@ impl Display for ZError {
             ZError::FileError(ref err) => std::fmt::Display::fmt(&err, f),
             ZError::JsonError(ref err) => std::fmt::Display::fmt(&err, f),
             ZError::Message(ref err) => std::fmt::Display::fmt(&err, f),
+            ZError::Clipboard(ref err) => std::fmt::Display::fmt(&err, f),
         }
     }
 }
@@ -32,6 +36,12 @@ impl From<serde_json::Error> for ZError {
 impl From<String> for ZError {
     fn from(err: String) -> ZError {
         ZError::Message(err)
+    }
+}
+
+impl From<arboard::Error> for ZError {
+    fn from(err: arboard::Error) -> ZError {
+        ZError::Message(err.to_string())
     }
 }
 
