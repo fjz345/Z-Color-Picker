@@ -39,12 +39,14 @@ To create a new preset, click the preset combo box and select NEW
 ## TODO: Bugs
 
 - HermiteBezier, can not modify t's in previewer
+- HermiteBezier, preview gradient is black on right side
 
 ## TODO: Features
 
 # Currently being worked on
 
 - Previewer Export .png
+- Bezier tangent control points
 
 #
 
