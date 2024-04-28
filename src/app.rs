@@ -1,4 +1,4 @@
-use eframe::glow::HasContext;
+use eframe::{egui::Response, glow::HasContext};
 use std::borrow::BorrowMut;
 
 #[allow(unused_imports)]
@@ -66,6 +66,48 @@ impl ZApp {
         ctx.set_pixels_per_point(self.scale_factor);
     }
 
+    fn handle_doubleclick_event(&mut self, z_color_picker_response: &Response) {
+        match self.double_click_event {
+            Some(pos) => {
+                if z_color_picker_response.rect.contains(pos) {
+                    let z_color_picker_response_xy = pos - z_color_picker_response.rect.min;
+                    let normalized_xy =
+                        z_color_picker_response_xy / z_color_picker_response.rect.size();
+
+                    let closest = self
+                        .z_color_picker
+                        .get_control_points_sdf_2d(normalized_xy.to_pos2());
+                    const MIN_DIST: f32 = 0.1;
+
+                    let color_xy = Pos2::new(
+                        normalized_xy.x.clamp(0.0, 1.0),
+                        1.0 - normalized_xy.y.clamp(0.0, 1.0),
+                    );
+
+                    match closest {
+                        Some((cp, dist)) => {
+                            let should_spawn_control_point = dist > MIN_DIST;
+                            if should_spawn_control_point {
+                                let color_hue: f32 = cp.val.h();
+
+                                let color: [f32; 3] = [color_xy[0], color_xy[1], color_hue];
+                                self.z_color_picker
+                                    .spawn_control_point(ControlPoint::new(color.into(), cp.t));
+                            }
+                        }
+                        _ => {
+                            let color: [f32; 3] = [color_xy[0], color_xy[1], 0.0];
+                            self.z_color_picker
+                                .spawn_control_point(ControlPoint::new(color.into(), 0.0));
+                        }
+                    };
+                    self.z_color_picker.post_update_control_points();
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn draw_ui_menu(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let color_picker_desired_size = Vec2 {
@@ -91,47 +133,7 @@ impl ZApp {
                     self.z_color_picker.spline_mode,
                 );
 
-                match self.double_click_event {
-                    Some(pos) => {
-                        if z_color_picker_response.rect.contains(pos) {
-                            let z_color_picker_response_xy = pos - z_color_picker_response.rect.min;
-                            let normalized_xy =
-                                z_color_picker_response_xy / z_color_picker_response.rect.size();
-
-                            let closest = self
-                                .z_color_picker
-                                .get_control_points_sdf_2d(normalized_xy.to_pos2());
-                            const MIN_DIST: f32 = 0.1;
-
-                            let color_xy = Pos2::new(
-                                normalized_xy.x.clamp(0.0, 1.0),
-                                1.0 - normalized_xy.y.clamp(0.0, 1.0),
-                            );
-
-                            match closest {
-                                Some((cp, dist)) => {
-                                    let should_spawn_control_point = dist > MIN_DIST;
-                                    if should_spawn_control_point {
-                                        let color_hue: f32 = cp.val.h();
-
-                                        let color: [f32; 3] = [color_xy[0], color_xy[1], color_hue];
-                                        self.z_color_picker.spawn_control_point(ControlPoint::new(
-                                            color.into(),
-                                            cp.t,
-                                        ));
-                                    }
-                                }
-                                _ => {
-                                    let color: [f32; 3] = [color_xy[0], color_xy[1], 0.0];
-                                    self.z_color_picker
-                                        .spawn_control_point(ControlPoint::new(color.into(), 0.0));
-                                }
-                            };
-                            self.z_color_picker.post_update_control_points();
-                        }
-                    }
-                    _ => {}
-                }
+                self.handle_doubleclick_event(&z_color_picker_response);
 
                 self.previewer.draw_ui(ui, self.color_copy_format);
 
@@ -214,26 +216,8 @@ impl ZApp {
             ui.add(Slider::new(&mut self.debug_alpha, 0.0..=1.0).text("debug_alpha"));
         });
     }
-}
 
-impl eframe::App for ZApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        match self.state {
-            AppState::Startup => {
-                self.startup(ctx, frame);
-                self.state = AppState::Idle;
-            }
-            AppState::Idle => {
-                self.draw_ui_menu(ctx, frame);
-            }
-            AppState::Exit => {
-                frame.close();
-            }
-            _ => {
-                panic!("Not a valid state {:?}", self.state);
-            }
-        }
-
+    fn process_ctx_inputs(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // DoubleLeftClick
         self.double_click_event = None;
         ctx.input(|reader| {
@@ -276,6 +260,27 @@ impl eframe::App for ZApp {
             }
         });
     }
+}
+
+impl eframe::App for ZApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        match self.state {
+            AppState::Startup => {
+                self.startup(ctx, frame);
+                self.state = AppState::Idle;
+            }
+            AppState::Idle => {
+                self.draw_ui_menu(ctx, frame);
+                self.process_ctx_inputs(ctx, frame);
+            }
+            AppState::Exit => {
+                frame.close();
+            }
+            _ => {
+                panic!("Not a valid state {:?}", self.state);
+            }
+        }
+    }
 
     fn post_rendering(&mut self, screen_size_px: [u32; 2], frame: &eframe::Frame) {
         if let Some(pos) = self.middle_click_event {
@@ -299,7 +304,6 @@ impl eframe::App for ZApp {
                 (buf[0], buf[1], buf[2])
             };
 
-            println!("{:?}", self.middle_click_event);
             let color = format!("r: {r}, g: {g}, b: {b}");
             println!("{}", color);
         }
