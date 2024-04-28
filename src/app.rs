@@ -35,7 +35,6 @@ pub struct ZApp {
     debug_alpha: f32,
     double_click_event: Option<Pos2>,
     middle_click_event: Option<Pos2>,
-    pos: Option<Pos2>,
 }
 
 impl ZApp {
@@ -56,7 +55,6 @@ impl ZApp {
             double_click_event: None,
             middle_click_event: None,
             z_color_picker: ZColorPicker::new(),
-            pos: None,
         }
     }
 
