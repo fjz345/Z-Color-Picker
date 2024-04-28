@@ -52,6 +52,7 @@ To create a new preset, click the preset combo box and select NEW
 - User visual feedback when copying color values
 - View multiple presets at the same time
 - Middle mouse to copy color from anywhere within the application.
+- Previewer Export .png
 - Import curves to photoshop????
 - Different color spaces
 - Better ui widget dynamic rezising
