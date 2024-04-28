@@ -10,6 +10,7 @@ use hsv_key_value::HsvKeyValue;
 use crate::app::ZApp;
 
 mod app;
+mod clipboard;
 mod color_picker;
 mod curves;
 mod error;

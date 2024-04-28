@@ -207,7 +207,7 @@ fn ui_previewer_curve(
 
     let max_t = find_spline_max_t(&spline);
 
-    color_function_gradient(&mut previewer_ui_curve, rect.size(), |x| {
+    let response = color_function_gradient(&mut previewer_ui_curve, rect.size(), |x| {
         if flatten_control_points.len() <= 0 {
             return HsvaGamma {
                 h: 0.0,
@@ -225,7 +225,7 @@ fn ui_previewer_curve(
             _ => x * max_t,
         };
 
-        let sample = spline.clamped_sample(sample_x).unwrap_or_default();
+        let sample: HsvKeyValue = spline.clamped_sample(sample_x).unwrap_or_default();
         sample.color()
     });
 }
@@ -400,13 +400,15 @@ impl ZPreviewer {
     }
 
     pub fn draw_ui(&mut self, ui: &mut Ui, color_copy_format: ColorStringCopy) -> Response {
-        ui_previewer(
+        let previewer_response = ui_previewer(
             ui,
             &self.data.control_points.clone(),
             self.data.spline_mode,
             &mut self.data,
             color_copy_format,
-        )
+        );
+
+        previewer_response
     }
 }
 

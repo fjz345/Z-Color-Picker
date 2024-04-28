@@ -1,9 +1,12 @@
+use eframe::glow::HasContext;
+use std::borrow::BorrowMut;
+
 #[allow(unused_imports)]
 use crate::error::Result;
 use eframe::{
     egui::{self, color_picker::show_color, Layout, PointerButton, Rect, Slider, Window},
     epaint::{Pos2, Vec2},
-    CreationContext,
+    glow, CreationContext,
 };
 
 use crate::{
@@ -31,6 +34,8 @@ pub struct ZApp {
     debug_c: f32,
     debug_alpha: f32,
     double_click_event: Option<Pos2>,
+    middle_click_event: Option<Pos2>,
+    pos: Option<Pos2>,
 }
 
 impl ZApp {
@@ -49,7 +54,9 @@ impl ZApp {
             debug_c: 0.0,
             debug_alpha: 0.0,
             double_click_event: None,
+            middle_click_event: None,
             z_color_picker: ZColorPicker::new(),
+            pos: None,
         }
     }
 
@@ -227,7 +234,7 @@ impl eframe::App for ZApp {
             }
         }
 
-        // Register add control point
+        // DoubleLeftClick
         self.double_click_event = None;
         ctx.input(|reader| {
             if reader.pointer.button_double_clicked(PointerButton::Primary) {
@@ -236,6 +243,19 @@ impl eframe::App for ZApp {
                     "double click @({},{})",
                     self.double_click_event.unwrap().x,
                     self.double_click_event.unwrap().y
+                );
+            }
+        });
+
+        // MiddleMouseClick
+        self.middle_click_event = None;
+        ctx.input(|reader| {
+            if reader.pointer.button_clicked(PointerButton::Middle) {
+                self.middle_click_event = Some(reader.pointer.interact_pos().unwrap());
+                println!(
+                    "middle click @({},{})",
+                    self.middle_click_event.unwrap().x,
+                    self.middle_click_event.unwrap().y
                 );
             }
         });
@@ -255,5 +275,33 @@ impl eframe::App for ZApp {
                 println!("debug_window {}", self.debug_window);
             }
         });
+    }
+
+    fn post_rendering(&mut self, screen_size_px: [u32; 2], frame: &eframe::Frame) {
+        if let Some(pos) = self.middle_click_event {
+            let (r, g, b) = unsafe {
+                let screen_scale_factor =
+                    self.scale_factor * frame.info().native_pixels_per_point.unwrap_or(1.0);
+                let x = (pos.x * screen_scale_factor).round();
+                let y = screen_size_px[1] as i32 - (pos.y * screen_scale_factor).round() as i32;
+
+                let mut buf = [0u8; 3];
+                let pixels = glow::PixelPackData::Slice(&mut buf[..]);
+                frame.gl().unwrap().read_pixels(
+                    x as i32,
+                    y as i32,
+                    1,
+                    1,
+                    glow::RGB,
+                    glow::UNSIGNED_BYTE,
+                    pixels,
+                );
+                (buf[0], buf[1], buf[2])
+            };
+
+            println!("{:?}", self.middle_click_event);
+            let color = format!("r: {r}, g: {g}, b: {b}");
+            println!("{}", color);
+        }
     }
 }
