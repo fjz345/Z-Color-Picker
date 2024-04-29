@@ -6,6 +6,8 @@ use crate::egui::TextStyle;
 use crate::error::Result;
 use crate::ControlPointType;
 use eframe::egui::Pos2;
+use eframe::glow;
+use eframe::glow::HasContext;
 use eframe::{
     egui::{color_picker::Alpha, vec2, Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
     emath::{lerp, remap_clamp},
@@ -360,4 +362,53 @@ pub fn color_text_ui(
 
         *ui.style_mut() = old_style;
     });
+}
+
+pub fn read_pixels_from_frame_one_pixel(
+    frame: &eframe::Frame,
+    screen_size_px: [u32; 2],
+    scale_factor: f32,
+    x: f32,
+    y: f32,
+) -> Option<(u8, u8, u8)> {
+    let res = read_pixels_from_frame(frame, screen_size_px, scale_factor, x, y, 1.0, 1.0);
+    res.first().cloned()
+}
+
+use core::mem::transmute;
+pub fn read_pixels_from_frame(
+    frame: &eframe::Frame,
+    screen_size_px: [u32; 2],
+    scale_factor: f32,
+    x_start: f32,
+    y_start: f32,
+    x_size: f32,
+    y_size: f32,
+) -> Vec<(u8, u8, u8)> {
+    let colors = unsafe {
+        let native_pixel_per_point = frame.info().native_pixels_per_point.unwrap_or(1.0);
+        let screen_scale_factor = scale_factor * native_pixel_per_point;
+        let x_ = (x_start * screen_scale_factor).round();
+        let y_ = screen_size_px[1] as i32 - (y_start * screen_scale_factor).round() as i32;
+
+        let x_size_ = (x_size) as i32;
+        let y_size_ = (y_size) as i32;
+        let buf_size = (3 * x_size_ * y_size_) as usize;
+        let mut buf: Vec<u8> = vec![0u8; buf_size];
+        let pixels = glow::PixelPackData::Slice(&mut buf[..]);
+        frame.gl().unwrap().read_pixels(
+            x_ as i32,
+            y_ as i32,
+            x_size_,
+            y_size_,
+            glow::RGB,
+            glow::UNSIGNED_BYTE,
+            pixels,
+        );
+
+        let rgb_vec: Vec<(u8, u8, u8)> = unsafe { transmute(buf) };
+        rgb_vec
+    };
+
+    colors
 }

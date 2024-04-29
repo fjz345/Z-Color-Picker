@@ -191,7 +191,7 @@ fn ui_previewer_curve(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
     previewer_data: &PreviewerData,
-) {
+) -> Response {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
     ui.allocate_rect(rect, Sense::click_and_drag());
     let mut previewer_ui_curve = ui.child_ui(rect, Layout::left_to_right(egui::Align::Min));
@@ -228,6 +228,8 @@ fn ui_previewer_curve(
         let sample: HsvKeyValue = spline.clamped_sample(sample_x).unwrap_or_default();
         sample.color()
     });
+
+    response
 }
 
 fn ui_previewer_curve_quantized(
@@ -238,7 +240,7 @@ fn ui_previewer_curve_quantized(
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
     number_levels: usize,
-) {
+) -> Response {
     let flatten_control_points = flatten_control_points(control_points);
     let mut spline = control_points_to_spline(&flatten_control_points[..], spline_mode);
 
@@ -262,7 +264,8 @@ fn ui_previewer_curve_quantized(
         quantized_colors.push(sample);
     }
 
-    ui_previewer_colors(ui, size, &quantized_colors, color_copy_format);
+    let response = ui_previewer_colors(ui, size, &quantized_colors, color_copy_format);
+    response
 }
 
 fn ui_previewer_options(ui: &mut Ui, size: Vec2, previewer_data: &mut PreviewerData) {
@@ -291,25 +294,25 @@ pub fn ui_previewer(
     spline_mode: SplineMode,
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
-) -> Response {
+) -> PreviewerUiResponses {
     let previewer_rect = ui.available_rect_before_wrap();
 
     let inner_response = ui.vertical(|ui| {
-        let control_points_response = ui_previewer_control_points_with_drag(
+        let response_control_points = ui_previewer_control_points_with_drag(
             ui,
             previewer_rect.size() * Vec2::new(1.0, 0.16),
             control_points,
             previewer_data,
             color_copy_format,
         );
-        ui_previewer_curve(
+        let response_curve = ui_previewer_curve(
             ui,
             previewer_rect.size() * Vec2::new(1.0, 0.25),
             control_points,
             spline_mode,
             previewer_data,
         );
-        ui_previewer_curve_quantized(
+        let response_curve_quantized = ui_previewer_curve_quantized(
             ui,
             previewer_rect.size() * Vec2::new(1.0, 0.25),
             control_points,
@@ -318,7 +321,7 @@ pub fn ui_previewer(
             color_copy_format,
             previewer_data.quantize_num_levels,
         );
-        ui_previewer_options(
+        let response_curve_options = ui_previewer_options(
             ui,
             previewer_rect.size() * Vec2::new(1.0, 1.0),
             previewer_data,
@@ -335,10 +338,48 @@ pub fn ui_previewer(
             previewer_data.reset_preview_sizes();
         }
 
-        control_points_response
+        PreviewerUiResponses {
+            controlpoints: Some(response_control_points.clone()),
+            curve: Some(response_curve.clone()),
+            quantized_curve: Some(response_curve_quantized.clone()),
+        }
     });
 
     inner_response.inner
+}
+
+pub struct PreviewerUiResponses {
+    pub controlpoints: Option<Response>,
+    pub curve: Option<Response>,
+    pub quantized_curve: Option<Response>,
+}
+
+impl Default for PreviewerUiResponses {
+    fn default() -> Self {
+        Self {
+            controlpoints: None,
+            curve: None,
+            quantized_curve: None,
+        }
+    }
+}
+
+impl PreviewerUiResponses {
+    pub fn get_rects(&self) -> Vec<Rect> {
+        let mut res_vec = Vec::new();
+
+        if let Some(response) = &self.controlpoints {
+            res_vec.push(response.rect.clone());
+        }
+        if let Some(response) = &self.curve {
+            res_vec.push(response.rect.clone());
+        }
+        if let Some(response) = &self.quantized_curve {
+            res_vec.push(response.rect.clone());
+        }
+
+        res_vec
+    }
 }
 
 const PREVIEWER_DEFAULT_VALUE: f32 = 100.0;
@@ -399,7 +440,11 @@ impl ZPreviewer {
         }
     }
 
-    pub fn draw_ui(&mut self, ui: &mut Ui, color_copy_format: ColorStringCopy) -> Response {
+    pub fn draw_ui(
+        &mut self,
+        ui: &mut Ui,
+        color_copy_format: ColorStringCopy,
+    ) -> PreviewerUiResponses {
         let previewer_response = ui_previewer(
             ui,
             &self.data.control_points.clone(),

@@ -1,3 +1,4 @@
+use arboard::ImageData;
 use ecolor::Color32;
 use eframe::{
     egui::{InnerResponse, Response, Stroke, Ui},
@@ -5,7 +6,9 @@ use eframe::{
 };
 use env_logger::fmt::Color;
 use std::{
-    borrow::BorrowMut,
+    borrow::{BorrowMut, Cow},
+    default,
+    mem::{transmute, transmute_copy},
     time::{Instant, SystemTime},
 };
 
@@ -18,10 +21,13 @@ use eframe::{
 };
 
 use crate::{
-    clipboard::write_color_to_clipboard,
+    clipboard::{
+        write_color_to_clipboard, write_pixels_to_clipboard, write_pixels_to_clipboard_test_ppm,
+    },
     color_picker::{ColorStringCopy, ControlPoint, ZColorPicker},
     math::color_lerp_ex,
-    previewer::ZPreviewer,
+    previewer::{PreviewerUiResponses, ZPreviewer},
+    ui_common::{read_pixels_from_frame, read_pixels_from_frame_one_pixel},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -32,17 +38,14 @@ enum AppState {
 }
 
 type RgbVec = Vec<(u8, u8, u8)>;
-enum ClipboardPixelPayload {
-    SinglePixel(Color32),
-    MultiplePixels(RgbVec),
-}
-struct ClipboardCopyEvent {
+
+struct MouseClickEvent {
     mouse_pos: Pos2,
-    screen_color: ClipboardPixelPayload,
 }
 
-struct AddControlPointEvent {
-    mouse_pos: Pos2,
+struct ClipboardCopyEvent {
+    frame_rect: Rect,
+    frame_colors: Option<RgbVec>,
 }
 
 struct ClipboardPopup {
@@ -139,9 +142,11 @@ pub struct ZApp {
     debug_t: f32,
     debug_c: f32,
     debug_alpha: f32,
-    double_click_event: Option<AddControlPointEvent>,
-    middle_click_event: Option<ClipboardCopyEvent>,
+    double_click_event: Option<MouseClickEvent>,
+    middle_click_event: Option<MouseClickEvent>,
+    clipboard_event: Option<ClipboardCopyEvent>,
     clipboard_copy_window: ClipboardPopup,
+    stored_ui_responses: PreviewerUiResponses,
 }
 
 impl ZApp {
@@ -168,6 +173,8 @@ impl ZApp {
                 Instant::now(),
                 0.7,
             ),
+            stored_ui_responses: PreviewerUiResponses::default(),
+            clipboard_event: None,
         }
     }
 
@@ -175,51 +182,6 @@ impl ZApp {
         let visuals: egui::Visuals = egui::Visuals::dark();
         ctx.set_visuals(visuals);
         ctx.set_pixels_per_point(self.scale_factor);
-    }
-
-    fn handle_doubleclick_event(&mut self, z_color_picker_response: &Response) -> bool {
-        match &self.double_click_event {
-            Some(pos) => {
-                if z_color_picker_response.rect.contains(pos.mouse_pos) {
-                    let z_color_picker_response_xy =
-                        pos.mouse_pos - z_color_picker_response.rect.min;
-                    let normalized_xy =
-                        z_color_picker_response_xy / z_color_picker_response.rect.size();
-
-                    let closest = self
-                        .z_color_picker
-                        .get_control_points_sdf_2d(normalized_xy.to_pos2());
-                    const MIN_DIST: f32 = 0.1;
-
-                    let color_xy = Pos2::new(
-                        normalized_xy.x.clamp(0.0, 1.0),
-                        1.0 - normalized_xy.y.clamp(0.0, 1.0),
-                    );
-
-                    match closest {
-                        Some((cp, dist)) => {
-                            let should_spawn_control_point = dist > MIN_DIST;
-                            if should_spawn_control_point {
-                                let color_hue: f32 = cp.val.h();
-
-                                let color: [f32; 3] = [color_xy[0], color_xy[1], color_hue];
-                                self.z_color_picker
-                                    .spawn_control_point(ControlPoint::new(color.into(), cp.t));
-                            }
-                        }
-                        _ => {
-                            let color: [f32; 3] = [color_xy[0], color_xy[1], 0.0];
-                            self.z_color_picker
-                                .spawn_control_point(ControlPoint::new(color.into(), 0.0));
-                        }
-                    };
-                    self.z_color_picker.post_update_control_points();
-                }
-            }
-            _ => {}
-        }
-
-        false
     }
 
     fn draw_ui_menu(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -246,11 +208,10 @@ impl ZApp {
                     &self.z_color_picker.control_points,
                     self.z_color_picker.spline_mode,
                 );
+                self.stored_ui_responses = self.previewer.draw_ui(ui, self.color_copy_format);
 
                 self.handle_doubleclick_event(&z_color_picker_response);
-
-                self.previewer.draw_ui(ui, self.color_copy_format);
-
+                self.handle_clipboardcopy_event(ui);
                 self.handle_middleclick_event(ui);
 
                 // TESTING
@@ -302,20 +263,101 @@ impl ZApp {
         }
     }
 
-    fn handle_middleclick_event(&mut self, ui: &mut Ui) -> bool {
-        if let Some(event) = &self.middle_click_event {
-            self.clipboard_copy_window.open(event.mouse_pos);
+    fn handle_doubleclick_event(&mut self, z_color_picker_response: &Response) -> bool {
+        match &self.double_click_event {
+            Some(pos) => {
+                if z_color_picker_response.rect.contains(pos.mouse_pos) {
+                    let z_color_picker_response_xy =
+                        pos.mouse_pos - z_color_picker_response.rect.min;
+                    let normalized_xy =
+                        z_color_picker_response_xy / z_color_picker_response.rect.size();
 
-            // Copy to clipboard
-            match &event.screen_color {
-                ClipboardPixelPayload::SinglePixel(color) => {
-                    write_color_to_clipboard(*color, self.color_copy_format);
+                    let closest = self
+                        .z_color_picker
+                        .get_control_points_sdf_2d(normalized_xy.to_pos2());
+                    const MIN_DIST: f32 = 0.1;
+
+                    let color_xy = Pos2::new(
+                        normalized_xy.x.clamp(0.0, 1.0),
+                        1.0 - normalized_xy.y.clamp(0.0, 1.0),
+                    );
+
+                    match closest {
+                        Some((cp, dist)) => {
+                            let should_spawn_control_point = dist > MIN_DIST;
+                            if should_spawn_control_point {
+                                let color_hue: f32 = cp.val.h();
+
+                                let color: [f32; 3] = [color_xy[0], color_xy[1], color_hue];
+                                self.z_color_picker
+                                    .spawn_control_point(ControlPoint::new(color.into(), cp.t));
+                            }
+                        }
+                        _ => {
+                            let color: [f32; 3] = [color_xy[0], color_xy[1], 0.0];
+                            self.z_color_picker
+                                .spawn_control_point(ControlPoint::new(color.into(), 0.0));
+                        }
+                    };
+                    self.z_color_picker.post_update_control_points();
                 }
-                ClipboardPixelPayload::MultiplePixels(colors) => todo!(),
             }
+            _ => {}
         }
 
         false
+    }
+
+    fn handle_middleclick_event(&mut self, ui: &mut Ui) -> bool {
+        if let Some(event) = &self.middle_click_event {
+            let mut found_rect = None;
+            for rect in self.stored_ui_responses.get_rects() {
+                if rect.contains(event.mouse_pos) {
+                    found_rect = Some(rect.clone());
+                    break;
+                }
+            }
+
+            let rect =
+                found_rect.unwrap_or(Rect::from_min_size(event.mouse_pos, Vec2::new(1.0, 1.0)));
+            self.clipboard_event = Some(ClipboardCopyEvent {
+                frame_rect: rect,
+                frame_colors: None,
+            });
+        }
+
+        false
+    }
+
+    fn handle_clipboardcopy_event(&mut self, ui: &mut Ui) -> bool {
+        if let Some(event) = self.clipboard_event.take() {
+            self.clipboard_copy_window.open(event.frame_rect.min);
+
+            // Copy to clipboard
+            if let Some(colors) = &event.frame_colors {
+                if colors.len() == 1 {
+                    let color = Color32::from_rgb(colors[0].0, colors[0].1, colors[0].2);
+                    write_color_to_clipboard(color, self.color_copy_format);
+                } else if colors.len() > 1 {
+                    unsafe {
+                        let cow = Cow::Borrowed(transmute_copy(colors));
+                        let data = ImageData {
+                            width: event.frame_rect.width() as usize,
+                            height: event.frame_rect.height().trunc() as usize,
+                            bytes: cow,
+                        };
+                        // write_pixels_to_clipboard(data);
+                        write_pixels_to_clipboard_test_ppm(data, colors.clone());
+                    }
+                } else {
+                    println!("clipboard event could not be processed, colors len was 0");
+                }
+            } else {
+                println!("clipboard event could not be processed, did not have any colors set");
+            }
+        }
+
+        true
     }
 
     fn draw_debug_control_points(&mut self, ctx: &egui::Context) {
@@ -337,6 +379,7 @@ impl ZApp {
             }
         });
     }
+
     fn draw_debug_window(&mut self, ctx: &egui::Context) {
         let window = Window::new("=== Debug Window ===")
             .resizable(true)
@@ -358,7 +401,7 @@ impl ZApp {
         ctx.input(|reader| {
             if reader.pointer.button_double_clicked(PointerButton::Primary) {
                 let mouse_pos = reader.pointer.interact_pos().unwrap();
-                self.double_click_event = Some(AddControlPointEvent { mouse_pos });
+                self.double_click_event = Some(MouseClickEvent { mouse_pos });
                 println!("double click @({},{})", mouse_pos.x, mouse_pos.y);
             }
         });
@@ -367,11 +410,9 @@ impl ZApp {
         self.middle_click_event = None;
         ctx.input(|reader| {
             if reader.pointer.button_clicked(PointerButton::Middle) {
-                let mouse_pos = reader.pointer.interact_pos().unwrap();
-                self.middle_click_event = Some(ClipboardCopyEvent {
-                    mouse_pos,
-                    screen_color: ClipboardPixelPayload::SinglePixel(Color32::BLACK),
-                });
+                let mouse_pos: Pos2 = reader.pointer.interact_pos().unwrap();
+                self.middle_click_event = Some(MouseClickEvent { mouse_pos });
+
                 println!("middle click @({},{})", mouse_pos.x, mouse_pos.y);
             }
         });
@@ -415,61 +456,39 @@ impl eframe::App for ZApp {
     }
 
     fn post_rendering(&mut self, screen_size_px: [u32; 2], frame: &eframe::Frame) {
-        if let Some(event) = &mut self.middle_click_event {
-            let (r, g, b) = read_pixels_from_frame_one_pixel(
-                frame,
-                screen_size_px,
-                self.scale_factor,
-                event.mouse_pos.x,
-                event.mouse_pos.y,
-            );
+        if let Some(event) = &mut self.clipboard_event {
+            if event.frame_rect.size() == Vec2::new(1.0, 1.0) {
+                let read_result = read_pixels_from_frame_one_pixel(
+                    frame,
+                    screen_size_px,
+                    self.scale_factor,
+                    event.frame_rect.min.x,
+                    event.frame_rect.min.y,
+                );
 
-            let color = Color32::from_rgb(r, g, b);
-            dbg!(color);
-
-            event.screen_color = ClipboardPixelPayload::SinglePixel(color);
+                if let Some(color) = read_result {
+                    dbg!(color);
+                    let colors: RgbVec = vec![color];
+                    event.frame_colors = Some(colors);
+                } else {
+                    event.frame_colors = None;
+                }
+            } else {
+                let colors = read_pixels_from_frame(
+                    frame,
+                    screen_size_px,
+                    self.scale_factor,
+                    event.frame_rect.min.x,
+                    event.frame_rect.min.y,
+                    event.frame_rect.size().x,
+                    event.frame_rect.size().y,
+                );
+                if colors.len() > 0 {
+                    event.frame_colors = Some(colors);
+                } else {
+                    event.frame_colors = None;
+                }
+            }
         }
     }
-}
-
-fn read_pixels_from_frame_one_pixel(
-    frame: &eframe::Frame,
-    screen_size_px: [u32; 2],
-    scale_factor: f32,
-    x: f32,
-    y: f32,
-) -> (u8, u8, u8) {
-    read_pixels_from_frame(frame, screen_size_px, scale_factor, x, y, 1, 1)
-}
-
-fn read_pixels_from_frame(
-    frame: &eframe::Frame,
-    screen_size_px: [u32; 2],
-    scale_factor: f32,
-    x_start: f32,
-    y_start: f32,
-    x_size: i32,
-    y_size: i32,
-) -> (u8, u8, u8) {
-    let (r, g, b) = unsafe {
-        let screen_scale_factor =
-            scale_factor * frame.info().native_pixels_per_point.unwrap_or(1.0);
-        let x_ = (x_start * screen_scale_factor).round();
-        let y_ = screen_size_px[1] as i32 - (y_start * screen_scale_factor).round() as i32;
-
-        let mut buf = [0u8; 3];
-        let pixels = glow::PixelPackData::Slice(&mut buf[..]);
-        frame.gl().unwrap().read_pixels(
-            x_ as i32,
-            y_ as i32,
-            x_size,
-            y_size,
-            glow::RGB,
-            glow::UNSIGNED_BYTE,
-            pixels,
-        );
-        (buf[0], buf[1], buf[2])
-    };
-
-    (r, g, b)
 }
