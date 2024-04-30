@@ -9,6 +9,7 @@
 - Gradient preview
 - Multiple Spline Modes
 - Create/Save/Load Presets
+- Quickly Export
 - Coded in Rust
 
 # HOW TO
@@ -24,7 +25,7 @@ To create a new preset, click the preset combo box and select NEW
 
 - Double-click-M1: Add control-point
 - Right-click-M2: Remove control-point
-- Middle-click: Copy screen color as the selected format
+- Middle-click: Copy screen color as the selected format, on previewer, copies image to clipboard
 - F11/F12: Debug windows
 
 ## Options
@@ -45,7 +46,6 @@ To create a new preset, click the preset combo box and select NEW
 
 # Currently being worked on
 
-- Previewer Export .png
 - Bezier tangent control points
 
 #
