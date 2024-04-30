@@ -10,11 +10,13 @@ use eframe::{
 };
 
 use crate::{
-    clipboard::{write_color_to_clipboard, write_pixels_to_clipboard_test_ppm},
+    clipboard::{write_color_to_clipboard, write_pixels_to_clipboard, write_pixels_to_test_ppm},
     color_picker::{ColorStringCopy, ControlPoint, ZColorPicker},
     math::color_lerp_ex,
     previewer::{PreviewerUiResponses, ZPreviewer},
-    ui_common::{read_pixels_from_frame, u8u8u8_to_u8, FramePixelRead},
+    ui_common::{
+        read_pixels_from_frame, u8u8u8_to_u8, u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead,
+    },
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -328,14 +330,16 @@ impl ZApp {
                     let _ = write_color_to_clipboard(color, self.color_copy_format);
                 } else if frame_pixels.data.len() > 1 {
                     let copy = frame_pixels.data.clone();
-                    let cow = Cow::Owned(u8u8u8_to_u8(&frame_pixels.data[..]));
+                    let a_padded = u8u8u8_to_u8u8u8u8(&frame_pixels.data[..]);
+                    let u8_stream = u8u8u8u8_to_u8(&a_padded[..]);
+                    let cow = Cow::Owned(u8_stream);
                     let data = ImageData {
                         width: frame_pixels.width,
                         height: frame_pixels.height,
                         bytes: cow,
                     };
-                    // write_pixels_to_clipboard(data);
-                    let _ = write_pixels_to_clipboard_test_ppm(data, copy);
+                    let _ = write_pixels_to_test_ppm(&data, copy);
+                    let _ = write_pixels_to_clipboard(data);
                 } else {
                     println!("clipboard event could not be processed, colors len was 0");
                 }

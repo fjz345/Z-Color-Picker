@@ -1,4 +1,4 @@
-use std::{fs::File, io::Write};
+use std::{fs::File, io::Write, ops::Rem};
 
 use arboard::{Clipboard, ImageData};
 use ecolor::Color32;
@@ -36,9 +36,13 @@ fn write_color_ppm(ppm_string: &mut String, color: (u8, u8, u8)) {
 }
 
 pub fn write_pixels_to_clipboard(image_data: ImageData) -> Result<()> {
-    let mut _clipboard = Clipboard::new()?;
+    assert!(
+        image_data.bytes.len().rem(4) == 0,
+        "Needs to be 4 bytes per pixel"
+    );
+    let mut clipboard = Clipboard::new()?;
     let copy = image_data.clone();
-    // clipboard.set_image(image_data)?;
+    clipboard.set_image(image_data)?;
 
     println!(
         "Clipboard set to: W[{}],H[{}], NumBytes[{}]",
@@ -49,13 +53,11 @@ pub fn write_pixels_to_clipboard(image_data: ImageData) -> Result<()> {
     Ok(())
 }
 
-pub fn write_pixels_to_clipboard_test_ppm(image_data: ImageData, test_vec: Vec<Rgb>) -> Result<()> {
-    // let mut clipboard = Clipboard::new()?;
+pub fn write_pixels_to_test_ppm(image_data: &ImageData, test_vec: Vec<Rgb>) -> Result<()> {
     let copy = image_data.clone();
-    // clipboard.set_image(image_data)?;
 
     let mut image_ppm: String = String::new();
-    image_ppm += &format!("P3\n{} {}\n255\n", image_data.width, image_data.height).to_string();
+    image_ppm += &format!("P3\n{} {}\n255\n", copy.width, copy.height).to_string();
     for col in test_vec {
         write_color_ppm(&mut image_ppm, col.val);
     }
@@ -67,12 +69,6 @@ pub fn write_pixels_to_clipboard_test_ppm(image_data: ImageData, test_vec: Vec<R
     render_file.write_all(image_ppm.as_bytes()).unwrap();
 
     println!("render.ppm written");
-    println!(
-        "Clipboard set to: W[{}],H[{}], NumBytes[{}]",
-        copy.width,
-        copy.height,
-        copy.bytes.len()
-    );
 
     Ok(())
 }
