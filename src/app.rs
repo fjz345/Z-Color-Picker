@@ -12,11 +12,10 @@ use eframe::{
 use crate::{
     clipboard::{write_color_to_clipboard, write_pixels_to_clipboard, write_pixels_to_test_ppm},
     color_picker::{ColorStringCopy, ControlPoint, ZColorPicker},
+    image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8},
     math::color_lerp_ex,
     previewer::{PreviewerUiResponses, ZPreviewer},
-    ui_common::{
-        read_pixels_from_frame, u8u8u8_to_u8, u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead,
-    },
+    ui_common::{read_pixels_from_frame, FramePixelRead},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -338,7 +337,7 @@ impl ZApp {
                         height: frame_pixels.height,
                         bytes: cow,
                     };
-                    let _ = write_pixels_to_test_ppm(&data, copy);
+                    // let _ = write_pixels_to_test_ppm(&data, copy);
                     let _ = write_pixels_to_clipboard(data);
                 } else {
                     println!("clipboard event could not be processed, colors len was 0");

@@ -17,6 +17,7 @@ mod error;
 mod fs;
 mod gradient;
 mod hsv_key_value;
+mod image_processing;
 mod math;
 mod preset;
 mod previewer;
