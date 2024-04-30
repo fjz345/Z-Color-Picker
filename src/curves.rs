@@ -2,7 +2,6 @@
 
 #[allow(unused_imports)]
 use crate::error::Result;
-use crate::hsv_key_value::HsvKeyValue;
 use ecolor::{Color32, HsvaGamma};
 use eframe::egui::{self, lerp, Sense, Ui};
 use eframe::emath;
@@ -11,7 +10,7 @@ use egui::epaint::PathShape;
 use splines::{Interpolation, Key, Spline};
 
 use crate::color_picker::{ControlPoint, SplineMode};
-use crate::math::{add_array_array, hue_abs_distance, mul_array};
+use crate::math::{add_array_array, mul_array};
 use crate::ControlPointType;
 
 pub fn ui_ordered_control_points(

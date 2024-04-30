@@ -1,7 +1,5 @@
 use std::fmt::Display;
 
-use arboard::Clipboard;
-
 #[derive(Debug)]
 pub enum ZError {
     FileError(std::io::Error),

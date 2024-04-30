@@ -1,6 +1,6 @@
 use crate::{
     error::{Result, ZError},
-    hsv_key_value::{self, HsvKeyValue},
+    hsv_key_value::HsvKeyValue,
 };
 use eframe::{
     egui::{
@@ -568,7 +568,7 @@ impl ZColorPicker {
                     }
                 });
             self.new_preset_window_open = create_preset_open;
-            if (create_preset_create_clicked) {
+            if create_preset_create_clicked {
                 self.new_preset_window_open = false;
             }
         }

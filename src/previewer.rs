@@ -268,7 +268,7 @@ fn ui_previewer_curve_quantized(
     response
 }
 
-fn ui_previewer_options(ui: &mut Ui, size: Vec2, previewer_data: &mut PreviewerData) {
+fn ui_previewer_options(ui: &mut Ui, _size: Vec2, previewer_data: &mut PreviewerData) {
     let slider = egui::Slider::new(
         &mut previewer_data.quantize_num_levels,
         1..=previewer_data.control_points.len(),
@@ -321,7 +321,7 @@ pub fn ui_previewer(
             color_copy_format,
             previewer_data.quantize_num_levels,
         );
-        let response_curve_options = ui_previewer_options(
+        let _response_curve_options = ui_previewer_options(
             ui,
             previewer_rect.size() * Vec2::new(1.0, 1.0),
             previewer_data,

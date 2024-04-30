@@ -4,7 +4,6 @@ use crate::egui::PointerButton;
 use crate::egui::TextStyle;
 #[allow(unused_imports)]
 use crate::error::Result;
-use crate::ControlPointType;
 use eframe::egui::Pos2;
 use eframe::glow;
 use eframe::glow::HasContext;
@@ -13,6 +12,7 @@ use eframe::{
     emath::{lerp, remap_clamp},
     epaint::{pos2, Color32, Mesh, Rect, Rgba, Shape, Stroke, Vec2},
 };
+use std::ops::Rem;
 use std::sync::Arc;
 
 use crate::color_picker::ColorStringCopy;
@@ -370,12 +370,17 @@ pub fn read_pixels_from_frame_one_pixel(
     scale_factor: f32,
     x: f32,
     y: f32,
-) -> Option<(u8, u8, u8)> {
+) -> Option<Rgb> {
     let res = read_pixels_from_frame(frame, screen_size_px, scale_factor, x, y, 1.0, 1.0);
-    res.first().cloned()
+    res.data.first().cloned()
 }
 
-use core::mem::transmute;
+pub struct FramePixelRead {
+    pub width: usize,
+    pub height: usize,
+    pub data: Vec<Rgb>,
+}
+
 pub fn read_pixels_from_frame(
     frame: &eframe::Frame,
     screen_size_px: [u32; 2],
@@ -384,21 +389,30 @@ pub fn read_pixels_from_frame(
     y_start: f32,
     x_size: f32,
     y_size: f32,
-) -> Vec<(u8, u8, u8)> {
-    let colors = unsafe {
-        let native_pixel_per_point = frame.info().native_pixels_per_point.unwrap_or(1.0);
-        let screen_scale_factor = scale_factor * native_pixel_per_point;
-        let x_ = (x_start * screen_scale_factor).round();
-        let y_ = screen_size_px[1] as i32 - (y_start * screen_scale_factor).round() as i32;
+) -> FramePixelRead {
+    dbg!(x_start);
+    dbg!(y_start);
+    dbg!(x_size);
+    dbg!(y_size);
 
-        let x_size_ = (x_size) as i32;
-        let y_size_ = (y_size) as i32;
-        let buf_size = (3 * x_size_ * y_size_) as usize;
+    let native_pixel_per_point = frame.info().native_pixels_per_point.unwrap_or(1.0);
+    let screen_scale_factor = scale_factor * native_pixel_per_point;
+
+    let x_ = (x_start * screen_scale_factor).round() as i32;
+    let y_ = screen_size_px[1] as i32 - (y_start * screen_scale_factor).round() as i32;
+    // let x_size_ = (screen_scale_factor * x_size).trunc() as i32;
+    // let x_size_ = (x_size).trunc() as i32;
+    let y_size_ = (screen_scale_factor * y_size).trunc() as i32;
+    // let x_size_ = 380; // Works
+    let x_size_ = 378; // Not Working
+
+    let buf_size = (3 * x_size_ * y_size_) as usize;
+    let colors = unsafe {
         let mut buf: Vec<u8> = vec![0u8; buf_size];
         let pixels = glow::PixelPackData::Slice(&mut buf[..]);
         frame.gl().unwrap().read_pixels(
-            x_ as i32,
-            y_ as i32,
+            x_,
+            y_,
             x_size_,
             y_size_,
             glow::RGB,
@@ -406,9 +420,59 @@ pub fn read_pixels_from_frame(
             pixels,
         );
 
-        let rgb_vec: Vec<(u8, u8, u8)> = unsafe { transmute(buf) };
-        rgb_vec
+        let new = u8_to_u8u8u8(&buf[..]);
+        new
     };
 
-    colors
+    // Todo:, flip colors
+    FramePixelRead {
+        width: x_size_ as usize,
+        height: y_size_ as usize,
+        data: colors,
+    }
+}
+
+#[repr(C)]
+#[derive(Clone)]
+pub struct Rgb {
+    pub val: (u8, u8, u8),
+}
+
+pub fn u8_to_u8u8u8(buf: &[u8]) -> Vec<Rgb> {
+    assert!(buf.len().rem(3) == 0);
+    let mut ret: Vec<Rgb> = Vec::with_capacity(buf.len() / 3);
+    for i in (0..buf.len()).step_by(3) {
+        let val = Rgb {
+            val: (buf[i], buf[i + 1], buf[i + 2]),
+        };
+        ret.push(val);
+    }
+
+    ret
+
+    // let p = buf.as_mut_ptr();
+    // let len = buf.len() * mem::size_of::<u8>();
+    // let cap = buf.capacity() * mem::size_of::<u8>();
+    // mem::forget(buf);
+    // let rgb_vec: Vec<(u8, u8, u8)> =
+    //     unsafe { Vec::from_raw_parts(p as *mut (u8, u8, u8), len, cap) };
+    // rgb_vec.clone()
+}
+
+pub fn u8u8u8_to_u8(buf: &[Rgb]) -> Vec<u8> {
+    let mut ret: Vec<u8> = Vec::new();
+    for i in 0..buf.len() {
+        ret.push(buf[i].val.0);
+        ret.push(buf[i].val.1);
+        ret.push(buf[i].val.2);
+    }
+
+    ret
+
+    // let p = buf.as_mut_ptr();
+    // let len = buf.len() * mem::size_of::<(u8, u8, u8)>();
+    // let cap = buf.capacity() * mem::size_of::<(u8, u8, u8)>();
+    // mem::forget(buf);
+    // let vec: Vec<u8> = unsafe { Vec::from_raw_parts(p as *mut u8, len, cap) };
+    // vec.clone()
 }

@@ -5,7 +5,8 @@ use ecolor::Color32;
 
 use crate::{
     color_picker::{format_color_as, ColorStringCopy},
-    error::{Result, ZError},
+    error::Result,
+    ui_common::Rgb,
 };
 
 pub fn write_string_to_clipboard(text: String) -> Result<()> {
@@ -35,7 +36,7 @@ fn write_color_ppm(ppm_string: &mut String, color: (u8, u8, u8)) {
 }
 
 pub fn write_pixels_to_clipboard(image_data: ImageData) -> Result<()> {
-    let mut clipboard = Clipboard::new()?;
+    let mut _clipboard = Clipboard::new()?;
     let copy = image_data.clone();
     // clipboard.set_image(image_data)?;
 
@@ -48,10 +49,7 @@ pub fn write_pixels_to_clipboard(image_data: ImageData) -> Result<()> {
     Ok(())
 }
 
-pub fn write_pixels_to_clipboard_test_ppm(
-    image_data: ImageData,
-    test_vec: Vec<(u8, u8, u8)>,
-) -> Result<()> {
+pub fn write_pixels_to_clipboard_test_ppm(image_data: ImageData, test_vec: Vec<Rgb>) -> Result<()> {
     // let mut clipboard = Clipboard::new()?;
     let copy = image_data.clone();
     // clipboard.set_image(image_data)?;
@@ -59,12 +57,13 @@ pub fn write_pixels_to_clipboard_test_ppm(
     let mut image_ppm: String = String::new();
     image_ppm += &format!("P3\n{} {}\n255\n", image_data.width, image_data.height).to_string();
     for col in test_vec {
-        write_color_ppm(&mut image_ppm, col);
+        write_color_ppm(&mut image_ppm, col.val);
     }
 
     let render_file_path = "render.ppm";
     println!("Saving to file {}...", render_file_path);
-    let mut render_file = File::create(render_file_path).unwrap();
+
+    let mut render_file = File::create(render_file_path)?;
     render_file.write_all(image_ppm.as_bytes()).unwrap();
 
     println!("render.ppm written");
@@ -74,5 +73,6 @@ pub fn write_pixels_to_clipboard_test_ppm(
         copy.height,
         copy.bytes.len()
     );
+
     Ok(())
 }

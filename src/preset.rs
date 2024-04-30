@@ -6,7 +6,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{color_picker::SplineMode, fs::write_string_to_file, ControlPointType};
+use crate::{color_picker::SplineMode, fs::write_string_to_file};
 
 const PRESETS_PATH: &str = "./presets";
 
