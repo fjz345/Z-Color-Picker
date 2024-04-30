@@ -400,28 +400,26 @@ pub fn read_pixels_from_frame(
 
     let x_ = (x_start * screen_scale_factor).round() as i32;
     let y_ = screen_size_px[1] as i32 - (y_start * screen_scale_factor).round() as i32;
-    // let x_size_ = (screen_scale_factor * x_size).trunc() as i32;
-    // let x_size_ = (x_size).trunc() as i32;
-    let y_size_ = (screen_scale_factor * y_size).trunc() as i32;
-    // let x_size_ = 380; // Works
-    let x_size_ = 378; // Not Working
+    let y_size_ = (screen_scale_factor * y_size).round() as i32;
+    // "Temporary fix", only x_size * (4*N) works.
+    let x_size_ = ((screen_scale_factor * x_size).round() as i32 + 3) & (-4); // Not Working
+    let size_ = (3 * x_size_ * y_size_) as usize;
 
     let buf_size = (3 * x_size_ * y_size_) as usize;
-    let colors = unsafe {
+    let colors: Vec<Rgb> = unsafe {
         let mut buf: Vec<u8> = vec![0u8; buf_size];
         let pixels = glow::PixelPackData::Slice(&mut buf[..]);
         frame.gl().unwrap().read_pixels(
             x_,
             y_,
-            x_size_,
-            y_size_,
+            x_size_ as i32,
+            y_size_ as i32,
             glow::RGB,
             glow::UNSIGNED_BYTE,
             pixels,
         );
 
-        let new = u8_to_u8u8u8(&buf[..]);
-        new
+        u8_to_u8u8u8(&buf[0..size_])
     };
 
     // Todo:, flip colors
