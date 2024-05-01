@@ -364,9 +364,18 @@ impl ZApp {
             for i in 0..self.z_color_picker.control_points.len() {
                 let point = &self.z_color_picker.control_points[i];
                 ui.label(format!("[{i}]"));
-                ui.label(format!("- x: {}", point.val[0]));
-                ui.label(format!("- y: {}", point.val[1]));
-                ui.label(format!("- h: {}", point.val[2]));
+                ui.label(format!(
+                    "- val: {:.4},{:.4},{:.4}",
+                    point.val[0], point.val[1], point.val[2]
+                ));
+                for (tangent_index, tangent) in point.tangents.iter().enumerate() {
+                    if let Some(tang) = tangent {
+                        ui.label(format!(
+                            "- tangent{tangent_index}: {:.4},{:.4},{:.4}",
+                            tang[0], tang[1], tang[2]
+                        ));
+                    }
+                }
                 ui.label(format!(""));
             }
         });

@@ -1,4 +1,5 @@
 use crate::{
+    curves::Bezier,
     error::{Result, ZError},
     hsv_key_value::HsvKeyValue,
 };
@@ -49,7 +50,14 @@ pub enum SplineMode {
     Polynomial,
 }
 
+pub fn create_tangent_for_control_point(control_point: &ControlPoint) -> ControlPointTangent {
+    let hsv = ControlPointType::new(0.0, 0.0, 0.0);
+    ControlPointTangent { val: hsv.val }
+}
+
+// Contains offsets from control point val
 type ControlPointTangent = ControlPointType;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ControlPoint {
     pub val: ControlPointType,
@@ -107,7 +115,7 @@ impl ZColorPicker {
             control_point_right_clicked: None,
         };
 
-        const LAZY_TANGENT_DELTA: f32 = 0.1;
+        const LAZY_TANGENT_DELTA: f32 = 0.01;
         const DEFAULT_STARTUP_CONTROL_POINTS: [ControlPoint; 4] = [
             ControlPoint {
                 val: HsvKeyValue {
@@ -115,10 +123,10 @@ impl ZColorPicker {
                 },
                 tangents: [
                     Some(HsvKeyValue {
-                        val: [0.25 - LAZY_TANGENT_DELTA, 0.33, 0.0],
+                        val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
                     }),
                     Some(HsvKeyValue {
-                        val: [0.25 + LAZY_TANGENT_DELTA, 0.33, 0.0],
+                        val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
                     }),
                 ],
                 t: 0.0,
@@ -129,10 +137,10 @@ impl ZColorPicker {
                 },
                 tangents: [
                     Some(HsvKeyValue {
-                        val: [0.44 - LAZY_TANGENT_DELTA, 0.38, 0.1],
+                        val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
                     }),
                     Some(HsvKeyValue {
-                        val: [0.44 + LAZY_TANGENT_DELTA, 0.38, 0.1],
+                        val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
                     }),
                 ],
                 t: 1.0,
@@ -143,10 +151,10 @@ impl ZColorPicker {
                 },
                 tangents: [
                     Some(HsvKeyValue {
-                        val: [0.8 - LAZY_TANGENT_DELTA, 0.6, 0.1],
+                        val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
                     }),
                     Some(HsvKeyValue {
-                        val: [0.8 + LAZY_TANGENT_DELTA, 0.6, 0.1],
+                        val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
                     }),
                 ],
                 t: 2.0,
@@ -157,10 +165,10 @@ impl ZColorPicker {
                 },
                 tangents: [
                     Some(HsvKeyValue {
-                        val: [0.9 - LAZY_TANGENT_DELTA, 0.8, 0.2],
+                        val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
                     }),
                     Some(HsvKeyValue {
-                        val: [0.9 + LAZY_TANGENT_DELTA, 0.8, 0.2],
+                        val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
                     }),
                 ],
                 t: 3.0,
@@ -347,6 +355,20 @@ impl ZColorPicker {
         }
     }
 
+    pub fn pre_draw_update(&mut self) {
+        if self.spline_mode == SplineMode::Bezier {
+            // Force init tangents
+            for control_point in &mut self.control_points {
+                let clone = control_point.clone();
+                for tang in &mut control_point.tangents {
+                    if tang.is_none() {
+                        *tang = Some(create_tangent_for_control_point(&clone));
+                    }
+                }
+            }
+        }
+    }
+
     pub fn post_update_control_points(&mut self) {
         if self.is_hue_middle_interpolated {
             let num_points = self.control_points.len();
@@ -389,6 +411,8 @@ impl ZColorPicker {
         mut color_copy_format: &mut ColorStringCopy,
     ) -> Response {
         let inner_response = ui.vertical(|ui| {
+            self.pre_draw_update();
+
             let response = main_color_picker(
                 ui,
                 &mut self.control_points[..],
@@ -820,14 +844,20 @@ pub fn main_color_picker(
         let _spline_gradient_repsonse =
             ui_ordered_spline_gradient(ui, control_points, spline_mode, &slider_2d_reponse);
 
-        let (dragged_points_response, selected_index, hovering_control_point) =
-            ui_ordered_control_points(
-                ui,
-                control_points,
-                &is_modifying_index,
-                is_hue_middle_interpolated,
-                &slider_2d_reponse,
-            );
+        let (
+            dragged_points_response,
+            selected_index,
+            hovering_control_point,
+            selected_tangent_index,
+            dragged_tangent_response,
+        ) = ui_ordered_control_points(
+            ui,
+            control_points,
+            &is_modifying_index,
+            is_hue_middle_interpolated,
+            &slider_2d_reponse,
+            spline_mode == SplineMode::Bezier,
+        );
 
         *control_point_right_clicked = match hovering_control_point {
             Some(a) => {
@@ -853,7 +883,6 @@ pub fn main_color_picker(
                         Some(index) => {
                             {
                                 let point_x_ref = &mut control_points[index].val[0];
-
                                 *point_x_ref += r.drag_delta().x / slider_2d_reponse.rect.size().x;
                             }
                             {
@@ -873,7 +902,6 @@ pub fn main_color_picker(
 
                             {
                                 let point_x_ref = &mut control_points[i].val[0];
-
                                 *point_x_ref += r.drag_delta().x / slider_2d_reponse.rect.size().x;
                             }
                             {
@@ -882,6 +910,52 @@ pub fn main_color_picker(
                             }
                         }
                     }
+                }
+            }
+            _ => {}
+        }
+
+        match dragged_tangent_response {
+            Some(r) => {
+                if r.dragged_by(PointerButton::Primary) {
+                    match *last_modifying_point_index {
+                        Some(index) => {
+                            if let Some(tang) =
+                                &mut control_points[index].tangents[selected_tangent_index.unwrap()]
+                            {
+                                {
+                                    let point_x_ref = &mut tang[0];
+                                    *point_x_ref +=
+                                        r.drag_delta().x / slider_2d_reponse.rect.size().x;
+                                }
+
+                                {
+                                    let point_y_ref = &mut tang[1];
+                                    *point_y_ref -=
+                                        r.drag_delta().y / slider_2d_reponse.rect.size().y;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    // if is_curve_locked {
+                    //     // Move all other points
+                    //     for i in 0..num_control_points {
+                    //         if i == is_modifying_index.unwrap_or(0) {
+                    //             continue;
+                    //         }
+
+                    //         {
+                    //             let point_x_ref = &mut control_points[i].val[0];
+                    //             *point_x_ref += r.drag_delta().x / slider_2d_reponse.rect.size().x;
+                    //         }
+                    //         {
+                    //             let point_y_ref = &mut control_points[i].val[1];
+                    //             *point_y_ref -= r.drag_delta().y / slider_2d_reponse.rect.size().y;
+                    //         }
+                    //     }
+                    // }
                 }
             }
             _ => {}

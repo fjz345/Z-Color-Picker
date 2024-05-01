@@ -19,20 +19,25 @@ pub fn ui_ordered_control_points(
     marked_control_point_index: &Option<usize>,
     _is_middle_interpolated: bool,
     parent_response: &egui::Response,
+    show_bezier_tangents: bool,
 ) -> (
     /*
-        dragged_point_response,
-        selected_index,
-        hovering_point_option,
+        control_point_dragged_point_response,
+        control_point_selected_index,
+        control_point_hovering_point_option,
+        tangent_selected_index
+        tangent_dragged_response
     */
     Option<egui::Response>,
     Option<usize>,
     Option<(egui::Response, usize)>,
+    Option<usize>,
+    Option<egui::Response>,
 ) {
     const SHOW_LINEAR_LINE: bool = false;
     let num_control_points = control_points.len();
     if num_control_points <= 0 {
-        return (None, None, None);
+        return (None, None, None, None, None);
     }
     let to_screen = emath::RectTransform::from_to(
         Rect::from_min_size(Pos2::ZERO, Vec2::new(1.0, 1.0)),
@@ -40,11 +45,13 @@ pub fn ui_ordered_control_points(
     );
 
     let mut dragged_point_response = None;
+    let mut dragged_tangent_response = None;
 
     let control_point_radius = 8.0;
 
     // Fill Circle
     let mut selected_index = *marked_control_point_index;
+    let mut tangent_selected_index = None;
     let mut hovering_control_point = None;
 
     let control_point_draw_size: Vec2 = Vec2::splat(2.0 * control_point_radius);
@@ -53,6 +60,14 @@ pub fn ui_ordered_control_points(
         .enumerate()
         .take(num_control_points)
         .map(|(i, key)| {
+            let is_control_point_first = i == 0;
+            let is_control_point_last = i == control_points.len() - 1;
+
+            let is_selected_index: bool = if let Some(index) = selected_index {
+                index == i
+            } else {
+                false
+            };
             let control_point = &key;
             let mut point_xy: Pos2 = Pos2::new(
                 control_point.val[0].clamp(0.0, 1.0),
@@ -111,8 +126,8 @@ pub fn ui_ordered_control_points(
                 }
             };
 
+            let mut stroke: Stroke = ui.style().noninteractive().fg_stroke;
             if is_inactive {
-                let mut stroke: Stroke = ui.style().noninteractive().fg_stroke;
                 stroke.color = Color32::LIGHT_GRAY;
                 stroke.width *= 6.0;
                 ui.painter().add(Shape::circle_stroke(
@@ -120,6 +135,78 @@ pub fn ui_ordered_control_points(
                     1.8 * control_point_radius,
                     stroke,
                 ));
+            }
+
+            if show_bezier_tangents {
+                for (tangent_index, tangent) in key.tangents.iter().enumerate() {
+                    if tangent_index == 0 && is_control_point_first {
+                        // Skip
+                        continue;
+                    }
+                    if tangent_index == 1 && is_control_point_last {
+                        // Skip
+                        continue;
+                    }
+                    if let Some(tang) = tangent {
+                        let tang_xy = [key.val[0] + tang.val[0], key.val[1] + tang.val[1]];
+                        let mut tangent_point_xy: Pos2 =
+                            Pos2::new(tang_xy[0].clamp(0.0, 1.0), 1.0 - tang_xy[1].clamp(0.0, 1.0));
+                        let mut tangent_in_screen: Pos2 = to_screen.transform_pos(tangent_point_xy);
+                        let tangent_draw_scale = 0.7;
+                        let tangent_draw_size = tangent_draw_scale * control_point_draw_size;
+
+                        if is_selected_index {
+                            let tangent_ui_rect =
+                                Rect::from_center_size(tangent_in_screen, control_point_draw_size);
+                            let tangent_response = ui.interact(
+                                tangent_ui_rect,
+                                parent_response.id.with(tangent_index + 1000),
+                                Sense::drag(),
+                            );
+
+                            if tangent_response.dragged_by(egui::PointerButton::Primary) {
+                                println!("Dragged tangent on: {i}:{tangent_index}");
+
+                                tangent_in_screen +=
+                                    tangent_response.drag_delta() / parent_response.rect.size();
+                                tangent_selected_index = Some(tangent_index);
+                                dragged_tangent_response = Some(tangent_response.clone());
+                                selected_index = Some(i);
+                            }
+
+                            let active_tangent_shape = Shape::circle_stroke(
+                                tangent_in_screen,
+                                tangent_draw_scale * control_point_radius,
+                                stroke,
+                            );
+
+                            let active_aux_stroke =
+                                Stroke::new(1.0, Color32::WHITE.linear_multiply(0.25));
+                            // Draw lines to the Cp
+                            ui.painter().add(PathShape::line(
+                                vec![point_in_screen, tangent_in_screen],
+                                active_aux_stroke,
+                            ));
+
+                            ui.painter().add(active_tangent_shape);
+                        } else {
+                            let inactive_aux_stroke =
+                                Stroke::new(1.0, Color32::WHITE.linear_multiply(0.002));
+                            // Draw lines to the Cp
+                            ui.painter().add(PathShape::line(
+                                vec![point_in_screen, tangent_in_screen],
+                                inactive_aux_stroke,
+                            ));
+
+                            let inactive_tangent_shape = Shape::circle_stroke(
+                                tangent_in_screen,
+                                (0.2 / 0.7) * tangent_draw_scale * control_point_radius,
+                                stroke,
+                            );
+                            ui.painter().add(inactive_tangent_shape);
+                        }
+                    };
+                }
             }
 
             Shape::circle_filled(point_in_screen, 1.8 * control_point_radius, color_to_show)
@@ -156,16 +243,16 @@ pub fn ui_ordered_control_points(
         })
         .collect();
 
-    let points_in_screen: Vec<Pos2> = control_points
-        .into_iter()
-        .take(num_control_points)
-        .map(|key| {
-            let point = Pos2::new(key.val[0], 1.0 - key.val[1]);
-            to_screen * point
-        })
-        .collect();
-
     if SHOW_LINEAR_LINE {
+        let points_in_screen: Vec<Pos2> = control_points
+            .into_iter()
+            .take(num_control_points)
+            .map(|key| {
+                let point = Pos2::new(key.val[0], 1.0 - key.val[1]);
+                to_screen * point
+            })
+            .collect();
+
         let aux_stroke = Stroke::new(1.0, Color32::RED.linear_multiply(0.25));
         ui.painter()
             .add(PathShape::line(points_in_screen, aux_stroke));
@@ -191,32 +278,12 @@ pub fn ui_ordered_control_points(
         ui.painter().add(shape);
     }
 
-    // let selected_shape = if selected_index.is_some() {
-    //     let key = control_points.get(selected_index.unwrap()).unwrap();
-    //     let mut point = Pos2::new(key[0], 1.0 - key[1]);
-
-    //     let point_in_screen = to_screen.transform_pos(point);
-    //     let stroke: Stroke = ui.style().interact(parent_response).fg_stroke;
-
-    //     Some(Shape::circle_stroke(
-    //         point_in_screen,
-    //         1.6 * control_point_radius,
-    //         stroke,
-    //     ))
-    // } else {
-    //     None
-    // };
-    // match selected_shape {
-    //     Some(s) => {
-    //         ui.painter().add(s);
-    //     }
-    //     _ => {}
-    // }
-
     (
         dragged_point_response,
         selected_index,
         hovering_control_point,
+        tangent_selected_index,
+        dragged_tangent_response,
     )
 }
 
@@ -444,8 +511,11 @@ pub fn control_points_to_spline(
                     Key::new(
                         index as f32,
                         e.val,
-                        Interpolation::Bezier(
-                            control_points[(index + 1).min(control_points.len() - 1)].val,
+                        Interpolation::StrokeBezier(
+                            control_points[index].val
+                                + control_points[index].tangents[0].unwrap_or_default(),
+                            control_points[index].val
+                                + control_points[index].tangents[1].unwrap_or_default(),
                         ),
                     )
                 })
