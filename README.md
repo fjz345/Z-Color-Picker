@@ -46,7 +46,7 @@ To create a new preset, click the preset combo box and select NEW
 
 # Currently being worked on
 
-- Bezier tangent control points
+- ???
 
 #
 
@@ -66,3 +66,4 @@ To create a new preset, click the preset combo box and select NEW
 - Option to auto load last preset or not.
 - Polynomial spline mode
 - Random gradient button with "undo" to last randomized
+- Add Interpolation::Bezier with just one tanget point
