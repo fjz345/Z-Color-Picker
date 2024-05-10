@@ -67,3 +67,5 @@ To create a new preset, click the preset combo box and select NEW
 - Polynomial spline mode
 - Random gradient button with "undo" to last randomized
 - Add Interpolation::Bezier with just one tanget point
+- 3D visualization
+- Screen-mouse gradient picker
