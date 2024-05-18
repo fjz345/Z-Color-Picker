@@ -11,7 +11,7 @@ use eframe::{
 
 use crate::{
     clipboard::{write_color_to_clipboard, write_pixels_to_clipboard, write_pixels_to_test_ppm},
-    color_picker::{ColorStringCopy, ControlPoint, ZColorPicker},
+    color_picker::{ColorStringCopy, ZColorPicker},
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8},
     math::color_lerp_ex,
     previewer::{PreviewerUiResponses, ZPreviewer},
@@ -207,10 +207,15 @@ impl ZApp {
                             .control_points
                             .first()
                             .unwrap()
-                            .val
+                            .val()
                             .hsv();
-                        let trg_color =
-                            self.z_color_picker.control_points.last().unwrap().val.hsv();
+                        let trg_color = self
+                            .z_color_picker
+                            .control_points
+                            .last()
+                            .unwrap()
+                            .val()
+                            .hsv();
                         let res_color = color_lerp_ex(
                             src_color.into(),
                             trg_color.into(),
@@ -271,17 +276,16 @@ impl ZApp {
                         Some((cp, dist)) => {
                             let should_spawn_control_point = dist > MIN_DIST;
                             if should_spawn_control_point {
-                                let color_hue: f32 = cp.val.h();
+                                let color_hue: f32 = cp.val().h();
 
                                 let color: [f32; 3] = [color_xy[0], color_xy[1], color_hue];
                                 self.z_color_picker
-                                    .spawn_control_point(ControlPoint::new(color.into(), cp.t));
+                                    .spawn_control_point(color.into(), *cp.t());
                             }
                         }
                         _ => {
                             let color: [f32; 3] = [color_xy[0], color_xy[1], 0.0];
-                            self.z_color_picker
-                                .spawn_control_point(ControlPoint::new(color.into(), 0.0));
+                            self.z_color_picker.spawn_control_point(color.into(), 0.0);
                         }
                     };
                     self.z_color_picker.post_update_control_points();
@@ -366,9 +370,12 @@ impl ZApp {
                 ui.label(format!("[{i}]"));
                 ui.label(format!(
                     "- val: {:.4},{:.4},{:.4}",
-                    point.val[0], point.val[1], point.val[2]
+                    point.val()[0],
+                    point.val()[1],
+                    point.val()[2]
                 ));
-                for (tangent_index, tangent) in point.tangents.iter().enumerate() {
+                ui.label(format!("- t: {:.4}", point.t(),));
+                for (tangent_index, tangent) in point.tangents().iter().enumerate() {
                     if let Some(tang) = tangent {
                         ui.label(format!(
                             "- tangent{tangent_index}: {:.4},{:.4},{:.4}",

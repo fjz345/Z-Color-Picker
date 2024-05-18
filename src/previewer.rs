@@ -8,12 +8,12 @@ use splines::Spline;
 #[allow(unused_imports)]
 use crate::error::Result;
 use crate::{
-    color_picker::{ColorStringCopy, ControlPoint, SplineMode},
+    color_picker::{ColorStringCopy, SplineMode},
+    control_point::{ControlPoint, ControlPointType},
     curves::{control_points_to_spline, find_spline_max_t, flatten_control_points},
     gradient::color_function_gradient,
     hsv_key_value::HsvKeyValue,
     ui_common::{color_button, response_copy_color_on_click},
-    ControlPointType,
 };
 
 fn ui_previewer_colors(
@@ -99,7 +99,7 @@ fn ui_previewer_control_points_with_drag(
 
     let mut points: Vec<Vec2> = Vec::with_capacity(num_control_points);
     for cp in control_points {
-        points.push(Vec2::new(cp.val[0], cp.val[1]));
+        points.push(Vec2::new(cp.val()[0], cp.val()[1]));
     }
 
     for i in 0..num_control_points {
@@ -107,7 +107,7 @@ fn ui_previewer_control_points_with_drag(
             break;
         }
         let color_data = &points[i];
-        let color_data_hue = control_points[i].val.h();
+        let color_data_hue = control_points[i].val().h();
         let color_at_point: HsvaGamma = HsvaGamma {
             h: color_data_hue,
             s: color_data.x,
@@ -217,7 +217,7 @@ fn ui_previewer_curve(
             }
             .into();
         } else if flatten_control_points.len() <= 1 {
-            return flatten_control_points[0].val.color();
+            return flatten_control_points[0].val().color();
         }
 
         let sample_x = match spline_mode {

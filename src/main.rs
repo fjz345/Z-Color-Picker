@@ -12,6 +12,7 @@ use crate::app::ZApp;
 mod app;
 mod clipboard;
 mod color_picker;
+mod control_point;
 mod curves;
 mod error;
 mod fs;
@@ -44,5 +45,3 @@ fn main() {
         }
     }
 }
-
-type ControlPointType = HsvKeyValue;

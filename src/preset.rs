@@ -1,7 +1,7 @@
 use std::fs::{self, remove_file, DirEntry};
 
 use crate::{
-    color_picker::ControlPoint,
+    control_point::ControlPoint,
     error::{Result, ZError},
 };
 use serde::{Deserialize, Serialize};

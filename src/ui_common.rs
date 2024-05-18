@@ -1,5 +1,5 @@
 use crate::color_picker::format_color_as;
-use crate::color_picker::ControlPoint;
+use crate::control_point::ControlPoint;
 use crate::egui::PointerButton;
 use crate::egui::TextStyle;
 #[allow(unused_imports)]
@@ -170,8 +170,8 @@ pub fn ui_hue_control_points_overlay(
 
     let mut selected_key_frame = None;
     for i in 0..control_points.len() {
-        let val = control_points[i].val.h();
-        let picked_color = control_points[i].val.color();
+        let val = control_points[i].val().h();
+        let picked_color = control_points[i].val().color();
         // Show where the slider is at:
         let x = lerp(
             container_response.rect.left()..=container_response.rect.right(),
@@ -231,7 +231,8 @@ pub fn ui_hue_control_points_overlay(
 
         if response.dragged_by(PointerButton::Primary) {
             selected_key_frame = Some(i);
-            control_points[i].val[2] += response.drag_delta().x / container_response.rect.width();
+            control_points[i].val_mut()[2] +=
+                response.drag_delta().x / container_response.rect.width();
         }
 
         ui.painter().add(Shape::convex_polygon(

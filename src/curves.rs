@@ -1,5 +1,6 @@
 //https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
 
+use crate::control_point::{ControlPoint, ControlPointType};
 #[allow(unused_imports)]
 use crate::error::Result;
 use ecolor::{Color32, HsvaGamma};
@@ -9,9 +10,8 @@ use eframe::epaint::{Pos2, Rect, Shape, Stroke, Vec2};
 use egui::epaint::PathShape;
 use splines::{Interpolation, Key, Spline};
 
-use crate::color_picker::{ControlPoint, SplineMode};
+use crate::color_picker::SplineMode;
 use crate::math::{add_array_array, mul_array};
-use crate::ControlPointType;
 
 pub fn ui_ordered_control_points(
     ui: &mut Ui,
@@ -70,8 +70,8 @@ pub fn ui_ordered_control_points(
             };
             let control_point = &key;
             let mut point_xy: Pos2 = Pos2::new(
-                control_point.val[0].clamp(0.0, 1.0),
-                1.0 - control_point.val[1].clamp(0.0, 1.0),
+                control_point.val()[0].clamp(0.0, 1.0),
+                1.0 - control_point.val()[1].clamp(0.0, 1.0),
             );
 
             let point_in_screen: Pos2 = to_screen.transform_pos(point_xy);
@@ -110,9 +110,9 @@ pub fn ui_ordered_control_points(
             }
 
             let point_as_color = HsvaGamma {
-                h: control_point.val[2],
-                s: control_point.val[0],
-                v: control_point.val[1],
+                h: control_point.val()[2],
+                s: control_point.val()[0],
+                v: control_point.val()[1],
                 a: 1.0,
             };
             let color_to_show = if !is_inactive_click_or_drag {
@@ -138,7 +138,7 @@ pub fn ui_ordered_control_points(
             }
 
             if show_bezier_tangents {
-                for (tangent_index, tangent) in key.tangents.iter().enumerate() {
+                for (tangent_index, tangent) in key.tangents().iter().enumerate() {
                     if tangent_index == 0 && is_control_point_first {
                         // Skip
                         continue;
@@ -148,7 +148,7 @@ pub fn ui_ordered_control_points(
                         continue;
                     }
                     if let Some(tang) = tangent {
-                        let tang_xy = [key.val[0] + tang.val[0], key.val[1] + tang.val[1]];
+                        let tang_xy = [key.val()[0] + tang.val[0], key.val()[1] + tang.val[1]];
                         let mut tangent_point_xy: Pos2 =
                             Pos2::new(tang_xy[0].clamp(0.0, 1.0), 1.0 - tang_xy[1].clamp(0.0, 1.0));
                         let mut tangent_in_screen: Pos2 = to_screen.transform_pos(tangent_point_xy);
@@ -219,7 +219,7 @@ pub fn ui_ordered_control_points(
         .enumerate()
         .take(num_control_points)
         .map(|(i, key)| {
-            let mut point = Pos2::new(key.val[0], 1.0 - key.val[1]);
+            let mut point = Pos2::new(key.val()[0], 1.0 - key.val()[1]);
             point = to_screen.from().clamp(point);
 
             let point_in_screen = to_screen.transform_pos(point);
@@ -248,7 +248,7 @@ pub fn ui_ordered_control_points(
             .into_iter()
             .take(num_control_points)
             .map(|key| {
-                let point = Pos2::new(key.val[0], 1.0 - key.val[1]);
+                let point = Pos2::new(key.val()[0], 1.0 - key.val()[1]);
                 to_screen * point
             })
             .collect();
@@ -262,7 +262,7 @@ pub fn ui_ordered_control_points(
     ui.painter().extend(control_point_shapes);
     if let Some(marked_index) = marked_control_point_index {
         let key = &control_points[*marked_index];
-        let mut point = Pos2::new(key.val[0], 1.0 - key.val[1]);
+        let mut point = Pos2::new(key.val()[0], 1.0 - key.val()[1]);
         point = to_screen.from().clamp(point);
         let stroke: Stroke = ui.style().interact(parent_response).fg_stroke;
 
@@ -292,7 +292,7 @@ pub fn flatten_control_points(control_points: &[ControlPoint]) -> Vec<ControlPoi
 
     let inc_all_prev_hue_values = |vec: &mut Vec<ControlPoint>, val: f32| {
         for a in &mut vec.iter_mut() {
-            a.val[2] += val;
+            a.val_mut()[2] += val;
         }
     };
 
@@ -303,22 +303,16 @@ pub fn flatten_control_points(control_points: &[ControlPoint]) -> Vec<ControlPoi
         }
 
         let prev = &mut control_points_flattened[i - 1];
-        let hue_diff = cp.val.h() - prev.val.h();
+        let hue_diff = cp.val().h() - prev.val().h();
         if hue_diff.abs() <= 0.5 {
             control_points_flattened.push(cp.clone());
         } else {
             if hue_diff > 0.0 {
                 inc_all_prev_hue_values(&mut control_points_flattened, 1.0);
-                control_points_flattened.push(ControlPoint::new(
-                    ControlPointType::new(cp.val.s(), cp.val.v(), cp.val.h()),
-                    cp.t,
-                ));
+                control_points_flattened.push(cp.clone());
             } else {
                 inc_all_prev_hue_values(&mut control_points_flattened, -1.0);
-                control_points_flattened.push(ControlPoint::new(
-                    ControlPointType::new(cp.val.s(), cp.val.v(), cp.val.h()),
-                    cp.t,
-                ));
+                control_points_flattened.push(cp.clone());
             }
         }
     }
@@ -378,9 +372,9 @@ pub fn sub_divide_control_points(
 
     for i in 1..control_points.len() {
         sub_divided.push(control_points[i - 1].clone());
-        let hue_to_use = control_points[i - 1].val[2];
-        let first = control_points[i - 1].val.pos2();
-        let last = control_points[i].val.pos2();
+        let hue_to_use = control_points[i - 1].val()[2];
+        let first = control_points[i - 1].val().pos2();
+        let last = control_points[i].val().pos2();
         let dir = (last - first).normalized();
         let mut sub_div_start = first;
         let mut distance_to_end = (last - first).dot(last - first).sqrt();
@@ -388,18 +382,20 @@ pub fn sub_divide_control_points(
             let new: Pos2 = sub_div_start + distance_per_point * dir;
             distance_to_end -= distance_per_point;
 
-            let new_cp = ControlPoint::new(
-                ControlPointType::new(new.x, new.y, hue_to_use),
-                lerp(control_points[i - 1].t..=control_points[i].t, 0.5),
-            );
+            let mut new_cp = ControlPoint::default();
+            *new_cp.val_mut() = ControlPointType::new(new.x, new.y, hue_to_use);
+            *new_cp.t_mut() = lerp(*control_points[i - 1].t()..=*control_points[i].t(), 0.5);
+
             sub_divided.push(new_cp);
             sub_div_start = new;
         }
         let last_new = sub_div_start + distance_to_end.max(0.0) * dir;
-        let last_cp = ControlPoint::new(
-            ControlPointType::new(last_new.x, last_new.y, hue_to_use),
-            control_points[i].t,
-        );
+
+        let mut new_cp = ControlPoint::default();
+        *new_cp.val_mut() = ControlPointType::new(last_new.x, last_new.y, hue_to_use);
+        *new_cp.t_mut() = *control_points[i].t();
+
+        let last_cp = new_cp;
         sub_divided.push(last_cp);
     }
     if control_points.last().is_some() {
@@ -500,7 +496,7 @@ pub fn control_points_to_spline(
             control_points
                 .iter()
                 .enumerate()
-                .map(|(index, e)| Key::new(index as f32, e.val, Interpolation::Linear))
+                .map(|(index, e)| Key::new(index as f32, *e.val(), Interpolation::Linear))
                 .collect(),
         ),
         SplineMode::Bezier => Spline::from_vec(
@@ -510,12 +506,12 @@ pub fn control_points_to_spline(
                 .map(|(index, e)| {
                     Key::new(
                         index as f32,
-                        e.val,
+                        *e.val(),
                         Interpolation::StrokeBezier(
-                            control_points[index].val
-                                + control_points[index].tangents[0].unwrap_or_default(),
-                            control_points[index].val
-                                + control_points[index].tangents[1].unwrap_or_default(),
+                            *control_points[index].val()
+                                + control_points[index].tangents()[0].unwrap_or_default(),
+                            *control_points[index].val()
+                                + control_points[index].tangents()[1].unwrap_or_default(),
                         ),
                     )
                 })
@@ -535,7 +531,7 @@ pub fn control_points_to_spline(
                 catmul_rom_spline_vec
                     .iter()
                     .enumerate()
-                    .map(|(index, e)| Key::new(index as f32, e.val, Interpolation::CatmullRom))
+                    .map(|(index, e)| Key::new(index as f32, *e.val(), Interpolation::CatmullRom))
                     .collect(),
             );
 
@@ -548,7 +544,7 @@ pub fn control_points_to_spline(
                 control_points
                     .iter()
                     .enumerate()
-                    .map(|(index, e)| Key::new(index as f32, e.val, Interpolation::Linear))
+                    .map(|(index, e)| Key::new(index as f32, *e.val(), Interpolation::Linear))
                     .collect(),
             )
         }
