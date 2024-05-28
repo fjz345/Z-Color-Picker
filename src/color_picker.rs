@@ -204,6 +204,14 @@ impl ZColorPicker {
     }
 
     pub fn create_preset(&mut self, name: &String) -> Result<()> {
+        for i in self.options.presets.iter() {
+            if &i.name == name {
+                return Err(ZError::Message(
+                    "Preset already exists with that name".to_string(),
+                ));
+            }
+        }
+
         let preset = Preset::new(name, self.preset_data_from_current_state());
         let index = self.options.presets.len();
         self.options.presets.push(preset);
@@ -404,7 +412,7 @@ impl ZColorPicker {
                         let r = self.create_preset(&should_create);
                         match r {
                             Ok(_) => println!("Sucessfully Created"),
-                            Err(e) => println!("{}", e),
+                            Err(e) => println!("Could not create preset: {}", e),
                         }
                     }
                     if let Some(_) = draw_result.preset_result.should_apply {
