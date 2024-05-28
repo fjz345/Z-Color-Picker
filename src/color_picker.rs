@@ -11,7 +11,7 @@ use eframe::{
     egui::{
         self,
         color_picker::{show_color, Alpha},
-        Layout, PointerButton, Pos2, Response, Ui,
+        remap_clamp, Layout, PointerButton, Pos2, Response, Ui,
     },
     epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
@@ -390,8 +390,6 @@ impl ZColorPicker {
         let inner_response = ui.vertical(|ui| {
             self.pre_draw_update();
 
-            dbg!(&self.dragging_bezier_index);
-
             let response = main_color_picker(
                 ui,
                 &mut self.control_points[..],
@@ -668,98 +666,90 @@ pub fn main_color_picker(
             None => dummy_color,
         };
 
-        let mut delta_hue = None;
-        {
-            let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
-            let response: Response =
-                show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
-            response_copy_color_on_click(
-                ui,
-                &response,
-                color_to_show,
-                color_copy_format,
-                PointerButton::Middle,
-            );
+        let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
+        let response: Response =
+            show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
+        response_copy_color_on_click(
+            ui,
+            &response,
+            color_to_show,
+            color_copy_format,
+            PointerButton::Middle,
+        );
 
-            let alpha = Alpha::Opaque;
-            color_text_ui(ui, color_to_show, alpha, color_copy_format);
+        let alpha = Alpha::Opaque;
+        color_text_ui(ui, color_to_show, alpha, color_copy_format);
 
-            if alpha == Alpha::BlendOrAdditive {
-                // We signal additive blending by storing a negative alpha (a bit ironic).
-                let a = &mut color_to_show.a;
-                let mut additive = *a < 0.0;
-                ui.horizontal(|ui| {
-                    ui.label("Blending:");
-                    ui.radio_value(&mut additive, false, "Normal");
-                    ui.radio_value(&mut additive, true, "Additive");
+        if alpha == Alpha::BlendOrAdditive {
+            // We signal additive blending by storing a negative alpha (a bit ironic).
+            let a = &mut color_to_show.a;
+            let mut additive = *a < 0.0;
+            ui.horizontal(|ui| {
+                ui.label("Blending:");
+                ui.radio_value(&mut additive, false, "Normal");
+                ui.radio_value(&mut additive, true, "Additive");
 
-                    if additive {
-                        *a = -a.abs();
-                    }
-
-                    if !additive {
-                        *a = a.abs();
-                    }
-                });
-            }
-
-            let additive = color_to_show.a < 0.0;
-
-            let opaque = HsvaGamma {
-                a: 1.0,
-                ..color_to_show
-            };
-
-            if alpha == Alpha::Opaque {
-                color_to_show.a = 1.0;
-            } else {
-                let a = &mut color_to_show.a;
-
-                if alpha == Alpha::OnlyBlend {
-                    if *a < 0.0 {
-                        *a = 0.5; // was additive, but isn't allowed to be
-                    }
-                    color_slider_1d(ui, Some(a), |a| HsvaGamma { a, ..opaque }.into())
-                        .0
-                        .on_hover_text("Alpha");
-                } else if !additive {
-                    color_slider_1d(ui, Some(a), |a| HsvaGamma { a, ..opaque }.into())
-                        .0
-                        .on_hover_text("Alpha");
+                if additive {
+                    *a = -a.abs();
                 }
-            }
 
-            let prev_hue = color_to_show.h;
-            let hue_optional_value: Option<&mut f32> = match modifying_control_point {
-                Some(cp) => Some(&mut cp.val_mut()[2]),
-                None => None,
-            };
-            let (mut hue_response, new_hue_val) = color_slider_1d(ui, hue_optional_value, |h| {
-                HsvaGamma {
-                    h,
-                    s: 1.0,
-                    v: 1.0,
-                    a: 1.0,
+                if !additive {
+                    *a = a.abs();
                 }
-                .into()
             });
-            hue_response = hue_response.on_hover_text("Hue");
-            if hue_response.changed() {
-                if new_hue_val.is_some() {
-                    delta_hue = Some(new_hue_val.unwrap() - prev_hue);
+        }
+
+        let additive = color_to_show.a < 0.0;
+
+        let opaque = HsvaGamma {
+            a: 1.0,
+            ..color_to_show
+        };
+
+        if alpha == Alpha::Opaque {
+            color_to_show.a = 1.0;
+        } else {
+            let a = &mut color_to_show.a;
+
+            if alpha == Alpha::OnlyBlend {
+                if *a < 0.0 {
+                    *a = 0.5; // was additive, but isn't allowed to be
                 }
-            };
-
-            let (_control_points_hue_response, hue_selected_index) = ui_hue_control_points_overlay(
-                ui,
-                &hue_response,
-                control_points,
-                is_modifying_index,
-            );
-
-            if let Some(new_selected_index) = hue_selected_index {
-                is_modifying_index = Some(new_selected_index);
+                color_slider_1d(ui, Some(a), |a| HsvaGamma { a, ..opaque }.into())
+                    .on_hover_text("Alpha");
+            } else if !additive {
+                color_slider_1d(ui, Some(a), |a| HsvaGamma { a, ..opaque }.into())
+                    .on_hover_text("Alpha");
             }
+        }
+
+        let prev_hue = color_to_show.h;
+        let mut delta_hue = None;
+        let hue_response = color_slider_1d(ui, Some(&mut color_to_show.h), |h| {
+            HsvaGamma {
+                h,
+                s: 1.0,
+                v: 1.0,
+                a: 1.0,
+            }
+            .into()
+        })
+        .on_hover_text("Hue");
+        if hue_response.clicked_by(PointerButton::Primary) {
+            match modifying_control_point {
+                Some(cp) => {
+                    cp.val_mut()[2] = color_to_show.h;
+                }
+                None => {}
+            }
+            delta_hue = Some(color_to_show.h - prev_hue);
+        }
+
+        let (_control_points_hue_response, hue_selected_index) =
+            ui_hue_control_points_overlay(ui, &hue_response, control_points, is_modifying_index);
+
+        if let Some(new_selected_index) = hue_selected_index {
+            is_modifying_index = Some(new_selected_index);
         }
 
         if let Some(h) = delta_hue {
@@ -797,7 +787,7 @@ pub fn main_color_picker(
             is_modifying_index = Some(modifying_index.clamp(0, control_points.len() - 1));
             modifying_index = is_modifying_index.unwrap();
 
-            let mut control_point_val = control_points[modifying_index].val_mut();
+            let control_point_val = control_points[modifying_index].val_mut();
             control_point_val.val[2] = color_to_show.h;
         }
 

@@ -1,5 +1,6 @@
 use crate::color_picker::format_color_as;
 use crate::control_point::ControlPoint;
+use crate::control_point::ControlPointStorage;
 use crate::egui::PointerButton;
 use crate::egui::TextStyle;
 #[allow(unused_imports)]
@@ -8,7 +9,9 @@ use crate::image_processing::flip_v;
 use crate::image_processing::u8_to_u8u8u8;
 use crate::image_processing::Rgb;
 use arboard::ImageData;
+use eframe::egui::InnerResponse;
 use eframe::egui::Pos2;
+use eframe::egui::Window;
 use eframe::glow;
 use eframe::glow::HasContext;
 use eframe::{
@@ -94,65 +97,47 @@ pub fn show_color_at(painter: &Painter, color: Color32, rect: Rect) {
 
 pub fn color_slider_1d(
     ui: &mut Ui,
-    mut value: Option<&mut f32>,
+    val: Option<&mut f32>,
     color_at: impl Fn(f32) -> Color32,
-) -> (Response, Option<f32>) {
+) -> Response {
     #![allow(clippy::identity_op)]
 
     let desired_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
     let (rect, mut response) = ui.allocate_at_least(desired_size, Sense::click_and_drag());
     let visuals = ui.style().interact(&response);
 
-    if value.is_some() {
-        if let Some(mpos) = response.interact_pointer_pos() {
-            let val = value.as_mut().unwrap();
-            **val = remap_clamp(mpos.x, rect.left()..=rect.right(), 0.0..=1.0);
-            response.mark_changed();
+    if let Some(mpos) = response.interact_pointer_pos() {
+        if let Some(val_mut) = val {
+            *val_mut = remap_clamp(
+                mpos.x,
+                response.rect.left()..=response.rect.right(),
+                0.0..=1.0,
+            );
         }
+
+        response.mark_changed();
     }
 
     if ui.is_rect_visible(rect) {
-        // background_checkers(ui.painter(), rect); // for alpha:
-
-        {
-            // fill color:
-            let mut mesh = Mesh::default();
-            for i in 0..=N {
-                let t = i as f32 / (N as f32);
-                let color = color_at(t);
-                let x = lerp(rect.left()..=rect.right(), t);
-                mesh.colored_vertex(pos2(x, rect.top()), color);
-                mesh.colored_vertex(pos2(x, rect.bottom()), color);
-                if i < N {
-                    mesh.add_triangle(2 * i + 0, 2 * i + 1, 2 * i + 2);
-                    mesh.add_triangle(2 * i + 1, 2 * i + 2, 2 * i + 3);
-                }
+        // fill color:
+        let mut mesh = Mesh::default();
+        for i in 0..=N {
+            let t = i as f32 / (N as f32);
+            let color = color_at(t);
+            let x = lerp(rect.left()..=rect.right(), t);
+            mesh.colored_vertex(pos2(x, rect.top()), color);
+            mesh.colored_vertex(pos2(x, rect.bottom()), color);
+            if i < N {
+                mesh.add_triangle(2 * i + 0, 2 * i + 1, 2 * i + 2);
+                mesh.add_triangle(2 * i + 1, 2 * i + 2, 2 * i + 3);
             }
-            ui.painter().add(Shape::mesh(mesh));
         }
+        ui.painter().add(Shape::mesh(mesh));
 
         ui.painter().rect_stroke(rect, 0.0, visuals.bg_stroke); // outline
-
-        // const Y_OFFSET: f32 = -3.0;
-        // if value.as_ref().is_some() {
-        //     let val = **value.as_ref().unwrap();
-        //     // Show where the slider is at:
-        //     let x = lerp(rect.left()..=rect.right(), val);
-        //     let r = rect.height() / 4.0;
-        //     let picked_color = color_at(val);
-        //     ui.painter().add(Shape::convex_polygon(
-        //         vec![
-        //             pos2(x, Y_OFFSET + rect.center().y), // tip
-        //             pos2(x + r, Y_OFFSET + rect.top()),  // right bottom
-        //             pos2(x - r, Y_OFFSET + rect.top()),  // left bottom
-        //         ],
-        //         picked_color,
-        //         Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
-        //     ));
-        // }
     }
 
-    (response, value.cloned())
+    response
 }
 
 pub fn ui_hue_control_points_overlay(
@@ -435,4 +420,40 @@ pub fn read_pixels_from_frame(
     };
     let flipped = flip_v(result, 3);
     flipped
+}
+
+pub trait DebugWindow {
+    fn is_open(&self) -> bool;
+    fn close(&mut self);
+    fn open(&mut self);
+
+    fn title(&self) -> &str {
+        "Debug Window"
+    }
+
+    fn draw_content(&mut self, _ui: &mut Ui) {}
+
+    fn draw_ui(&mut self, ui: &mut Ui) -> Option<InnerResponse<Option<()>>> {
+        let prev_visuals = ui.visuals_mut().clone();
+
+        let mut open = self.is_open();
+        let response = Window::new(self.title())
+            .resizable(true)
+            .title_bar(true)
+            .open(&mut open)
+            .auto_sized()
+            .show(ui.ctx(), |ui| {
+                self.draw_content(ui);
+            });
+
+        if open {
+            self.open();
+        } else {
+            self.close();
+        }
+
+        ui.ctx().set_visuals(prev_visuals);
+
+        response
+    }
 }

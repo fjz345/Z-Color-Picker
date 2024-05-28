@@ -14,6 +14,7 @@ mod clipboard;
 mod color_picker;
 mod control_point;
 mod curves;
+mod debug_windows;
 mod error;
 mod fs;
 mod gradient;

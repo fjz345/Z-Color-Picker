@@ -12,10 +12,12 @@ use eframe::{
 use crate::{
     clipboard::{write_color_to_clipboard, write_pixels_to_clipboard, write_pixels_to_test_ppm},
     color_picker::{ColorStringCopy, ZColorPicker},
+    control_point::ControlPoint,
+    debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8},
     math::color_lerp_ex,
     previewer::{PreviewerUiResponses, ZPreviewer},
-    ui_common::{read_pixels_from_frame, FramePixelRead},
+    ui_common::{read_pixels_from_frame, DebugWindow, FramePixelRead},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -123,11 +125,8 @@ pub struct ZApp {
     z_color_picker: ZColorPicker,
     previewer: ZPreviewer,
     color_copy_format: ColorStringCopy,
-    debug_control_points: bool,
-    debug_window: bool,
-    debug_t: f32,
-    debug_c: f32,
-    debug_alpha: f32,
+    debug_window_control_points: DebugWindowControlPoints,
+    debug_window_test: DebugWindowTestWindow,
     double_click_event: Option<MouseClickEvent>,
     middle_click_event: Option<MouseClickEvent>,
     clipboard_event: Option<ClipboardCopyEvent>,
@@ -145,11 +144,6 @@ impl ZApp {
             state: AppState::Startup,
             previewer: ZPreviewer::new(),
             color_copy_format: ColorStringCopy::HEX,
-            debug_control_points: false,
-            debug_window: false,
-            debug_t: 0.0,
-            debug_c: 0.0,
-            debug_alpha: 0.0,
             double_click_event: None,
             middle_click_event: None,
             z_color_picker: ZColorPicker::new(),
@@ -161,6 +155,8 @@ impl ZApp {
             ),
             stored_ui_responses: PreviewerUiResponses::default(),
             clipboard_event: None,
+            debug_window_control_points: DebugWindowControlPoints::new(Pos2 { x: 200.0, y: 0.0 }),
+            debug_window_test: DebugWindowTestWindow::new(Pos2 { x: 200.0, y: 0.0 }),
         }
     }
 
@@ -199,58 +195,12 @@ impl ZApp {
                 self.handle_doubleclick_event(&z_color_picker_response);
                 self.handle_middleclick_event(ui);
 
-                // TESTING
-                if self.debug_window {
-                    if self.z_color_picker.control_points.len() >= 2 {
-                        let src_color = self
-                            .z_color_picker
-                            .control_points
-                            .first()
-                            .unwrap()
-                            .val()
-                            .hsv();
-                        let trg_color = self
-                            .z_color_picker
-                            .control_points
-                            .last()
-                            .unwrap()
-                            .val()
-                            .hsv();
-                        let res_color = color_lerp_ex(
-                            src_color.into(),
-                            trg_color.into(),
-                            self.debug_t,
-                            self.debug_c,
-                            self.debug_alpha,
-                        );
-
-                        ui.allocate_ui_at_rect(
-                            Rect::from_center_size(
-                                Pos2::new(500.0, 500.0),
-                                Vec2::new(500.0, 500.0),
-                            ),
-                            |ui| {
-                                let show_size = 100.0;
-                                show_color(ui, src_color, Vec2::new(show_size, show_size));
-                                show_color(ui, trg_color, Vec2::new(show_size, show_size));
-                                show_color(ui, res_color, Vec2::new(show_size, show_size));
-                            },
-                        );
-                    }
-                }
+                self.update_and_draw_debug_windows(ui);
             });
 
             self.clipboard_copy_window.update();
             self.clipboard_copy_window.draw_ui(ui);
         });
-
-        if self.debug_control_points {
-            self.draw_debug_control_points(ctx);
-        }
-
-        if self.debug_window {
-            self.draw_debug_window(ctx);
-        }
     }
 
     fn handle_doubleclick_event(&mut self, z_color_picker_response: &Response) -> bool {
@@ -356,51 +306,31 @@ impl ZApp {
         false
     }
 
-    fn draw_debug_control_points(&mut self, ctx: &egui::Context) {
-        let window = Window::new("=== Debug Control Points ===")
-            .resizable(true)
-            .constrain(true)
-            .collapsible(true)
-            .title_bar(true)
-            .enabled(true);
+    fn update_and_draw_debug_windows(&mut self, ui: &mut Ui) {
+        self.debug_window_control_points
+            .update(&self.z_color_picker.control_points);
+        self.debug_window_control_points.draw_ui(ui);
 
-        window.show(ctx, |ui| {
-            for i in 0..self.z_color_picker.control_points.len() {
-                let point = &self.z_color_picker.control_points[i];
-                ui.label(format!("[{i}]"));
-                ui.label(format!(
-                    "- val: {:.4},{:.4},{:.4}",
-                    point.val()[0],
-                    point.val()[1],
-                    point.val()[2]
-                ));
-                ui.label(format!("- t: {:.4}", point.t(),));
-                for (tangent_index, tangent) in point.tangents().iter().enumerate() {
-                    if let Some(tang) = tangent {
-                        ui.label(format!(
-                            "- tangent{tangent_index}: {:.4},{:.4},{:.4}",
-                            tang[0], tang[1], tang[2]
-                        ));
-                    }
-                }
-                ui.label(format!(""));
-            }
-        });
-    }
+        if self.z_color_picker.control_points.len() >= 2 {
+            let src_color = self
+                .z_color_picker
+                .control_points
+                .first()
+                .unwrap()
+                .val()
+                .hsv();
+            let trg_color = self
+                .z_color_picker
+                .control_points
+                .last()
+                .unwrap()
+                .val()
+                .hsv();
 
-    fn draw_debug_window(&mut self, ctx: &egui::Context) {
-        let window = Window::new("=== Debug Window ===")
-            .resizable(true)
-            .constrain(true)
-            .collapsible(true)
-            .title_bar(true)
-            .enabled(true);
+            self.debug_window_test.update(src_color, trg_color);
+        }
 
-        window.show(ctx, |ui| {
-            ui.add(Slider::new(&mut self.debug_t, 0.0..=1.0).text("debug_t"));
-            ui.add(Slider::new(&mut self.debug_c, 0.0..=1.0).text("debug_C"));
-            ui.add(Slider::new(&mut self.debug_alpha, 0.0..=1.0).text("debug_alpha"));
-        });
+        self.debug_window_test.draw_ui(ui);
     }
 
     fn process_ctx_inputs(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -428,16 +358,28 @@ impl ZApp {
         // Debug toggles
         ctx.input(|reader| {
             if reader.key_pressed(egui::Key::F12) {
-                self.debug_control_points = !self.debug_control_points;
-                println!("debug_control_points {}", self.debug_control_points);
+                if self.debug_window_control_points.is_open() {
+                    self.debug_window_control_points.close();
+                } else {
+                    self.debug_window_control_points.open();
+                }
+
+                println!(
+                    "debug_control_points {}",
+                    self.debug_window_control_points.is_open()
+                );
             }
         });
 
         // Debug toggles
         ctx.input(|reader| {
             if reader.key_pressed(egui::Key::F11) {
-                self.debug_window = !self.debug_window;
-                println!("debug_window {}", self.debug_window);
+                if self.debug_window_test.is_open() {
+                    self.debug_window_test.close();
+                } else {
+                    self.debug_window_test.open();
+                }
+                println!("debug_window {}", self.debug_window_test.is_open());
             }
         });
     }
