@@ -120,6 +120,7 @@ impl ClipboardPopup {
 }
 
 pub struct ZApp {
+    monitor_size: Vec2,
     scale_factor: f32,
     state: AppState,
     z_color_picker: ZColorPicker,
@@ -139,7 +140,9 @@ impl ZApp {
         let monitor_size = cc.integration_info.window_info.monitor_size.unwrap();
         const RESOLUTION_REF: f32 = 1080.0;
         let scale_factor: f32 = monitor_size.x.min(monitor_size.y) / RESOLUTION_REF;
+
         Self {
+            monitor_size: monitor_size,
             scale_factor: scale_factor,
             state: AppState::Startup,
             previewer: ZPreviewer::new(),
@@ -160,10 +163,12 @@ impl ZApp {
         }
     }
 
-    fn startup(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn startup(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let visuals: egui::Visuals = egui::Visuals::dark();
         ctx.set_visuals(visuals);
         ctx.set_pixels_per_point(self.scale_factor);
+        frame.set_window_size(self.monitor_size);
+        frame.set_maximized(true);
     }
 
     fn draw_ui_menu(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
