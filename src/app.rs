@@ -17,7 +17,7 @@ use crate::{
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8},
     math::color_lerp_ex,
     previewer::{PreviewerUiResponses, ZPreviewer},
-    ui_common::{read_pixels_from_frame, DebugWindow, FramePixelRead},
+    ui_common::{read_pixels_from_frame, ContentWindow, FramePixelRead},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -188,7 +188,7 @@ impl ZApp {
 
                 self.previewer.update(
                     &self.z_color_picker.control_points,
-                    self.z_color_picker.spline_mode,
+                    self.z_color_picker.options.spline_mode,
                 );
                 self.stored_ui_responses = self.previewer.draw_ui(ui, self.color_copy_format);
 

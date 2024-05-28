@@ -1,5 +1,5 @@
 use crate::egui::Pos2;
-use crate::ui_common::DebugWindow;
+use crate::ui_common::ContentWindow;
 use crate::{control_point::ControlPoint, math::color_lerp_ex};
 use ecolor::HsvaGamma;
 use eframe::egui::color_picker::show_color;
@@ -25,7 +25,7 @@ impl DebugWindowControlPoints {
     }
 }
 
-impl DebugWindow for DebugWindowControlPoints {
+impl ContentWindow for DebugWindowControlPoints {
     fn title(&self) -> &str {
         "Debug Control Points"
     }
@@ -95,7 +95,7 @@ impl DebugWindowTestWindow {
     }
 }
 
-impl DebugWindow for DebugWindowTestWindow {
+impl ContentWindow for DebugWindowTestWindow {
     fn title(&self) -> &str {
         "Debug Test Window"
     }

@@ -6,12 +6,13 @@ use crate::{
     curves::Bezier,
     error::{Result, ZError},
     hsv_key_value::HsvKeyValue,
+    ui_common::ContentWindow,
 };
 use eframe::{
     egui::{
         self,
         color_picker::{show_color, Alpha},
-        remap_clamp, Layout, PointerButton, Pos2, Response, Ui,
+        remap_clamp, InnerResponse, Layout, PointerButton, Pos2, Response, Slider, Ui, Window,
     },
     epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
@@ -56,17 +57,10 @@ pub enum SplineMode {
 pub struct ZColorPicker {
     pub control_points: Vec<ControlPoint>,
     pub last_modifying_point_index: Option<usize>,
-    pub is_curve_locked: bool,
-    pub is_hue_middle_interpolated: bool,
-    pub is_insert_right: bool,
-    pub is_window_lock: bool,
-    pub spline_mode: SplineMode,
-    pub presets: Vec<Preset>,
-    pub preset_selected_index: Option<usize>,
-    pub new_preset_window_open: bool,
-    pub new_preset_window_text: String,
     pub dragging_bezier_index: Option<usize>,
     pub control_point_right_clicked: Option<usize>,
+    pub options: ZColorPickerOptions,
+    pub options_window: WindowZColorPickerOptions,
 }
 
 impl ZColorPicker {
@@ -74,17 +68,10 @@ impl ZColorPicker {
         let mut new_color_picker = Self {
             control_points: Vec::with_capacity(4),
             last_modifying_point_index: None,
-            is_curve_locked: false,
-            is_hue_middle_interpolated: true,
-            is_insert_right: true,
-            is_window_lock: true,
-            spline_mode: SplineMode::HermiteBezier,
-            presets: Vec::new(),
-            preset_selected_index: None,
-            new_preset_window_open: false,
-            new_preset_window_text: String::new(),
             dragging_bezier_index: None,
             control_point_right_clicked: None,
+            options: ZColorPickerOptions::default(),
+            options_window: WindowZColorPickerOptions::new(Pos2::new(200.0, 200.0)),
         };
 
         const LAZY_TANGENT_DELTA: f32 = 0.01;
@@ -147,20 +134,22 @@ impl ZColorPicker {
             }),
         ];
 
-        let r = load_presets(&mut new_color_picker.presets);
+        let r = load_presets(&mut new_color_picker.options.presets);
         if let Err(e) = r {
             println!("{}", e);
         }
 
         // Use first as default if exists
-        if new_color_picker.presets.len() >= 1 {
-            new_color_picker.preset_selected_index = Some(0);
+        if new_color_picker.options.presets.len() >= 1 {
+            new_color_picker.options.preset_selected_index = Some(0);
             new_color_picker.apply_selected_preset();
         } else {
             for control_point in &DEFAULT_STARTUP_CONTROL_POINTS {
                 new_color_picker.spawn_control_point(*control_point.val(), *control_point.t());
             }
         }
+
+        new_color_picker.options_window.open();
 
         new_color_picker
     }
@@ -178,23 +167,23 @@ impl ZColorPicker {
         for preset_control_point in preset.data.control_points {
             self.spawn_control_point(*preset_control_point.val(), *preset_control_point.t());
         }
-        self.spline_mode = preset.data.spline_mode;
+        self.options.spline_mode = preset.data.spline_mode;
     }
 
     pub fn apply_selected_preset(&mut self) {
-        if let Some(s) = self.preset_selected_index {
-            if s < self.presets.len() {
-                let preset_to_apply = self.presets[s].clone();
+        if let Some(s) = self.options.preset_selected_index {
+            if s < self.options.presets.len() {
+                let preset_to_apply = self.options.presets[s].clone();
                 self.apply_preset(preset_to_apply);
             }
         }
     }
 
     pub fn save_selected_preset(&mut self) -> Result<()> {
-        if let Some(s) = self.preset_selected_index {
-            let preset = &mut self.presets[s];
+        if let Some(s) = self.options.preset_selected_index {
+            let preset = &mut self.options.presets[s];
             preset.data = PresetData {
-                spline_mode: self.spline_mode,
+                spline_mode: self.options.spline_mode,
                 control_points: self.control_points.clone(),
             };
             save_preset_to_disk(&preset.clone())?;
@@ -209,27 +198,27 @@ impl ZColorPicker {
 
     pub fn preset_data_from_current_state(&self) -> PresetData {
         PresetData {
-            spline_mode: self.spline_mode,
+            spline_mode: self.options.spline_mode,
             control_points: self.control_points.clone(),
         }
     }
 
     pub fn create_preset(&mut self, name: &String) -> Result<()> {
         let preset = Preset::new(name, self.preset_data_from_current_state());
-        let index = self.presets.len();
-        self.presets.push(preset);
+        let index = self.options.presets.len();
+        self.options.presets.push(preset);
 
-        self.preset_selected_index = Some(index);
+        self.options.preset_selected_index = Some(index);
         self.save_selected_preset()?;
 
         Ok(())
     }
 
     pub fn delete_selected_preset(&mut self) -> Result<()> {
-        if let Some(s) = self.preset_selected_index {
-            let preset_to_remove = self.presets.remove(s);
+        if let Some(s) = self.options.preset_selected_index {
+            let preset_to_remove = self.options.presets.remove(s);
             delete_preset_from_disk(&get_preset_save_path(&preset_to_remove))?;
-            self.preset_selected_index = None;
+            self.options.preset_selected_index = None;
 
             return Ok(());
         }
@@ -260,7 +249,7 @@ impl ZColorPicker {
 
         let new_index = match control_point_pivot {
             Some(index) => {
-                if self.is_insert_right {
+                if self.options.is_insert_right {
                     index + 1
                 } else {
                     index
@@ -270,7 +259,7 @@ impl ZColorPicker {
                 if self.control_points.len() <= 0 {
                     0
                 } else {
-                    if self.is_insert_right {
+                    if self.options.is_insert_right {
                         self.control_points.len()
                     } else {
                         0
@@ -333,7 +322,7 @@ impl ZColorPicker {
     }
 
     pub fn pre_draw_update(&mut self) {
-        if self.spline_mode == SplineMode::Bezier {
+        if self.options.spline_mode == SplineMode::Bezier {
             // Force init tangents
             for control_point in &mut self.control_points {
                 let clone = control_point.clone();
@@ -347,7 +336,7 @@ impl ZColorPicker {
     }
 
     pub fn post_update_control_points(&mut self) {
-        if self.is_hue_middle_interpolated {
+        if self.options.is_hue_middle_interpolated {
             let num_points = self.control_points.len();
             if num_points >= 2 {
                 let points = &mut self.control_points[..];
@@ -365,7 +354,7 @@ impl ZColorPicker {
             }
         }
 
-        if self.is_window_lock {
+        if self.options.is_window_lock {
             for i in 0..self.control_points.len() {
                 let cp = &mut self.control_points[i];
                 cp.val_mut()[0] = cp.val()[0].clamp(0.0, 1.0);
@@ -380,199 +369,68 @@ impl ZColorPicker {
             }
             _ => {}
         }
+
+        self.options_window.update();
     }
 
-    pub fn draw_ui(
-        &mut self,
-        ui: &mut Ui,
-        mut color_copy_format: &mut ColorStringCopy,
-    ) -> Response {
+    pub fn draw_ui(&mut self, ui: &mut Ui, color_copy_format: &mut ColorStringCopy) -> Response {
         let inner_response = ui.vertical(|ui| {
             self.pre_draw_update();
 
             let response = main_color_picker(
                 ui,
                 &mut self.control_points[..],
-                self.spline_mode,
+                self.options.spline_mode,
                 *color_copy_format,
                 &mut self.last_modifying_point_index,
                 &mut self.dragging_bezier_index,
                 &mut self.control_point_right_clicked,
-                self.is_hue_middle_interpolated,
-                self.is_curve_locked,
+                self.options.is_hue_middle_interpolated,
+                self.options.is_curve_locked,
             );
 
             self.post_update_control_points();
 
-            self.draw_ui_main_options(ui, &mut color_copy_format);
+            let options_draw_result = self.options_window.draw_ui(
+                ui,
+                &mut self.options,
+                &mut self.control_points,
+                color_copy_format,
+            );
 
-            response
-        });
-
-        inner_response.inner
-    }
-
-    pub fn draw_ui_main_options(&mut self, ui: &mut Ui, color_copy_format: &mut ColorStringCopy) {
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.is_curve_locked, "🔒")
-                .on_hover_text("Apply changes to all control points");
-            ui.checkbox(&mut self.is_hue_middle_interpolated, "🎨")
-                .on_hover_text("Only modify first/last control points");
-            const INSERT_RIGHT_UNICODE: &str = "👉";
-            const INSERT_LEFT_UNICODE: &str = "👈";
-            let insert_mode_unicode = if self.is_insert_right {
-                INSERT_RIGHT_UNICODE
-            } else {
-                INSERT_LEFT_UNICODE
-            };
-            ui.checkbox(&mut self.is_insert_right, insert_mode_unicode)
-                .on_hover_text(format!(
-                    "Insert new points in {} direction",
-                    insert_mode_unicode
-                ));
-            ui.checkbox(&mut self.is_window_lock, "🆘")
-                .on_hover_text("Clamps the control points so they are contained");
-        });
-
-        ui.horizontal(|ui| {
-            egui::ComboBox::new(12312312, "")
-                .selected_text(format!("{:?}", *color_copy_format))
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(60.0);
-                    ui.selectable_value(color_copy_format, ColorStringCopy::HEX, "Hex");
-                    ui.selectable_value(color_copy_format, ColorStringCopy::HEXNOA, "Hex(no A)");
-                })
-                .response
-                .on_hover_text("Color Copy Format");
-
-            egui::ComboBox::new(12312313, "")
-                .selected_text(format!("{:?}", self.spline_mode))
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(60.0);
-                    ui.selectable_value(&mut self.spline_mode, SplineMode::Linear, "Linear");
-                    ui.selectable_value(
-                        &mut self.spline_mode,
-                        SplineMode::Bezier,
-                        "Bezier(Bugged)",
-                    );
-                    ui.selectable_value(
-                        &mut self.spline_mode,
-                        SplineMode::HermiteBezier,
-                        "Hermite(NYI)",
-                    );
-                    // TODO: enable Polynomial combo box
-                    // ui.selectable_value(
-                    //     &mut self.spline_mode,
-                    //     SplineMode::Polynomial,
-                    //     "Polynomial(Crash)",
-                    // );
-                })
-                .response
-                .on_hover_text("Spline Mode");
-
-            if ui.button("Flip").clicked_by(PointerButton::Primary) {
-                self.control_points.reverse();
-            }
-        });
-
-        ui.horizontal(|ui| {
-            let combobox_selected_text_to_show = match self.preset_selected_index {
-                Some(i) => self.presets[i].name.to_string(),
-                None => "".to_string(),
-            };
-
-            let mut combobox_selected_index = 0;
-            let mut combobox_has_selected = false;
-            let _combobox_response = egui::ComboBox::new(1232313, "")
-                .selected_text(combobox_selected_text_to_show)
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(60.0);
-
-                    for (i, preset) in &mut self.presets.iter().enumerate() {
-                        let selectable_value_response = ui.selectable_value(
-                            &mut combobox_selected_index,
-                            i + 1,
-                            preset.name.as_str(),
-                        );
-
-                        if selectable_value_response.clicked() {
-                            combobox_has_selected = true;
-                        }
-                    }
-
-                    // New
-                    let selectable_new_response =
-                        ui.selectable_value(&mut combobox_selected_index, 0, "<NEW>");
-                    // None
-                    let selectable_none_response =
-                        ui.selectable_value(&mut combobox_selected_index, 0, "<None>");
-
-                    if selectable_new_response.clicked() {
-                        combobox_has_selected = true;
-                    } else if selectable_none_response.clicked() {
-                        combobox_has_selected = false;
-                        self.preset_selected_index = None;
-                    }
-                })
-                .response
-                .on_hover_text("Presets");
-
-            if combobox_has_selected {
-                if combobox_selected_index == 0 {
-                    self.new_preset_window_open = true;
-                    self.new_preset_window_text.clear();
-                    println!("New Preset");
-                } else {
-                    self.preset_selected_index = Some(combobox_selected_index - 1);
-                    self.apply_selected_preset();
-                    println!("Selected Preset {:?}", combobox_selected_index - 1);
-                }
-            };
-
-            if ui.button("Save").clicked_by(PointerButton::Primary) {
-                if let Some(_s) = self.preset_selected_index {
-                    let r = self.save_selected_preset();
-                    match r {
-                        Ok(_) => println!("Sucessfully Saved"),
-                        Err(e) => println!("{}", e),
-                    }
-                } else {
-                    println!("Could not save, no preset selected");
-                }
-            }
-            if ui.button("Delete").clicked_by(PointerButton::Primary) {
-                let r = self.delete_selected_preset();
-                match r {
-                    Ok(_) => println!("Sucessfully Deleted"),
-                    Err(e) => println!("{}", e),
-                }
-            }
-        });
-
-        let mut create_preset_open = self.new_preset_window_open;
-        let mut create_preset_create_clicked = false;
-        if self.new_preset_window_open {
-            egui::Window::new("Create Preset")
-                .open(&mut create_preset_open)
-                .show(ui.ctx(), |ui| {
-                    let _text_response = ui.text_edit_singleline(&mut self.new_preset_window_text);
-
-                    if ui.button("Create").clicked() {
-                        self.new_preset_window_open = false;
-                        create_preset_create_clicked = true;
-
-                        let r = self.create_preset(&self.new_preset_window_text.clone());
+            if let Some(inner_response) = options_draw_result {
+                if let Some(draw_result) = inner_response.inner {
+                    if let Some(should_create) = draw_result.preset_result.should_create {
+                        let r = self.create_preset(&should_create);
                         match r {
                             Ok(_) => println!("Sucessfully Created"),
                             Err(e) => println!("{}", e),
                         }
                     }
-                });
-            self.new_preset_window_open = create_preset_open;
-            if create_preset_create_clicked {
-                self.new_preset_window_open = false;
+                    if let Some(_) = draw_result.preset_result.should_apply {
+                        self.apply_selected_preset();
+                    }
+                    if let Some(_) = draw_result.preset_result.should_delete {
+                        let r = self.delete_selected_preset();
+                        match r {
+                            Ok(_) => println!("Sucessfully Deleted"),
+                            Err(e) => println!("{}", e),
+                        }
+                    }
+                    if let Some(_) = draw_result.preset_result.should_save {
+                        let r = self.save_selected_preset();
+                        match r {
+                            Ok(_) => println!("Sucessfully Saved"),
+                            Err(e) => println!("{}", e),
+                        }
+                    }
+                }
             }
-        }
+
+            response
+        });
+
+        inner_response.inner
     }
 }
 
@@ -949,4 +807,288 @@ fn main_color_picker_color_at_function(hue: f32, alpha: f32) -> impl Fn(f32, f32
     };
 
     return move |s, v| HsvaGamma { s, v, ..color }.into();
+}
+
+#[derive(Debug, Clone)]
+pub struct ZColorPickerOptions {
+    pub is_curve_locked: bool,
+    pub is_hue_middle_interpolated: bool,
+    pub is_insert_right: bool,
+    pub is_window_lock: bool,
+    pub spline_mode: SplineMode,
+    pub presets: Vec<Preset>,
+    pub preset_selected_index: Option<usize>,
+}
+
+impl Default for ZColorPickerOptions {
+    fn default() -> Self {
+        Self {
+            is_curve_locked: false,
+            is_hue_middle_interpolated: true,
+            is_insert_right: true,
+            is_window_lock: true,
+            spline_mode: SplineMode::HermiteBezier,
+            presets: Vec::new(),
+            preset_selected_index: None,
+        }
+    }
+}
+
+pub struct WindowZColorPickerOptions {
+    open: bool,
+    pub position: Pos2,
+    new_preset_is_open: bool,
+    new_preset_window_text: String,
+}
+
+struct PresetDrawResult {
+    pub should_create: Option<String>,
+    pub should_apply: Option<()>,
+    pub should_save: Option<()>,
+    pub should_delete: Option<()>,
+}
+
+impl Default for PresetDrawResult {
+    fn default() -> Self {
+        Self {
+            should_create: Default::default(),
+            should_apply: Default::default(),
+            should_save: Default::default(),
+            should_delete: Default::default(),
+        }
+    }
+}
+struct WindowZColorPickerOptionsDrawResult {
+    pub preset_result: PresetDrawResult,
+}
+
+impl Default for WindowZColorPickerOptionsDrawResult {
+    fn default() -> Self {
+        Self {
+            preset_result: Default::default(),
+        }
+    }
+}
+
+impl WindowZColorPickerOptions {
+    pub fn new(window_position: Pos2) -> Self {
+        Self {
+            open: false,
+            position: window_position,
+            new_preset_window_text: String::new(),
+            new_preset_is_open: false,
+        }
+    }
+
+    pub fn update(&mut self) {}
+
+    fn draw_content(
+        &mut self,
+        ui: &mut Ui,
+        options: &mut ZColorPickerOptions,
+        control_points: &mut Vec<ControlPoint>,
+        color_copy_format: &mut ColorStringCopy,
+    ) -> WindowZColorPickerOptionsDrawResult {
+        let mut draw_result = WindowZColorPickerOptionsDrawResult::default();
+
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut options.is_curve_locked, "🔒")
+                .on_hover_text("Apply changes to all control points");
+            ui.checkbox(&mut options.is_hue_middle_interpolated, "🎨")
+                .on_hover_text("Only modify first/last control points");
+            const INSERT_RIGHT_UNICODE: &str = "👉";
+            const INSERT_LEFT_UNICODE: &str = "👈";
+            let insert_mode_unicode = if options.is_insert_right {
+                INSERT_RIGHT_UNICODE
+            } else {
+                INSERT_LEFT_UNICODE
+            };
+            ui.checkbox(&mut options.is_insert_right, insert_mode_unicode)
+                .on_hover_text(format!(
+                    "Insert new points in {} direction",
+                    insert_mode_unicode
+                ));
+            ui.checkbox(&mut options.is_window_lock, "🆘")
+                .on_hover_text("Clamps the control points so they are contained");
+        });
+
+        ui.horizontal(|ui| {
+            egui::ComboBox::new(12312312, "")
+                .selected_text(format!("{:?}", *color_copy_format))
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(60.0);
+                    ui.selectable_value(color_copy_format, ColorStringCopy::HEX, "Hex");
+                    ui.selectable_value(color_copy_format, ColorStringCopy::HEXNOA, "Hex(no A)");
+                })
+                .response
+                .on_hover_text("Color Copy Format");
+
+            egui::ComboBox::new(12312313, "")
+                .selected_text(format!("{:?}", options.spline_mode))
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(60.0);
+                    ui.selectable_value(&mut options.spline_mode, SplineMode::Linear, "Linear");
+                    ui.selectable_value(
+                        &mut options.spline_mode,
+                        SplineMode::Bezier,
+                        "Bezier(Bugged)",
+                    );
+                    ui.selectable_value(
+                        &mut options.spline_mode,
+                        SplineMode::HermiteBezier,
+                        "Hermite(NYI)",
+                    );
+                    // TODO: enable Polynomial combo box
+                    // ui.selectable_value(
+                    //     &mut self.spline_mode,
+                    //     SplineMode::Polynomial,
+                    //     "Polynomial(Crash)",
+                    // );
+                })
+                .response
+                .on_hover_text("Spline Mode");
+
+            if ui.button("Flip").clicked_by(PointerButton::Primary) {
+                control_points.reverse();
+            }
+        });
+
+        ui.horizontal(|ui| {
+            let combobox_selected_text_to_show = match options.preset_selected_index {
+                Some(i) => options.presets[i].name.to_string(),
+                None => "".to_string(),
+            };
+
+            let mut combobox_selected_index = 0;
+            let mut combobox_has_selected = false;
+            let _combobox_response = egui::ComboBox::new(1232313, "")
+                .selected_text(combobox_selected_text_to_show)
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(60.0);
+
+                    for (i, preset) in &mut options.presets.iter().enumerate() {
+                        let selectable_value_response = ui.selectable_value(
+                            &mut combobox_selected_index,
+                            i + 1,
+                            preset.name.as_str(),
+                        );
+
+                        if selectable_value_response.clicked() {
+                            combobox_has_selected = true;
+                        }
+                    }
+
+                    // New
+                    let selectable_new_response =
+                        ui.selectable_value(&mut combobox_selected_index, 0, "<NEW>");
+                    // None
+                    let selectable_none_response =
+                        ui.selectable_value(&mut combobox_selected_index, 0, "<None>");
+
+                    if selectable_new_response.clicked() {
+                        combobox_has_selected = true;
+                    } else if selectable_none_response.clicked() {
+                        combobox_has_selected = false;
+                        options.preset_selected_index = None;
+                    }
+                })
+                .response
+                .on_hover_text("Presets");
+
+            if combobox_has_selected {
+                if combobox_selected_index == 0 {
+                    self.new_preset_is_open = true;
+                    self.new_preset_window_text.clear();
+                    println!("New Preset");
+                } else {
+                    options.preset_selected_index = Some(combobox_selected_index - 1);
+                    draw_result.preset_result.should_apply = Some(());
+                    println!("Selected Preset {:?}", combobox_selected_index - 1);
+                }
+            };
+
+            if ui.button("Save").clicked_by(PointerButton::Primary) {
+                if let Some(_s) = options.preset_selected_index {
+                    draw_result.preset_result.should_save = Some(());
+                } else {
+                    println!("Could not save, no preset selected");
+                }
+            }
+            if ui.button("Delete").clicked_by(PointerButton::Primary) {
+                draw_result.preset_result.should_delete = Some(());
+            }
+        });
+
+        let mut create_preset_open = self.new_preset_is_open;
+        let mut create_preset_create_clicked = false;
+        if self.new_preset_is_open {
+            egui::Window::new("Create Preset")
+                .open(&mut create_preset_open)
+                .show(ui.ctx(), |ui| {
+                    let _text_response = ui.text_edit_singleline(&mut self.new_preset_window_text);
+
+                    if ui.button("Create").clicked() {
+                        self.new_preset_is_open = false;
+                        create_preset_create_clicked = true;
+
+                        draw_result.preset_result.should_create =
+                            Some(self.new_preset_window_text.clone());
+                    }
+                });
+
+            if create_preset_create_clicked {
+                create_preset_open = false;
+            }
+            self.new_preset_is_open = create_preset_open;
+        }
+        draw_result
+    }
+
+    fn draw_ui(
+        &mut self,
+        ui: &mut Ui,
+        options: &mut ZColorPickerOptions,
+        control_points: &mut Vec<ControlPoint>,
+        color_copy_format: &mut ColorStringCopy,
+    ) -> Option<InnerResponse<Option<WindowZColorPickerOptionsDrawResult>>> {
+        let prev_visuals = ui.visuals_mut().clone();
+
+        let mut open = self.is_open();
+        let response = Window::new(self.title())
+            .resizable(false)
+            .title_bar(false)
+            .open(&mut open)
+            .auto_sized()
+            .show(ui.ctx(), |ui: &mut Ui| {
+                self.draw_content(ui, options, control_points, color_copy_format)
+            });
+
+        if open {
+            self.open();
+        } else {
+            self.close();
+        }
+
+        ui.ctx().set_visuals(prev_visuals);
+
+        response
+    }
+}
+
+impl ContentWindow for WindowZColorPickerOptions {
+    fn title(&self) -> &str {
+        "ZColorPicker Options"
+    }
+
+    fn is_open(&self) -> bool {
+        return self.open;
+    }
+
+    fn close(&mut self) {
+        self.open = false;
+    }
+
+    fn open(&mut self) {
+        self.open = true;
+    }
 }
