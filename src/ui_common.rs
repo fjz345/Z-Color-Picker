@@ -97,12 +97,12 @@ pub fn show_color_at(painter: &Painter, color: Color32, rect: Rect) {
 
 pub fn color_slider_1d(
     ui: &mut Ui,
+    desired_size: Vec2,
     val: Option<&mut f32>,
     color_at: impl Fn(f32) -> Color32,
 ) -> Response {
     #![allow(clippy::identity_op)]
 
-    let desired_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
     let (rect, mut response) = ui.allocate_at_least(desired_size, Sense::click_and_drag());
     let visuals = ui.style().interact(&response);
 

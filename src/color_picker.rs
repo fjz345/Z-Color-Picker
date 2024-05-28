@@ -511,7 +511,7 @@ pub struct MainColorPickerCtx<'a> {
     pub is_curve_locked: bool,
 }
 
-pub fn main_color_picker(ui: &mut Ui, ctx: MainColorPickerCtx) -> Response {
+pub fn main_color_picker(ui: &mut Ui, desired_size: Vec2, ctx: MainColorPickerCtx) -> Response {
     let num_control_points = ctx.control_points.len();
     if let Some(last_modified_index) = *ctx.last_modifying_point_index {
         if num_control_points == 0 {
@@ -523,7 +523,8 @@ pub fn main_color_picker(ui: &mut Ui, ctx: MainColorPickerCtx) -> Response {
     }
 
     let main_color_picker_response = ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
-        let desired_size_slider_2d = Vec2::splat(ui.spacing().slider_width);
+        let scale_factor = desired_size.x / ui.spacing().slider_width;
+        let desired_size_slider_2d = scale_factor * Vec2::splat(ui.spacing().slider_width);
 
         let mut is_modifying_index: Option<usize> = ctx
             .dragging_bezier_index
@@ -545,7 +546,8 @@ pub fn main_color_picker(ui: &mut Ui, ctx: MainColorPickerCtx) -> Response {
             None => dummy_color,
         };
 
-        let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
+        let current_color_size =
+            scale_factor * vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
         let response: Response =
             show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
         response_copy_color_on_click(
@@ -585,6 +587,9 @@ pub fn main_color_picker(ui: &mut Ui, ctx: MainColorPickerCtx) -> Response {
             ..color_to_show
         };
 
+        let hue_slider_desired_size =
+            scale_factor * vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
+
         if alpha == Alpha::Opaque {
             color_to_show.a = 1.0;
         } else {
@@ -594,25 +599,34 @@ pub fn main_color_picker(ui: &mut Ui, ctx: MainColorPickerCtx) -> Response {
                 if *a < 0.0 {
                     *a = 0.5; // was additive, but isn't allowed to be
                 }
-                color_slider_1d(ui, Some(a), |a| HsvaGamma { a, ..opaque }.into())
-                    .on_hover_text("Alpha");
+                color_slider_1d(ui, hue_slider_desired_size, Some(a), |a| {
+                    HsvaGamma { a, ..opaque }.into()
+                })
+                .on_hover_text("Alpha");
             } else if !additive {
-                color_slider_1d(ui, Some(a), |a| HsvaGamma { a, ..opaque }.into())
-                    .on_hover_text("Alpha");
+                color_slider_1d(ui, hue_slider_desired_size, Some(a), |a| {
+                    HsvaGamma { a, ..opaque }.into()
+                })
+                .on_hover_text("Alpha");
             }
         }
 
         let prev_hue = color_to_show.h;
         let mut delta_hue = None;
-        let hue_response = color_slider_1d(ui, Some(&mut color_to_show.h), |h| {
-            HsvaGamma {
-                h,
-                s: 1.0,
-                v: 1.0,
-                a: 1.0,
-            }
-            .into()
-        })
+        let hue_response = color_slider_1d(
+            ui,
+            hue_slider_desired_size,
+            Some(&mut color_to_show.h),
+            |h| {
+                HsvaGamma {
+                    h,
+                    s: 1.0,
+                    v: 1.0,
+                    a: 1.0,
+                }
+                .into()
+            },
+        )
         .on_hover_text("Hue");
         if hue_response.clicked_by(PointerButton::Primary) {
             match modifying_control_point {
@@ -1134,7 +1148,7 @@ impl WindowZColorPicker {
     pub fn update(&mut self) {}
 
     fn draw_content(&mut self, ui: &mut Ui, ctx: MainColorPickerCtx) -> Response {
-        let main_color_picker_response = main_color_picker(ui, ctx);
+        let main_color_picker_response = main_color_picker(ui, ui.available_size(), ctx);
 
         main_color_picker_response
     }
