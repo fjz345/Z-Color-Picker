@@ -422,13 +422,13 @@ pub fn read_pixels_from_frame(
     flipped
 }
 
-pub trait DebugWindow {
+pub trait ContentWindow {
     fn is_open(&self) -> bool;
     fn close(&mut self);
     fn open(&mut self);
 
     fn title(&self) -> &str {
-        "Debug Window"
+        "Content Window"
     }
 
     fn draw_content(&mut self, _ui: &mut Ui) {}
