@@ -1,7 +1,7 @@
 use crate::{
     control_point::{
-        create_tangent_for_control_point, ControlPoint, ControlPointStorage, ControlPointTangent,
-        ControlPointType,
+        self, create_tangent_for_control_point, ControlPoint, ControlPointStorage,
+        ControlPointTangent, ControlPointType,
     },
     curves::Bezier,
     error::{Result, ZError},
@@ -61,6 +61,7 @@ pub struct ZColorPicker {
     pub control_point_right_clicked: Option<usize>,
     pub options: ZColorPickerOptions,
     pub options_window: WindowZColorPickerOptions,
+    pub main_color_picker_window: WindowZColorPicker,
 }
 
 impl ZColorPicker {
@@ -72,6 +73,7 @@ impl ZColorPicker {
             control_point_right_clicked: None,
             options: ZColorPickerOptions::default(),
             options_window: WindowZColorPickerOptions::new(Pos2::new(200.0, 200.0)),
+            main_color_picker_window: WindowZColorPicker::new(Pos2::new(200.0, 200.0)),
         };
 
         const LAZY_TANGENT_DELTA: f32 = 0.01;
@@ -149,6 +151,7 @@ impl ZColorPicker {
             }
         }
 
+        new_color_picker.main_color_picker_window.open();
         new_color_picker.options_window.open();
 
         new_color_picker
@@ -381,24 +384,28 @@ impl ZColorPicker {
         self.options_window.update();
     }
 
-    pub fn draw_ui(&mut self, ui: &mut Ui, color_copy_format: &mut ColorStringCopy) -> Response {
+    pub fn draw_ui(
+        &mut self,
+        ui: &mut Ui,
+        color_copy_format: &mut ColorStringCopy,
+    ) -> Option<Response> {
         let inner_response = ui.vertical(|ui| {
             self.pre_draw_update();
 
-            let response = main_color_picker(
-                ui,
-                &mut self.control_points[..],
-                self.options.spline_mode,
-                *color_copy_format,
-                &mut self.last_modifying_point_index,
-                &mut self.dragging_bezier_index,
-                &mut self.control_point_right_clicked,
-                self.options.is_hue_middle_interpolated,
-                self.options.is_curve_locked,
-            );
-
             self.post_update_control_points();
 
+            let ctx = MainColorPickerCtx {
+                control_points: &mut self.control_points[..],
+                spline_mode: self.options.spline_mode,
+                color_copy_format: *color_copy_format,
+                last_modifying_point_index: &mut self.last_modifying_point_index,
+                dragging_bezier_index: &mut self.dragging_bezier_index,
+                control_point_right_clicked: &mut self.control_point_right_clicked,
+                is_hue_middle_interpolated: self.options.is_hue_middle_interpolated,
+                is_curve_locked: self.options.is_curve_locked,
+            };
+
+            let main_color_picker_response = self.main_color_picker_window.draw_ui(ui, ctx);
             let options_draw_result = self.options_window.draw_ui(
                 ui,
                 &mut self.options,
@@ -435,10 +442,14 @@ impl ZColorPicker {
                 }
             }
 
-            response
+            main_color_picker_response
         });
 
-        inner_response.inner
+        if let Some(inner) = inner_response.inner {
+            return inner.inner;
+        }
+
+        None
     }
 }
 
@@ -489,23 +500,24 @@ pub fn format_color_as(
     formatted.to_uppercase()
 }
 
-pub fn main_color_picker(
-    ui: &mut Ui,
-    control_points: &mut [ControlPoint],
-    spline_mode: SplineMode,
-    color_copy_format: ColorStringCopy,
-    last_modifying_point_index: &mut Option<usize>,
-    dragging_bezier_index: &mut Option<usize>,
-    control_point_right_clicked: &mut Option<usize>,
-    is_hue_middle_interpolated: bool,
-    is_curve_locked: bool,
-) -> Response {
-    let num_control_points = control_points.len();
-    if let Some(last_modified_index) = *last_modifying_point_index {
+pub struct MainColorPickerCtx<'a> {
+    pub control_points: &'a mut [ControlPoint],
+    pub spline_mode: SplineMode,
+    pub color_copy_format: ColorStringCopy,
+    pub last_modifying_point_index: &'a mut Option<usize>,
+    pub dragging_bezier_index: &'a mut Option<usize>,
+    pub control_point_right_clicked: &'a mut Option<usize>,
+    pub is_hue_middle_interpolated: bool,
+    pub is_curve_locked: bool,
+}
+
+pub fn main_color_picker(ui: &mut Ui, ctx: MainColorPickerCtx) -> Response {
+    let num_control_points = ctx.control_points.len();
+    if let Some(last_modified_index) = *ctx.last_modifying_point_index {
         if num_control_points == 0 {
-            *last_modifying_point_index = None;
+            *ctx.last_modifying_point_index = None;
         } else {
-            *last_modifying_point_index =
+            *ctx.last_modifying_point_index =
                 Some(last_modified_index.clamp(0, num_control_points - 1));
         }
     }
@@ -513,11 +525,12 @@ pub fn main_color_picker(
     let main_color_picker_response = ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
         let desired_size_slider_2d = Vec2::splat(ui.spacing().slider_width);
 
-        let mut is_modifying_index: Option<usize> =
-            dragging_bezier_index.or(*last_modifying_point_index);
+        let mut is_modifying_index: Option<usize> = ctx
+            .dragging_bezier_index
+            .or(*ctx.last_modifying_point_index);
 
         let modifying_control_point = match is_modifying_index {
-            Some(index) => control_points.get_mut(index),
+            Some(index) => ctx.control_points.get_mut(index),
             None => None,
         };
 
@@ -539,12 +552,12 @@ pub fn main_color_picker(
             ui,
             &response,
             color_to_show,
-            color_copy_format,
+            ctx.color_copy_format,
             PointerButton::Middle,
         );
 
         let alpha = Alpha::Opaque;
-        color_text_ui(ui, color_to_show, alpha, color_copy_format);
+        color_text_ui(ui, color_to_show, alpha, ctx.color_copy_format);
 
         if alpha == Alpha::BlendOrAdditive {
             // We signal additive blending by storing a negative alpha (a bit ironic).
@@ -611,15 +624,19 @@ pub fn main_color_picker(
             delta_hue = Some(color_to_show.h - prev_hue);
         }
 
-        let (_control_points_hue_response, hue_selected_index) =
-            ui_hue_control_points_overlay(ui, &hue_response, control_points, is_modifying_index);
+        let (_control_points_hue_response, hue_selected_index) = ui_hue_control_points_overlay(
+            ui,
+            &hue_response,
+            ctx.control_points,
+            is_modifying_index,
+        );
 
         if let Some(new_selected_index) = hue_selected_index {
             is_modifying_index = Some(new_selected_index);
         }
 
         if let Some(h) = delta_hue {
-            if is_curve_locked {
+            if ctx.is_curve_locked {
                 // Move all other points
                 for i in 0..num_control_points {
                     if is_modifying_index.is_some() {
@@ -627,7 +644,7 @@ pub fn main_color_picker(
                             continue;
                         }
                     }
-                    let hue_ref = &mut control_points[i].val_mut()[2];
+                    let hue_ref = &mut ctx.control_points[i].val_mut()[2];
                     *hue_ref = (*hue_ref + h).rem_euclid(1.0);
                 }
             }
@@ -642,24 +659,24 @@ pub fn main_color_picker(
         );
 
         if let Some(mut modifying_index) = is_modifying_index {
-            let valid_index = modifying_index <= control_points.len() - 1;
+            let valid_index = modifying_index <= ctx.control_points.len() - 1;
             assert_eq!(
                 valid_index,
                 true,
                 "modifying index is invalid, ({:?}|{:?})",
                 modifying_index,
-                control_points.len()
+                ctx.control_points.len()
             );
-            is_modifying_index = Some(modifying_index.clamp(0, control_points.len() - 1));
+            is_modifying_index = Some(modifying_index.clamp(0, ctx.control_points.len() - 1));
             modifying_index = is_modifying_index.unwrap();
 
-            let control_point_val = control_points[modifying_index].val_mut();
+            let control_point_val = ctx.control_points[modifying_index].val_mut();
             control_point_val.val[2] = color_to_show.h;
         }
 
-        if dragging_bezier_index.is_some() {
+        if ctx.dragging_bezier_index.is_some() {
             let control_point = match is_modifying_index {
-                Some(a) => Some(control_points[a].val_mut()),
+                Some(a) => Some(ctx.control_points[a].val_mut()),
                 _ => None,
             };
             let unwrapped = &mut control_point.unwrap();
@@ -677,7 +694,7 @@ pub fn main_color_picker(
         //     );
 
         let _spline_gradient_repsonse =
-            ui_ordered_spline_gradient(ui, control_points, spline_mode, &slider_2d_reponse);
+            ui_ordered_spline_gradient(ui, ctx.control_points, ctx.spline_mode, &slider_2d_reponse);
 
         let (
             dragged_points_response,
@@ -687,14 +704,14 @@ pub fn main_color_picker(
             dragged_tangent_response,
         ) = ui_ordered_control_points(
             ui,
-            control_points,
+            ctx.control_points,
             &is_modifying_index,
-            is_hue_middle_interpolated,
+            ctx.is_hue_middle_interpolated,
             &slider_2d_reponse,
-            spline_mode == SplineMode::Bezier,
+            ctx.spline_mode == SplineMode::Bezier,
         );
 
-        *control_point_right_clicked = match hovering_control_point {
+        *ctx.control_point_right_clicked = match hovering_control_point {
             Some(a) => {
                 if a.0.clicked_by(PointerButton::Secondary) {
                     Some(a.1)
@@ -706,33 +723,33 @@ pub fn main_color_picker(
         };
 
         if dragged_points_response.is_none() {
-            *dragging_bezier_index = None;
+            *ctx.dragging_bezier_index = None;
         }
 
         match selected_index {
-            Some(index) => *last_modifying_point_index = Some(index),
+            Some(index) => *ctx.last_modifying_point_index = Some(index),
             _ => {}
         }
 
         match dragged_points_response {
             Some(r) => {
                 if r.dragged_by(PointerButton::Primary) {
-                    *dragging_bezier_index = selected_index;
+                    *ctx.dragging_bezier_index = selected_index;
                     match is_modifying_index {
                         Some(index) => {
                             {
-                                let point_x_ref = &mut control_points[index].val_mut()[0];
+                                let point_x_ref = &mut ctx.control_points[index].val_mut()[0];
                                 *point_x_ref += r.drag_delta().x / slider_2d_reponse.rect.size().x;
                             }
                             {
-                                let point_y_ref = &mut control_points[index].val_mut()[1];
+                                let point_y_ref = &mut ctx.control_points[index].val_mut()[1];
                                 *point_y_ref -= r.drag_delta().y / slider_2d_reponse.rect.size().y;
                             }
                         }
                         _ => {}
                     }
 
-                    if is_curve_locked {
+                    if ctx.is_curve_locked {
                         // Move all other points
                         for i in 0..num_control_points {
                             if i == is_modifying_index.unwrap_or(0) {
@@ -740,11 +757,11 @@ pub fn main_color_picker(
                             }
 
                             {
-                                let point_x_ref = &mut control_points[i].val_mut()[0];
+                                let point_x_ref = &mut ctx.control_points[i].val_mut()[0];
                                 *point_x_ref += r.drag_delta().x / slider_2d_reponse.rect.size().x;
                             }
                             {
-                                let point_y_ref = &mut control_points[i].val_mut()[1];
+                                let point_y_ref = &mut ctx.control_points[i].val_mut()[1];
                                 *point_y_ref -= r.drag_delta().y / slider_2d_reponse.rect.size().y;
                             }
                         }
@@ -757,9 +774,9 @@ pub fn main_color_picker(
         match dragged_tangent_response {
             Some(r) => {
                 if r.dragged_by(PointerButton::Primary) {
-                    match *last_modifying_point_index {
+                    match *ctx.last_modifying_point_index {
                         Some(index) => {
-                            if let Some(tang) = &mut control_points[index].tangents_mut()
+                            if let Some(tang) = &mut ctx.control_points[index].tangents_mut()
                                 [selected_tangent_index.unwrap()]
                             {
                                 {
@@ -1083,9 +1100,74 @@ impl WindowZColorPickerOptions {
     }
 }
 
+pub struct WindowZColorPicker {
+    open: bool,
+    position: Pos2,
+}
+
 impl ContentWindow for WindowZColorPickerOptions {
     fn title(&self) -> &str {
         "ZColorPicker Options"
+    }
+
+    fn is_open(&self) -> bool {
+        return self.open;
+    }
+
+    fn close(&mut self) {
+        self.open = false;
+    }
+
+    fn open(&mut self) {
+        self.open = true;
+    }
+}
+
+impl WindowZColorPicker {
+    pub fn new(window_position: Pos2) -> Self {
+        Self {
+            open: false,
+            position: window_position,
+        }
+    }
+
+    pub fn update(&mut self) {}
+
+    fn draw_content(&mut self, ui: &mut Ui, ctx: MainColorPickerCtx) -> Response {
+        let main_color_picker_response = main_color_picker(ui, ctx);
+
+        main_color_picker_response
+    }
+
+    fn draw_ui(
+        &mut self,
+        ui: &mut Ui,
+        ctx: MainColorPickerCtx,
+    ) -> Option<InnerResponse<Option<Response>>> {
+        let prev_visuals = ui.visuals_mut().clone();
+
+        let mut open = self.is_open();
+        let response = Window::new(self.title())
+            .resizable(true)
+            .title_bar(false)
+            .open(&mut open)
+            .show(ui.ctx(), |ui: &mut Ui| self.draw_content(ui, ctx));
+
+        if open {
+            self.open();
+        } else {
+            self.close();
+        }
+
+        ui.ctx().set_visuals(prev_visuals);
+
+        response
+    }
+}
+
+impl ContentWindow for WindowZColorPicker {
+    fn title(&self) -> &str {
+        "ZColorPicker Main Window"
     }
 
     fn is_open(&self) -> bool {

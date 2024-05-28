@@ -189,7 +189,7 @@ impl ZApp {
                     z_color_picker_response
                 });
 
-                let z_color_picker_response = left_side_reponse.inner;
+                let z_color_picker_response_option = left_side_reponse.inner;
 
                 self.previewer.update(
                     &self.z_color_picker.control_points,
@@ -197,7 +197,12 @@ impl ZApp {
                 );
                 self.stored_ui_responses = self.previewer.draw_ui(ui, self.color_copy_format);
 
-                self.handle_doubleclick_event(&z_color_picker_response);
+                if let Some(z_color_picker_response) = z_color_picker_response_option {
+                    self.handle_doubleclick_event(&z_color_picker_response);
+                } else {
+                    println!("Something went very wrong with z_color_picker, response missing");
+                }
+
                 self.handle_middleclick_event(ui);
 
                 self.update_and_draw_debug_windows(ui);
