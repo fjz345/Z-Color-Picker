@@ -41,13 +41,14 @@ To create a new preset, click the preset combo box and select NEW
 
 - HermiteBezier, can not modify t's in previewer
 - HermiteBezier, preview gradient is black on right side
-- color picker interactions got broken
 
 ## TODO: Features
 
 # Currently being worked on
 
 - Bugs
+- t should be modifiable by user, normalized on display
+- Previewer should be in separate window
 
 #
 
