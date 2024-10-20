@@ -1,4 +1,7 @@
-use std::fs::{self, remove_file, DirEntry};
+use std::{
+    fs::{self, remove_file, DirEntry},
+    path::Path,
+};
 
 use crate::{
     control_point::ControlPoint,
@@ -8,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{color_picker::SplineMode, fs::write_string_to_file};
 
-const PRESETS_PATH: &str = "./presets";
+pub const PRESETS_FOLDER_NAME: &str = "presets";
 
 #[derive(Clone, Debug)]
 pub struct Preset {
@@ -31,9 +34,9 @@ pub struct PresetData {
     pub control_points: Vec<ControlPoint>,
 }
 
-pub fn load_presets(presets: &mut Vec<Preset>) -> Result<()> {
+pub fn load_presets(path: &Path, presets: &mut Vec<Preset>) -> Result<()> {
     presets.clear();
-    let paths = fs::read_dir(PRESETS_PATH).unwrap();
+    let paths = fs::read_dir(path)?;
 
     const DEBUG_PRINT: bool = true;
     if DEBUG_PRINT {
@@ -107,5 +110,8 @@ pub fn delete_preset_from_disk(file_path: &str) -> Result<()> {
 }
 
 pub fn get_preset_save_path(preset: &Preset) -> String {
-    format!("{PRESETS_PATH}\\{}.json", preset.name)
+    let curr_dir = std::env::current_dir().unwrap();
+    let presets_path = curr_dir.join(PRESETS_FOLDER_NAME);
+    let file_path = presets_path.join(format!("{}.json", preset.name));
+    file_path.to_path_buf().to_str().unwrap().to_string()
 }

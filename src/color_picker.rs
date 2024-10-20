@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::{
     control_point::{
         self, create_tangent_for_control_point, ControlPoint, ControlPointStorage,
@@ -6,6 +8,7 @@ use crate::{
     curves::Bezier,
     error::{Result, ZError},
     hsv_key_value::HsvKeyValue,
+    preset::PRESETS_FOLDER_NAME,
     ui_common::ContentWindow,
 };
 use eframe::{
@@ -136,9 +139,13 @@ impl ZColorPicker {
             }),
         ];
 
-        let r = load_presets(&mut new_color_picker.options.presets);
+        let cur_dir = std::env::current_dir().unwrap();
+        let presets_path_buf = cur_dir.join(PRESETS_FOLDER_NAME);
+        let presets_path = presets_path_buf.as_path();
+        println!("Loading presets from: {}", presets_path.to_str().unwrap());
+        let r = load_presets(presets_path, &mut new_color_picker.options.presets);
         if let Err(e) = r {
-            println!("{}", e);
+            dbg!(e);
         }
 
         // Use first as default if exists
