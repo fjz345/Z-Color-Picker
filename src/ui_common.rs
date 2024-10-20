@@ -139,6 +139,7 @@ pub fn ui_hue_control_points_overlay(
     parent_response: &Response,
     control_points: &mut [ControlPoint],
     modifying_control_point_index: Option<usize>,
+    is_hue_middle_interpolated: bool,
 ) -> (Response, Option<usize>) {
     let container_response =
         ui.allocate_rect(parent_response.rect, Sense::focusable_noninteractive());
@@ -149,6 +150,12 @@ pub fn ui_hue_control_points_overlay(
 
     let mut selected_key_frame = None;
     for i in 0..control_points.len() {
+        if is_hue_middle_interpolated {
+            if i != 0 && i != control_points.len() - 1 {
+                continue;
+            }
+        }
+
         let val = control_points[i].val().h();
         let picked_color = control_points[i].val().color();
         // Show where the slider is at:

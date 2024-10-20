@@ -646,6 +646,7 @@ pub fn main_color_picker(ui: &mut Ui, desired_size: Vec2, ctx: MainColorPickerCt
             &hue_response,
             ctx.control_points,
             is_modifying_index,
+            ctx.is_hue_middle_interpolated,
         );
 
         if let Some(new_selected_index) = hue_selected_index {
