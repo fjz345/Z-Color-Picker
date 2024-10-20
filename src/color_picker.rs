@@ -973,6 +973,11 @@ impl WindowZColorPickerOptions {
                 .on_hover_text("Spline Mode");
 
             if ui.button("Flip").clicked_by(PointerButton::Primary) {
+                // Also Flip the tangets
+                for cp in control_points.iter_mut() {
+                    cp.flip_tangents();
+                }
+
                 control_points.reverse();
             }
         });

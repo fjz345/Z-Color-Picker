@@ -104,4 +104,8 @@ impl ControlPoint {
     pub fn tangents_mut(&mut self) -> &mut ControlPointTangents {
         &mut self.storage_mut().tangents
     }
+
+    pub fn flip_tangents(&mut self) {
+        self.tangents_mut().swap(0, 1);
+    }
 }
