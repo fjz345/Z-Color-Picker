@@ -94,7 +94,6 @@ pub fn ui_ordered_control_points(
             // }
 
             if control_point_response.dragged_by(egui::PointerButton::Primary) {
-                println!("Dragged index: {i}");
                 is_inactive_click_or_drag = is_inactive;
 
                 if !is_inactive {
@@ -105,7 +104,6 @@ pub fn ui_ordered_control_points(
             }
 
             if control_point_response.hovered() {
-                println!("Hovered index: {i}");
                 hovering_control_point = Some((control_point_response, i));
             }
 
