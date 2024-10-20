@@ -89,7 +89,6 @@ pub fn load_preset_from_disk(dir_entry: &DirEntry) -> Result<Preset> {
             .unwrap(),
         preset_data,
     );
-    println!("{:?}", preset_from_file);
 
     Ok(preset_from_file)
 }
