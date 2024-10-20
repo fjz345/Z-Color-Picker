@@ -12,6 +12,7 @@ use eframe::{
 use crate::{
     clipboard::{write_color_to_clipboard, write_pixels_to_clipboard},
     color_picker::{ColorStringCopy, ZColorPicker},
+    control_point::ControlPoint,
     debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8},
     previewer::{PreviewerUiResponses, ZPreviewer},
@@ -237,13 +238,13 @@ impl ZApp {
                                 let color_hue: f32 = cp.val().h();
 
                                 let color: [f32; 3] = [color_xy[0], color_xy[1], color_hue];
-                                self.z_color_picker
-                                    .spawn_control_point(color.into(), *cp.t());
+                                self.z_color_picker.spawn_control_point(cp.clone());
                             }
                         }
                         _ => {
                             let color: [f32; 3] = [color_xy[0], color_xy[1], 0.0];
-                            self.z_color_picker.spawn_control_point(color.into(), 0.0);
+                            let new_cp = ControlPoint::new_simple(color.into(), 0.0);
+                            self.z_color_picker.spawn_control_point(new_cp);
                         }
                     };
                     self.z_color_picker.post_update_control_points();

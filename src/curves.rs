@@ -163,8 +163,6 @@ pub fn ui_ordered_control_points(
                             );
 
                             if tangent_response.dragged_by(egui::PointerButton::Primary) {
-                                println!("Dragged tangent on: {i}:{tangent_index}");
-
                                 tangent_in_screen +=
                                     tangent_response.drag_delta() / parent_response.rect.size();
                                 tangent_selected_index = Some(tangent_index);

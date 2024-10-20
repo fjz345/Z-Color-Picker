@@ -150,7 +150,7 @@ impl ZColorPicker {
             new_color_picker.apply_selected_preset();
         } else {
             for control_point in &DEFAULT_STARTUP_CONTROL_POINTS {
-                new_color_picker.spawn_control_point(*control_point.val(), *control_point.t());
+                new_color_picker.spawn_control_point(control_point.clone());
             }
         }
 
@@ -171,7 +171,7 @@ impl ZColorPicker {
     fn apply_preset(&mut self, preset: Preset) {
         self.remove_all_control_points();
         for preset_control_point in preset.data.control_points {
-            self.spawn_control_point(*preset_control_point.val(), *preset_control_point.t());
+            self.spawn_control_point(preset_control_point);
         }
         self.options.spline_mode = preset.data.spline_mode;
     }
@@ -258,7 +258,7 @@ impl ZColorPicker {
         }
     }
 
-    pub fn spawn_control_point(&mut self, color: ControlPointType, t: f32) {
+    pub fn spawn_control_point(&mut self, cp: ControlPoint) {
         let control_point_pivot = self.last_modifying_point_index;
 
         let new_index = match control_point_pivot {
@@ -283,19 +283,18 @@ impl ZColorPicker {
         };
 
         self.dragging_bezier_index = None;
-        let new_cp = ControlPoint::new_simple(color, t);
-        self.control_points.insert(new_index, new_cp);
-        // Adding keys messes with the indicies
-        self.last_modifying_point_index = Some(new_index);
 
         println!(
             "ControlPoint#{} spawned @[{}]{},{},{}",
             self.control_points.len(),
-            t,
-            color.val[0],
-            color.val[1],
-            color.val[2],
+            cp.t(),
+            cp.val()[0],
+            cp.val()[1],
+            cp.val()[2],
         );
+        self.control_points.insert(new_index, cp);
+        // Adding keys messes with the indicies
+        self.last_modifying_point_index = Some(new_index);
     }
 
     pub fn get_control_points_sdf_2d(&self, xy: Pos2) -> Option<(&ControlPoint, f32)> {
