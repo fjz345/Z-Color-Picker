@@ -148,6 +148,8 @@ pub fn ui_hue_control_points_overlay(
     ui.add_space(8.0);
     let visuals = ui.style().interact(&parent_response);
 
+    let r = container_response.rect.height() / 4.0;
+
     let mut selected_key_frame = None;
     for i in 0..control_points.len() {
         if is_hue_middle_interpolated {
@@ -173,7 +175,7 @@ pub fn ui_hue_control_points_overlay(
         } else {
             Y_OFFSET
         };
-        let r = container_response.rect.height() / 4.0;
+
         let gizmo_rect: Vec<Pos2> = if i == 0 {
             // First
             vec![
@@ -203,9 +205,10 @@ pub fn ui_hue_control_points_overlay(
         } else {
             // Other
             vec![
-                pos2(x, y_offset_to_use + container_response.rect.center().y), // tip
+                pos2(x + r, y_offset_to_use + container_response.rect.center().y),
                 pos2(x + r, y_offset_to_use + container_response.rect.bottom()), // right bottom
                 pos2(x - r, y_offset_to_use + container_response.rect.bottom()), // left bottom
+                pos2(x - r, y_offset_to_use + container_response.rect.center().y),
             ]
         };
 
