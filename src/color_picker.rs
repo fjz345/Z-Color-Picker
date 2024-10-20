@@ -612,10 +612,10 @@ pub fn main_color_picker(ui: &mut Ui, desired_size: Vec2, ctx: MainColorPickerCt
             }
         }
 
-        let prev_hue = color_to_show.h;
+        let _prev_hue = color_to_show.h;
         let mut delta_hue = None;
         let mut pick_hue_unused = 0.0_f32;
-        let mut pick_hue = Some(&mut pick_hue_unused);
+        let pick_hue = Some(&mut pick_hue_unused);
         let hue_response = color_slider_1d(ui, hue_slider_desired_size, pick_hue, |h| {
             HsvaGamma {
                 h,
@@ -626,17 +626,8 @@ pub fn main_color_picker(ui: &mut Ui, desired_size: Vec2, ctx: MainColorPickerCt
             .into()
         })
         .on_hover_text("Hue");
+
         if hue_response.clicked_by(PointerButton::Primary) {
-            match modifying_control_point {
-                Some(cp) => {
-                    println!(
-                        "LeftClick - Hue 1D slider - currently modifying cp: {:?}",
-                        cp
-                    );
-                    // cp.val_mut()[2] = color_to_show.h;
-                }
-                None => {}
-            }
             delta_hue = Some(color_to_show.h - pick_hue_unused);
         } else if hue_response.dragged_by(PointerButton::Primary) {
             delta_hue = Some(color_to_show.h - pick_hue_unused);
@@ -664,10 +655,13 @@ pub fn main_color_picker(ui: &mut Ui, desired_size: Vec2, ctx: MainColorPickerCt
                         val_mut_ref.val[2] = clamped_new_h;
                     }
                 } else {
-                    let val_mut_ref = ctx.control_points[index].val_mut();
-                    // Prevent wrapping from 1.0 -> 0.0, then wrap around [0,1.0]
-                    let clamped_new_h = (val_mut_ref.h() - h).clamp(0.0, 0.999).rem_euclid(1.0);
-                    val_mut_ref.val[2] = clamped_new_h;
+                    const MOVE_EVEN_IF_NOT_DRAG: bool = false;
+                    if MOVE_EVEN_IF_NOT_DRAG {
+                        let val_mut_ref = ctx.control_points[index].val_mut();
+                        // Prevent wrapping from 1.0 -> 0.0, then wrap around [0,1.0]
+                        let clamped_new_h = (val_mut_ref.h() - h).clamp(0.0, 0.999).rem_euclid(1.0);
+                        val_mut_ref.val[2] = clamped_new_h;
+                    }
                 }
             }
         }
