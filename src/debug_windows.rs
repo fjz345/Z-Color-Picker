@@ -3,7 +3,7 @@ use crate::ui_common::ContentWindow;
 use crate::{control_point::ControlPoint, math::color_lerp_ex};
 use ecolor::HsvaGamma;
 use eframe::egui::color_picker::show_color;
-use eframe::egui::{Rect, Slider, Ui, Vec2};
+use eframe::egui::{Slider, Ui, Vec2};
 
 pub struct DebugWindowControlPoints {
     open: bool,

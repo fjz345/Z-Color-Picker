@@ -1,13 +1,9 @@
-use std::path::Path;
-
 use crate::{
     control_point::{
-        self, create_tangent_for_control_point, ControlPoint, ControlPointStorage,
-        ControlPointTangent, ControlPointType,
+        create_tangent_for_control_point, ControlPoint, ControlPointStorage, ControlPointTangent,
+        ControlPointType,
     },
-    curves::Bezier,
     error::{Result, ZError},
-    hsv_key_value::HsvKeyValue,
     preset::PRESETS_FOLDER_NAME,
     ui_common::ContentWindow,
 };
@@ -15,7 +11,7 @@ use eframe::{
     egui::{
         self,
         color_picker::{show_color, Alpha},
-        remap_clamp, InnerResponse, Layout, PointerButton, Pos2, Response, Slider, Ui, Window,
+        InnerResponse, Layout, PointerButton, Pos2, Response, Ui, Window,
     },
     epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
@@ -287,7 +283,7 @@ impl ZColorPicker {
         };
 
         self.dragging_bezier_index = None;
-        let mut new_cp = ControlPoint::new_simple(color, t);
+        let new_cp = ControlPoint::new_simple(color, t);
         self.control_points.insert(new_index, new_cp);
         // Adding keys messes with the indicies
         self.last_modifying_point_index = Some(new_index);
@@ -343,10 +339,10 @@ impl ZColorPicker {
         if self.options.spline_mode == SplineMode::Bezier {
             // Force init tangents
             for control_point in &mut self.control_points {
-                let clone = control_point.clone();
+                let _clone = control_point.clone();
                 for tang in &mut control_point.tangents_mut().iter_mut() {
                     if tang.is_none() {
-                        *tang = Some(create_tangent_for_control_point(&clone));
+                        *tang = Some(create_tangent_for_control_point());
                     }
                 }
             }

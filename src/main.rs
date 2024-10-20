@@ -2,10 +2,7 @@
 #![allow(dead_code)]
 #![allow(unreachable_patterns)]
 
-#[allow(unused_imports)]
-use crate::error::Result;
 use eframe::egui;
-use hsv_key_value::HsvKeyValue;
 
 use crate::app::ZApp;
 

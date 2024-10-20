@@ -4,18 +4,16 @@ use eframe::egui::{InnerResponse, Response, Ui};
 use std::{borrow::Cow, time::Instant};
 
 use eframe::{
-    egui::{self, color_picker::show_color, Layout, PointerButton, Rect, Slider, Window},
+    egui::{self, Layout, PointerButton, Rect, Window},
     epaint::{Pos2, Vec2},
     CreationContext,
 };
 
 use crate::{
-    clipboard::{write_color_to_clipboard, write_pixels_to_clipboard, write_pixels_to_test_ppm},
+    clipboard::{write_color_to_clipboard, write_pixels_to_clipboard},
     color_picker::{ColorStringCopy, ZColorPicker},
-    control_point::ControlPoint,
     debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8},
-    math::color_lerp_ex,
     previewer::{PreviewerUiResponses, ZPreviewer},
     ui_common::{read_pixels_from_frame, ContentWindow, FramePixelRead},
 };
@@ -292,7 +290,6 @@ impl ZApp {
                     );
                     let _ = write_color_to_clipboard(color, self.color_copy_format);
                 } else if frame_pixels.data.len() > 1 {
-                    let copy = frame_pixels.data.clone();
                     let a_padded = u8u8u8_to_u8u8u8u8(&frame_pixels.data[..]);
                     let u8_stream = u8u8u8u8_to_u8(&a_padded[..]);
                     let cow = Cow::Owned(u8_stream);

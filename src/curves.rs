@@ -149,11 +149,11 @@ pub fn ui_ordered_control_points(
                     }
                     if let Some(tang) = tangent {
                         let tang_xy = [key.val()[0] + tang.val[0], key.val()[1] + tang.val[1]];
-                        let mut tangent_point_xy: Pos2 =
+                        let tangent_point_xy: Pos2 =
                             Pos2::new(tang_xy[0].clamp(0.0, 1.0), 1.0 - tang_xy[1].clamp(0.0, 1.0));
                         let mut tangent_in_screen: Pos2 = to_screen.transform_pos(tangent_point_xy);
                         let tangent_draw_scale = 0.7;
-                        let tangent_draw_size = tangent_draw_scale * control_point_draw_size;
+                        let _tangent_draw_size = tangent_draw_scale * control_point_draw_size;
 
                         if is_selected_index {
                             let tangent_ui_rect =

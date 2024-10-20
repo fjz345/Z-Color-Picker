@@ -1,26 +1,20 @@
 use crate::color_picker::format_color_as;
 use crate::control_point::ControlPoint;
-use crate::control_point::ControlPointStorage;
 use crate::egui::PointerButton;
 use crate::egui::TextStyle;
-#[allow(unused_imports)]
-use crate::error::Result;
 use crate::image_processing::flip_v;
 use crate::image_processing::u8_to_u8u8u8;
 use crate::image_processing::Rgb;
-use arboard::ImageData;
 use eframe::egui::InnerResponse;
 use eframe::egui::Pos2;
 use eframe::egui::Window;
 use eframe::glow;
 use eframe::glow::HasContext;
 use eframe::{
-    egui::{color_picker::Alpha, vec2, Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
+    egui::{color_picker::Alpha, Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
     emath::{lerp, remap_clamp},
     epaint::{pos2, Color32, Mesh, Rect, Rgba, Shape, Stroke, Vec2},
 };
-use image::RgbaImage;
-use std::ops::Rem;
 use std::sync::Arc;
 
 use crate::color_picker::ColorStringCopy;

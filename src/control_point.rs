@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::hsv_key_value::HsvKeyValue;
 
-pub fn create_tangent_for_control_point(control_point: &ControlPoint) -> ControlPointTangent {
+pub fn create_tangent_for_control_point() -> ControlPointTangent {
     let hsv = ControlPointType::new(0.0, 0.0, 0.0);
     ControlPointTangent { val: hsv.val }
 }
@@ -30,6 +30,7 @@ impl ControlPointStorage {
     }
 }
 
+#[allow(unused_macros)]
 macro_rules! offset_of {
     ($type:ty, $field:tt) => {{
         let dummy = ::core::mem::MaybeUninit::<$type>::uninit();
