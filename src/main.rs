@@ -30,16 +30,9 @@ fn main() {
         ..Default::default()
     };
 
-    let eframe_result = eframe::run_native(
+    eframe::run_native(
         "Z Color Picker",
         options,
         Box::new(|cc| Box::<ZApp>::new(ZApp::new(cc))),
     );
-
-    match eframe_result {
-        Ok(_) => {}
-        Err(error) => {
-            println!("{:?}", error);
-        }
-    }
 }

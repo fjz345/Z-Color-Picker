@@ -149,7 +149,7 @@ fn ui_previewer_control_points_with_drag(
             previewer_data.enforce_min_size(min_preview_size);
         }
 
-        let _color_response_rect = response_button.ctx.screen_rect();
+        let _color_response_rect = response_button.ctx.available_rect();
     }
 
     response

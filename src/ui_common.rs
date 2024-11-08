@@ -15,6 +15,7 @@ use eframe::{
     emath::{lerp, remap_clamp},
     epaint::{pos2, Color32, Mesh, Rect, Rgba, Shape, Stroke, Vec2},
 };
+use std::borrow::BorrowMut;
 use std::sync::Arc;
 
 use crate::color_picker::ColorStringCopy;
@@ -307,9 +308,11 @@ pub fn color_button_copy(
 ) {
     let button_response = ui.button("📋").on_hover_text("Copy (middle mouse click)");
     if button_response.clicked() {
-        ui.output_mut(|o| {
-            o.copied_text = format_color_as(color.into(), color_copy_format, None);
-        });
+        ui.output().borrow_mut().copied_text =
+            format_color_as(color.into(), color_copy_format, None);
+        // ui.output_mut(|o| {
+        //     o.copied_text = format_color_as(color.into(), color_copy_format, None);
+        // });
     }
 }
 
@@ -321,9 +324,11 @@ pub fn response_copy_color_on_click(
     button_click_type: PointerButton,
 ) {
     if response.clicked_by(button_click_type) {
-        ui.output_mut(|o| {
-            o.copied_text = format_color_as(color.into(), color_copy_format, None);
-        });
+        ui.output().borrow_mut().copied_text =
+            format_color_as(color.into(), color_copy_format, None);
+        // ui.output_mut(|o| {
+        //     o.copied_text = format_color_as(color.into(), color_copy_format, None);
+        // });
     }
 }
 
