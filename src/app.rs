@@ -14,7 +14,7 @@ use eframe::{
 
 use crate::{
     clipboard::{write_color_to_clipboard, write_pixels_to_clipboard},
-    color_picker::{main_color_picker, MainColorPickerCtx, ZColorPickerWrapper},
+    color_picker::{main_color_picker, MainColorPickerCtx, ZColorPicker, ZColorPickerWrapper},
     common::{ColorStringCopy, SplineMode},
     control_point::ControlPoint,
     debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
@@ -155,7 +155,7 @@ pub struct WindowZColorPickerOptions {
     new_preset_window_text: String,
 }
 
-struct ZColorPickerContext {
+struct ZColorPickerAppContext {
     style: Option<Style>,
     z_color_picker: ZColorPickerWrapper,
     previewer: ZPreviewer,
@@ -497,7 +497,7 @@ impl ContentWindow for WindowZColorPicker {
     }
 }
 
-impl ZColorPickerContext {
+impl ZColorPickerAppContext {
     pub fn default() -> Self {
         Self {
             style: None,
@@ -524,6 +524,13 @@ impl ZColorPickerContext {
     }
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn color_picker(&mut self, ui: &mut Ui) {
+        let style = self.style.as_mut().unwrap();
+
+        let z_color_picker = ZColorPicker::new(&mut self.z_color_picker.control_points);
+        ui.add(z_color_picker);
     }
 
     fn simple_demo_menu(&mut self, ui: &mut Ui) {
@@ -673,12 +680,12 @@ impl ZColorPickerContext {
     }
 }
 
-impl TabViewer for ZColorPickerContext {
+impl TabViewer for ZColorPickerAppContext {
     type Tab = String;
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
-            "Simple Demo" => self.simple_demo(ui),
+            "Color Picker" => self.color_picker(ui),
             "Style Editor" => self.style_editor(ui),
             _ => {
                 ui.label(tab.as_str());
@@ -710,7 +717,7 @@ pub struct ZApp {
     monitor_size: Vec2,
     scale_factor: f32,
     state: AppState,
-    z_color_picker_ctx: ZColorPickerContext,
+    z_color_picker_ctx: ZColorPickerAppContext,
     tree: Tree<String>,
 }
 
@@ -720,19 +727,11 @@ impl ZApp {
         const RESOLUTION_REF: f32 = 1080.0;
         let scale_factor: f32 = monitor_size.x.min(monitor_size.y) / RESOLUTION_REF;
 
-        let z_color_picker_ctx = ZColorPickerContext::default();
+        let z_color_picker_ctx = ZColorPickerAppContext::default();
 
-        let mut tree = Tree::new(vec!["Simple Demo".to_owned(), "Style Editor".to_owned()]);
-        let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["Inspector".to_owned()]);
-        let [_, _] = tree.split_below(
-            a,
-            0.7,
-            vec!["File Browser".to_owned(), "Asset Manager".to_owned()],
-        );
-        let [_, _] = tree.split_below(b, 0.5, vec!["Hierarchy".to_owned()]);
-
+        let mut tree = Tree::new(vec!["Color Picker".to_owned()]);
+        let [a, b] = tree.split_right(NodeIndex::root(), 0.3, vec!["Style Editor".to_owned()]);
         let mut open_tabs = HashSet::new();
-
         for node in tree.iter() {
             if let Node::Leaf { tabs, .. } = node {
                 for tab in tabs {
@@ -765,31 +764,29 @@ impl ZApp {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("View", |ui| {
                     // allow certain tabs to be toggled
-                    for tab in &["File Browser", "Asset Manager"] {
-                        // if ui
-                        //     .selectable_label(self.context.open_tabs.contains(*tab), *tab)
-                        //     .clicked()
-                        // {
-                        //     if let Some(index) = self.tree.find_tab(&tab.to_string()) {
-                        //         self.tree.remove_tab(index);
-                        //         self.context.open_tabs.remove(*tab);
-                        //     } else {
-                        //         self.tree.push_to_focused_leaf(tab.to_string());
-                        //     }
+                    for tab in &["Color Picker"] {
+                        if ui
+                            .selectable_label(
+                                self.z_color_picker_ctx.open_tabs.contains(*tab),
+                                *tab,
+                            )
+                            .clicked()
+                        {
+                            if let Some(index) = self.tree.find_tab(&tab.to_string()) {
+                                self.tree.remove_tab(index);
+                                self.z_color_picker_ctx.open_tabs.remove(*tab);
+                            } else {
+                                self.tree.push_to_focused_leaf(tab.to_string());
+                            }
 
-                        //     ui.close_menu();
-                        // }
+                            ui.close_menu();
+                        }
                     }
                 });
             })
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let color_picker_desired_size = Vec2 {
-                x: ui.available_width() * 0.5,
-                y: ui.available_height().min(ui.available_width()),
-            };
-
             ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui| {
                 let layer_id = LayerId::background();
                 let max_rect = ctx.available_rect();
@@ -806,30 +803,34 @@ impl ZApp {
                     .style(style)
                     .show_inside(&mut ui, &mut self.z_color_picker_ctx);
 
-                ui.spacing_mut().slider_width =
-                    color_picker_desired_size.x.min(color_picker_desired_size.y);
+                // let color_picker_desired_size = Vec2 {
+                //     x: ui.available_width() * 0.5,
+                //     y: ui.available_height().min(ui.available_width()),
+                // };
+                // ui.spacing_mut().slider_width =
+                //     color_picker_desired_size.x.min(color_picker_desired_size.y);
 
-                let left_side_reponse = ui.vertical(|ui| {
-                    let z_color_picker_response = self
-                        .z_color_picker_ctx
-                        .z_color_picker
-                        .draw_ui(ui, &mut self.z_color_picker_ctx.color_copy_format);
+                // let left_side_reponse = ui.vertical(|ui| {
+                //     let z_color_picker_response = self
+                //         .z_color_picker_ctx
+                //         .z_color_picker
+                //         .draw_ui(ui, &mut self.z_color_picker_ctx.color_copy_format);
 
-                    z_color_picker_response
-                });
+                //     z_color_picker_response
+                // });
 
-                let z_color_picker_response_option = left_side_reponse.inner;
+                // let z_color_picker_response_option = left_side_reponse.inner;
 
-                self.z_color_picker_ctx.previewer.update(
-                    &self.z_color_picker_ctx.z_color_picker.control_points,
-                    self.z_color_picker_ctx.z_color_picker.options.spline_mode,
-                );
-                self.z_color_picker_ctx.stored_ui_responses = self
-                    .z_color_picker_ctx
-                    .previewer
-                    .draw_ui(&mut ui, self.z_color_picker_ctx.color_copy_format);
+                // self.z_color_picker_ctx.previewer.update(
+                //     &self.z_color_picker_ctx.z_color_picker.control_points,
+                //     self.z_color_picker_ctx.z_color_picker.options.spline_mode,
+                // );
+                // self.z_color_picker_ctx.stored_ui_responses = self
+                //     .z_color_picker_ctx
+                //     .previewer
+                //     .draw_ui(&mut ui, self.z_color_picker_ctx.color_copy_format);
 
-                self.handle_doubleclick_event(&z_color_picker_response_option);
+                // self.handle_doubleclick_event(&z_color_picker_response_option);
 
                 self.handle_middleclick_event(&mut ui);
 

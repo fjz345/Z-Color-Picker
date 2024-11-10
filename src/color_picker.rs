@@ -39,6 +39,9 @@ pub struct ZColorPicker<'a> {
     pub last_modifying_point_index: Option<usize>,
     pub dragging_bezier_index: Option<usize>,
     pub control_point_right_clicked: Option<usize>,
+    pub color_copy_format: ColorStringCopy,
+    pub is_hue_middle_interpolated: bool,
+    pub is_curve_locked: bool,
 }
 
 impl<'a> Widget for ZColorPicker<'a> {
@@ -57,317 +60,323 @@ impl<'a> ZColorPicker<'a> {
             last_modifying_point_index: None,
             dragging_bezier_index: None,
             control_point_right_clicked: None,
+            color_copy_format: ColorStringCopy::default(),
+            is_hue_middle_interpolated: true,
+            is_curve_locked: false,
             // MainColorPickerCtx
         }
     }
 
     fn picker_ui(&mut self, ui: &mut Ui, response: &Response) {
-        // let num_control_points = self.control_points.len();
-        // if let Some(last_modified_index) = self.last_modifying_point_index {
-        //     if num_control_points == 0 {
-        //         self..last_modifying_point_index = None;
-        //     } else {
-        //         self..last_modifying_point_index =
-        //             Some(last_modified_index.clamp(0, num_control_points - 1));
-        //     }
-        // }
+        let num_control_points = self.control_points.len();
+        if let Some(last_modified_index) = self.last_modifying_point_index {
+            if num_control_points == 0 {
+                self.last_modifying_point_index = None;
+            } else {
+                self.last_modifying_point_index =
+                    Some(last_modified_index.clamp(0, num_control_points - 1));
+            }
+        }
 
-        // let main_color_picker_response = ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
-        //     let scale_factor = desired_size.x / ui.spacing().slider_width;
-        //     let desired_size_slider_2d = scale_factor * Vec2::splat(ui.spacing().slider_width);
+        let desired_size = ui.max_rect().size();
 
-        //     let mut is_modifying_index: Option<usize> =
-        //         self.dragging_index.or(self..last_modifying_point_index);
+        let main_color_picker_response = ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
+            let scale_factor = desired_size.x / ui.spacing().slider_width;
+            let desired_size_slider_2d = scale_factor * Vec2::splat(ui.spacing().slider_width);
 
-        //     let modifying_control_point = match is_modifying_index {
-        //         Some(index) => ctx.control_points.get_mut(index),
-        //         None => None,
-        //     };
+            let mut is_modifying_index: Option<usize> = self
+                .dragging_bezier_index
+                .or(self.last_modifying_point_index);
 
-        //     let dummy_color = HsvaGamma {
-        //         h: 0.0,
-        //         s: 0.0,
-        //         v: 0.0,
-        //         a: 1.0,
-        //     };
-        //     let mut color_to_show = match modifying_control_point.as_ref() {
-        //         Some(cp) => cp.val().hsv(),
-        //         None => dummy_color,
-        //     };
+            let modifying_control_point = match is_modifying_index {
+                Some(index) => self.control_points.get_mut(index),
+                None => None,
+            };
 
-        //     let current_color_size =
-        //         scale_factor * vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
-        //     let response: Response =
-        //         show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
-        //     response_copy_color_on_click(
-        //         ui,
-        //         &response,
-        //         color_to_show,
-        //         ctx.color_copy_format,
-        //         PointerButton::Middle,
-        //     );
+            let dummy_color = HsvaGamma {
+                h: 0.0,
+                s: 0.0,
+                v: 0.0,
+                a: 1.0,
+            };
+            let mut color_to_show = match modifying_control_point.as_ref() {
+                Some(cp) => cp.val().hsv(),
+                None => dummy_color,
+            };
 
-        //     let alpha = Alpha::Opaque;
-        //     color_text_ui(ui, color_to_show, alpha, ctx.color_copy_format);
+            let current_color_size =
+                scale_factor * vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
+            let response: Response =
+                show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
+            response_copy_color_on_click(
+                ui,
+                &response,
+                color_to_show,
+                self.color_copy_format,
+                PointerButton::Middle,
+            );
 
-        //     if alpha == Alpha::BlendOrAdditive {
-        //         // We signal additive blending by storing a negative alpha (a bit ironic).
-        //         let a = &mut color_to_show.a;
-        //         let mut additive = *a < 0.0;
-        //         ui.horizontal(|ui| {
-        //             ui.label("Blending:");
-        //             ui.radio_value(&mut additive, false, "Normal");
-        //             ui.radio_value(&mut additive, true, "Additive");
+            let alpha = Alpha::Opaque;
+            color_text_ui(ui, color_to_show, alpha, self.color_copy_format);
 
-        //             if additive {
-        //                 *a = -a.abs();
-        //             }
+            if alpha == Alpha::BlendOrAdditive {
+                // We signal additive blending by storing a negative alpha (a bit ironic).
+                let a = &mut color_to_show.a;
+                let mut additive = *a < 0.0;
+                ui.horizontal(|ui| {
+                    ui.label("Blending:");
+                    ui.radio_value(&mut additive, false, "Normal");
+                    ui.radio_value(&mut additive, true, "Additive");
 
-        //             if !additive {
-        //                 *a = a.abs();
-        //             }
-        //         });
-        //     }
+                    if additive {
+                        *a = -a.abs();
+                    }
 
-        //     let additive = color_to_show.a < 0.0;
+                    if !additive {
+                        *a = a.abs();
+                    }
+                });
+            }
 
-        //     let opaque = HsvaGamma {
-        //         a: 1.0,
-        //         ..color_to_show
-        //     };
+            let additive = color_to_show.a < 0.0;
 
-        //     let hue_slider_desired_size =
-        //         scale_factor * vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
+            let opaque = HsvaGamma {
+                a: 1.0,
+                ..color_to_show
+            };
 
-        //     if alpha == Alpha::Opaque {
-        //         color_to_show.a = 1.0;
-        //     } else {
-        //         let a = &mut color_to_show.a;
+            let hue_slider_desired_size =
+                scale_factor * vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
 
-        //         if alpha == Alpha::OnlyBlend {
-        //             if *a < 0.0 {
-        //                 *a = 0.5; // was additive, but isn't allowed to be
-        //             }
-        //             color_slider_1d(ui, hue_slider_desired_size, Some(a), |a| {
-        //                 HsvaGamma { a, ..opaque }.into()
-        //             })
-        //             .on_hover_text("Alpha");
-        //         } else if !additive {
-        //             color_slider_1d(ui, hue_slider_desired_size, Some(a), |a| {
-        //                 HsvaGamma { a, ..opaque }.into()
-        //             })
-        //             .on_hover_text("Alpha");
-        //         }
-        //     }
+            if alpha == Alpha::Opaque {
+                color_to_show.a = 1.0;
+            } else {
+                let a = &mut color_to_show.a;
 
-        //     let _prev_hue = color_to_show.h;
-        //     let mut delta_hue = None;
-        //     let mut pick_hue_unused = 0.0_f32;
-        //     let pick_hue = Some(&mut pick_hue_unused);
-        //     let hue_response = color_slider_1d(ui, hue_slider_desired_size, pick_hue, |h| {
-        //         HsvaGamma {
-        //             h,
-        //             s: 1.0,
-        //             v: 1.0,
-        //             a: 1.0,
-        //         }
-        //         .into()
-        //     })
-        //     .on_hover_text("Hue");
+                if alpha == Alpha::OnlyBlend {
+                    if *a < 0.0 {
+                        *a = 0.5; // was additive, but isn't allowed to be
+                    }
+                    color_slider_1d(ui, hue_slider_desired_size, Some(a), |a| {
+                        HsvaGamma { a, ..opaque }.into()
+                    })
+                    .on_hover_text("Alpha");
+                } else if !additive {
+                    color_slider_1d(ui, hue_slider_desired_size, Some(a), |a| {
+                        HsvaGamma { a, ..opaque }.into()
+                    })
+                    .on_hover_text("Alpha");
+                }
+            }
 
-        //     if hue_response.clicked_by(PointerButton::Primary) {
-        //         delta_hue = Some(color_to_show.h - pick_hue_unused);
-        //     } else if hue_response.dragged_by(PointerButton::Primary) {
-        //         delta_hue = Some(color_to_show.h - pick_hue_unused);
-        //     }
+            let _prev_hue = color_to_show.h;
+            let mut delta_hue = None;
+            let mut pick_hue_unused = 0.0_f32;
+            let pick_hue = Some(&mut pick_hue_unused);
+            let hue_response = color_slider_1d(ui, hue_slider_desired_size, pick_hue, |h| {
+                HsvaGamma {
+                    h,
+                    s: 1.0,
+                    v: 1.0,
+                    a: 1.0,
+                }
+                .into()
+            })
+            .on_hover_text("Hue");
 
-        //     let (_control_points_hue_response, hue_selected_index) = ui_hue_control_points_overlay(
-        //         ui,
-        //         &hue_response,
-        //         ctx.control_points,
-        //         is_modifying_index,
-        //         ctx.is_hue_middle_interpolated,
-        //     );
+            if hue_response.clicked_by(PointerButton::Primary) {
+                delta_hue = Some(color_to_show.h - pick_hue_unused);
+            } else if hue_response.dragged_by(PointerButton::Primary) {
+                delta_hue = Some(color_to_show.h - pick_hue_unused);
+            }
 
-        //     if let Some(new_selected_index) = hue_selected_index {
-        //         is_modifying_index = Some(new_selected_index);
-        //     }
+            let (_control_points_hue_response, hue_selected_index) = ui_hue_control_points_overlay(
+                ui,
+                &hue_response,
+                self.control_points,
+                is_modifying_index,
+                self.is_hue_middle_interpolated,
+            );
 
-        //     if let Some(h) = delta_hue {
-        //         if let Some(index) = is_modifying_index {
-        //             if ctx.is_curve_locked {
-        //                 // Move all points
-        //                 for i in 0..num_control_points {
-        //                     let val_mut_ref = ctx.control_points[i].val_mut();
-        //                     let clamped_new_h = (val_mut_ref.h() - h).rem_euclid(1.0);
-        //                     val_mut_ref.val[2] = clamped_new_h;
-        //                 }
-        //             } else {
-        //                 const MOVE_EVEN_IF_NOT_DRAG: bool = false;
-        //                 if MOVE_EVEN_IF_NOT_DRAG {
-        //                     let val_mut_ref = ctx.control_points[index].val_mut();
-        //                     // Prevent wrapping from 1.0 -> 0.0, then wrap around [0,1.0]
-        //                     let clamped_new_h =
-        //                         (val_mut_ref.h() - h).clamp(0.0, 0.999).rem_euclid(1.0);
-        //                     val_mut_ref.val[2] = clamped_new_h;
-        //                 }
-        //             }
-        //         }
-        //     }
+            if let Some(new_selected_index) = hue_selected_index {
+                is_modifying_index = Some(new_selected_index);
+            }
 
-        //     let slider_2d_reponse: Response = color_slider_2d(
-        //         ui,
-        //         desired_size_slider_2d,
-        //         &mut color_to_show.s,
-        //         &mut color_to_show.v,
-        //         main_color_picker_color_at_function(color_to_show.h, 1.0),
-        //     );
+            if let Some(h) = delta_hue {
+                if let Some(index) = is_modifying_index {
+                    if self.is_curve_locked {
+                        // Move all points
+                        for i in 0..num_control_points {
+                            let val_mut_ref = self.control_points[i].val_mut();
+                            let clamped_new_h = (val_mut_ref.h() - h).rem_euclid(1.0);
+                            val_mut_ref.val[2] = clamped_new_h;
+                        }
+                    } else {
+                        const MOVE_EVEN_IF_NOT_DRAG: bool = false;
+                        if MOVE_EVEN_IF_NOT_DRAG {
+                            let val_mut_ref = self.control_points[index].val_mut();
+                            // Prevent wrapping from 1.0 -> 0.0, then wrap around [0,1.0]
+                            let clamped_new_h =
+                                (val_mut_ref.h() - h).clamp(0.0, 0.999).rem_euclid(1.0);
+                            val_mut_ref.val[2] = clamped_new_h;
+                        }
+                    }
+                }
+            }
 
-        //     // Do not see what this is doing, probably unuseful old code
-        //     // if modifying_control_point.is_some() {
-        //     //     let control_point = match modifying_control_point {
-        //     //         Some(a) => Some(ctx.control_points[a].val_mut()),
-        //     //         _ => None,
-        //     //     };
-        //     //     let unwrapped = &mut control_point.unwrap();
-        //     //     unwrapped.val[0] = color_to_show.s;
-        //     //     unwrapped.val[1] = color_to_show.v;
-        //     // }
+            let slider_2d_reponse: Response = color_slider_2d(
+                ui,
+                desired_size_slider_2d,
+                &mut color_to_show.s,
+                &mut color_to_show.v,
+                main_color_picker_color_at_function(color_to_show.h, 1.0),
+            );
 
-        //     let _spline_gradient_repsonse = ui_ordered_spline_gradient(
-        //         ui,
-        //         ctx.control_points,
-        //         ctx.spline_mode,
-        //         &slider_2d_reponse,
-        //     );
+            // Do not see what this is doing, probably unuseful old code
+            // if modifying_control_point.is_some() {
+            //     let control_point = match modifying_control_point {
+            //         Some(a) => Some(ctx.control_points[a].val_mut()),
+            //         _ => None,
+            //     };
+            //     let unwrapped = &mut control_point.unwrap();
+            //     unwrapped.val[0] = color_to_show.s;
+            //     unwrapped.val[1] = color_to_show.v;
+            // }
 
-        //     let (
-        //         dragged_points_response,
-        //         selected_index,
-        //         hovering_control_point,
-        //         selected_tangent_index,
-        //         dragged_tangent_response,
-        //     ) = ui_ordered_control_points(
-        //         ui,
-        //         ctx.control_points,
-        //         &is_modifying_index,
-        //         ctx.is_hue_middle_interpolated,
-        //         &slider_2d_reponse,
-        //         ctx.spline_mode == SplineMode::Bezier,
-        //     );
+            let _spline_gradient_repsonse = ui_ordered_spline_gradient(
+                ui,
+                self.control_points,
+                self.spline_mode,
+                &slider_2d_reponse,
+            );
 
-        //     self..control_point_right_clicked = match hovering_control_point {
-        //         Some(a) => {
-        //             if a.0.clicked_by(PointerButton::Secondary) {
-        //                 Some(a.1)
-        //             } else {
-        //                 None
-        //             }
-        //         }
-        //         _ => None,
-        //     };
+            let (
+                dragged_points_response,
+                selected_index,
+                hovering_control_point,
+                selected_tangent_index,
+                dragged_tangent_response,
+            ) = ui_ordered_control_points(
+                ui,
+                self.control_points,
+                &is_modifying_index,
+                self.is_hue_middle_interpolated,
+                &slider_2d_reponse,
+                self.spline_mode == SplineMode::Bezier,
+            );
 
-        //     if dragged_points_response.is_none() {
-        //         self..dragging_index = None;
-        //     }
+            self.control_point_right_clicked = match hovering_control_point {
+                Some(a) => {
+                    if a.0.clicked_by(PointerButton::Secondary) {
+                        Some(a.1)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
 
-        //     match selected_index {
-        //         Some(index) => self..last_modifying_point_index = Some(index),
-        //         _ => {}
-        //     }
+            if dragged_points_response.is_none() {
+                self.dragging_bezier_index = None;
+            }
 
-        //     match dragged_points_response {
-        //         Some(r) => {
-        //             if r.dragged_by(PointerButton::Primary) {
-        //                 self..dragging_index = selected_index;
-        //                 match is_modifying_index {
-        //                     Some(index) => {
-        //                         {
-        //                             let point_x_ref = &mut ctx.control_points[index].val_mut()[0];
-        //                             *point_x_ref +=
-        //                                 r.drag_delta().x / slider_2d_reponse.rect.size().x;
-        //                         }
-        //                         {
-        //                             let point_y_ref = &mut ctx.control_points[index].val_mut()[1];
-        //                             *point_y_ref -=
-        //                                 r.drag_delta().y / slider_2d_reponse.rect.size().y;
-        //                         }
-        //                     }
-        //                     _ => {}
-        //                 }
+            match selected_index {
+                Some(index) => self.last_modifying_point_index = Some(index),
+                _ => {}
+            }
 
-        //                 if ctx.is_curve_locked {
-        //                     // Move all other points
-        //                     for i in 0..num_control_points {
-        //                         if i == is_modifying_index.unwrap_or(0) {
-        //                             continue;
-        //                         }
+            match dragged_points_response {
+                Some(r) => {
+                    if r.dragged_by(PointerButton::Primary) {
+                        self.dragging_bezier_index = selected_index;
+                        match is_modifying_index {
+                            Some(index) => {
+                                {
+                                    let point_x_ref = &mut self.control_points[index].val_mut()[0];
+                                    *point_x_ref +=
+                                        r.drag_delta().x / slider_2d_reponse.rect.size().x;
+                                }
+                                {
+                                    let point_y_ref = &mut self.control_points[index].val_mut()[1];
+                                    *point_y_ref -=
+                                        r.drag_delta().y / slider_2d_reponse.rect.size().y;
+                                }
+                            }
+                            _ => {}
+                        }
 
-        //                         {
-        //                             let point_x_ref = &mut ctx.control_points[i].val_mut()[0];
-        //                             *point_x_ref +=
-        //                                 r.drag_delta().x / slider_2d_reponse.rect.size().x;
-        //                         }
-        //                         {
-        //                             let point_y_ref = &mut ctx.control_points[i].val_mut()[1];
-        //                             *point_y_ref -=
-        //                                 r.drag_delta().y / slider_2d_reponse.rect.size().y;
-        //                         }
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //         _ => {}
-        //     }
+                        if self.is_curve_locked {
+                            // Move all other points
+                            for i in 0..num_control_points {
+                                if i == is_modifying_index.unwrap_or(0) {
+                                    continue;
+                                }
 
-        //     match dragged_tangent_response {
-        //         Some(r) => {
-        //             if r.dragged_by(PointerButton::Primary) {
-        //                 match self..last_modifying_point_index {
-        //                     Some(index) => {
-        //                         if let Some(tang) = &mut ctx.control_points[index].tangents_mut()
-        //                             [selected_tangent_index.unwrap()]
-        //                         {
-        //                             {
-        //                                 let point_x_ref = &mut tang[0];
-        //                                 *point_x_ref +=
-        //                                     r.drag_delta().x / slider_2d_reponse.rect.size().x;
-        //                             }
+                                {
+                                    let point_x_ref = &mut self.control_points[i].val_mut()[0];
+                                    *point_x_ref +=
+                                        r.drag_delta().x / slider_2d_reponse.rect.size().x;
+                                }
+                                {
+                                    let point_y_ref = &mut self.control_points[i].val_mut()[1];
+                                    *point_y_ref -=
+                                        r.drag_delta().y / slider_2d_reponse.rect.size().y;
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
 
-        //                             {
-        //                                 let point_y_ref = &mut tang[1];
-        //                                 *point_y_ref -=
-        //                                     r.drag_delta().y / slider_2d_reponse.rect.size().y;
-        //                             }
-        //                         }
-        //                     }
-        //                     _ => {}
-        //                 }
+            match dragged_tangent_response {
+                Some(r) => {
+                    if r.dragged_by(PointerButton::Primary) {
+                        match self.last_modifying_point_index {
+                            Some(index) => {
+                                if let Some(tang) = &mut self.control_points[index].tangents_mut()
+                                    [selected_tangent_index.unwrap()]
+                                {
+                                    {
+                                        let point_x_ref = &mut tang[0];
+                                        *point_x_ref +=
+                                            r.drag_delta().x / slider_2d_reponse.rect.size().x;
+                                    }
 
-        //                 // if is_curve_locked {
-        //                 //     // Move all other points
-        //                 //     for i in 0..num_control_points {
-        //                 //         if i == is_modifying_index.unwrap_or(0) {
-        //                 //             continue;
-        //                 //         }
+                                    {
+                                        let point_y_ref = &mut tang[1];
+                                        *point_y_ref -=
+                                            r.drag_delta().y / slider_2d_reponse.rect.size().y;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
 
-        //                 //         {
-        //                 //             let point_x_ref = &mut control_points[i].val[0];
-        //                 //             *point_x_ref += r.drag_delta().x / slider_2d_reponse.rect.size().x;
-        //                 //         }
-        //                 //         {
-        //                 //             let point_y_ref = &mut control_points[i].val[1];
-        //                 //             *point_y_ref -= r.drag_delta().y / slider_2d_reponse.rect.size().y;
-        //                 //         }
-        //                 //     }
-        //                 // }
-        //             }
-        //         }
-        //         _ => {}
-        //     }
+                        // if is_curve_locked {
+                        //     // Move all other points
+                        //     for i in 0..num_control_points {
+                        //         if i == is_modifying_index.unwrap_or(0) {
+                        //             continue;
+                        //         }
 
-        //     slider_2d_reponse
-        // });
+                        //         {
+                        //             let point_x_ref = &mut control_points[i].val[0];
+                        //             *point_x_ref += r.drag_delta().x / slider_2d_reponse.rect.size().x;
+                        //         }
+                        //         {
+                        //             let point_y_ref = &mut control_points[i].val[1];
+                        //             *point_y_ref -= r.drag_delta().y / slider_2d_reponse.rect.size().y;
+                        //         }
+                        //     }
+                        // }
+                    }
+                }
+                _ => {}
+            }
+
+            slider_2d_reponse
+        });
 
         // return main_color_picker_response.inner;
     }
