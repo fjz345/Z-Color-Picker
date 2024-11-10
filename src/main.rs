@@ -10,6 +10,7 @@ mod app;
 mod clipboard;
 mod color_picker;
 mod common;
+mod content_windows;
 mod control_point;
 mod curves;
 mod debug_windows;
