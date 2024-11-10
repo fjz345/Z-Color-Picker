@@ -112,21 +112,14 @@ impl ZColorPickerAppContext {
         Self::default()
     }
 
-    fn color_picker_menu(&mut self, ui: &mut Ui) {
+    fn tab_color_picker(&mut self, ui: &mut Ui) {
         let style = self.style.as_mut().unwrap();
 
         let z_color_picker = ZColorPicker::new(&mut self.z_color_picker.control_points);
-        ui.add(z_color_picker);
+        ui.add_sized(Vec2::new(200.0, 200.0), z_color_picker);
     }
 
-    fn simple_demo_menu(&mut self, ui: &mut Ui) {
-        ui.label("Egui widget example");
-        ui.menu_button("Sub menu", |ui| {
-            ui.label("hello :)");
-        });
-    }
-
-    fn style_editor(&mut self, ui: &mut Ui) {
+    fn tab_style_editor(&mut self, ui: &mut Ui) {
         ui.heading("Style Editor");
 
         let style = self.style.as_mut().unwrap();
@@ -256,8 +249,8 @@ impl TabViewer for ZColorPickerAppContext {
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
-            "Color Picker" => self.color_picker_menu(ui),
-            "Style Editor" => self.style_editor(ui),
+            "Color Picker" => self.tab_color_picker(ui),
+            "Style Editor" => self.tab_style_editor(ui),
             _ => {
                 ui.label(tab.as_str());
             }
@@ -265,13 +258,13 @@ impl TabViewer for ZColorPickerAppContext {
     }
 
     fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        match tab.as_str() {
-            "Simple Demo" => self.simple_demo_menu(ui),
-            _ => {
-                ui.label(tab.to_string());
-                ui.label("This is a context menu");
-            }
-        }
+        // match tab.as_str() {
+        //     "Simple Demo" => self.simple_demo_menu(ui),
+        //     _ => {
+        //         ui.label(tab.to_string());
+        //         ui.label("This is a context menu");
+        //     }
+        // }
     }
 
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
@@ -326,6 +319,8 @@ impl ZApp {
         ctx.set_pixels_per_point(self.scale_factor);
         frame.set_window_size(self.monitor_size);
         frame.set_visible(true);
+
+        ctx.set_debug_on_hover(true);
         // frame.set_fullscreen(false);
         // frame.set_maximized(true);
     }

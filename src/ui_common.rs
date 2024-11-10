@@ -336,7 +336,7 @@ pub fn color_text_ui(
     color: impl Into<Color32>,
     alpha: Alpha,
     color_copy_format: ColorStringCopy,
-) {
+) -> InnerResponse<()> {
     let color = color.into();
     let [r, g, b, a] = color.to_array();
 
@@ -360,7 +360,7 @@ pub fn color_text_ui(
         }
 
         *ui.style_mut() = old_style;
-    });
+    })
 }
 
 pub fn read_pixels_from_frame_one_pixel(

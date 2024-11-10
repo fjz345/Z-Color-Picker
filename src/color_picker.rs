@@ -13,8 +13,8 @@ use eframe::{
     egui::{
         self,
         color_picker::{show_color, Alpha},
-        InnerResponse, Layout, PointerButton, Pos2, Response, Sense, Ui, Widget, WidgetInfo,
-        Window,
+        InnerResponse, Layout, NumExt, PointerButton, Pos2, Rect, Response, Sense, TextStyle, Ui,
+        Widget, WidgetInfo, Window,
     },
     epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
@@ -35,22 +35,16 @@ use crate::{
 
 pub struct ZColorPicker<'a> {
     pub control_points: &'a mut Vec<ControlPoint>,
-    pub spline_mode: SplineMode,
     pub last_modifying_point_index: Option<usize>,
     pub dragging_bezier_index: Option<usize>,
     pub control_point_right_clicked: Option<usize>,
     pub color_copy_format: ColorStringCopy,
-    pub is_hue_middle_interpolated: bool,
-    pub is_curve_locked: bool,
-    pub is_insert_right: bool,
-    pub is_window_lock: bool,
+    pub options: ZColorPickerOptions,
 }
 
 impl<'a> Widget for ZColorPicker<'a> {
     fn ui(mut self, ui: &mut Ui) -> Response {
-        let inner_response = ui.vertical(|ui| self.add_contents(ui));
-
-        inner_response.inner | inner_response.response
+        self.add_contents(ui)
     }
 }
 
@@ -58,21 +52,17 @@ impl<'a> ZColorPicker<'a> {
     pub fn new(control_points: &'a mut Vec<ControlPoint>) -> Self {
         Self {
             control_points,
-            spline_mode: SplineMode::HermiteBezier,
             last_modifying_point_index: None,
             dragging_bezier_index: None,
             control_point_right_clicked: None,
             color_copy_format: ColorStringCopy::default(),
-            is_hue_middle_interpolated: true,
-            is_curve_locked: false,
-            is_insert_right: true,
-            is_window_lock: true,
+            options: Default::default(),
             // MainColorPickerCtx
         }
     }
 
     pub fn post_update_control_points(&mut self) {
-        if self.is_hue_middle_interpolated {
+        if self.options.is_hue_middle_interpolated {
             let num_points = self.control_points.len();
             if num_points >= 2 {
                 let points = &mut self.control_points[..];
@@ -90,7 +80,7 @@ impl<'a> ZColorPicker<'a> {
             }
         }
 
-        if self.is_window_lock {
+        if self.options.is_window_lock {
             for i in 0..self.control_points.len() {
                 let cp = &mut self.control_points[i];
                 cp.val_mut()[0] = cp.val()[0].clamp(0.0, 1.0);
@@ -138,7 +128,7 @@ impl<'a> ZColorPicker<'a> {
 
         let new_index = match control_point_pivot {
             Some(index) => {
-                if self.is_insert_right {
+                if self.options.is_insert_right {
                     index + 1
                 } else {
                     index
@@ -148,7 +138,7 @@ impl<'a> ZColorPicker<'a> {
                 if self.control_points.len() <= 0 {
                     0
                 } else {
-                    if self.is_insert_right {
+                    if self.options.is_insert_right {
                         self.control_points.len()
                     } else {
                         0
@@ -252,7 +242,7 @@ impl<'a> ZColorPicker<'a> {
         false
     }
 
-    fn picker_ui(&mut self, ui: &mut Ui, response: &Response) {
+    fn picker_ui(&mut self, ui: &mut Ui, size_as_slider: bool) -> InnerResponse<Response> {
         let num_control_points = self.control_points.len();
         if let Some(last_modified_index) = self.last_modifying_point_index {
             if num_control_points == 0 {
@@ -263,329 +253,325 @@ impl<'a> ZColorPicker<'a> {
             }
         }
 
-        let desired_size = ui.max_rect().size();
+        let collection_response =
+            ui.with_layout(Layout::top_down_justified(egui::Align::Min), |ui| {
+                let scale_factor = ui.available_size().x / ui.spacing().slider_width;
+                let total_desired_size = if size_as_slider {
+                    scale_factor * Vec2::splat(ui.spacing().slider_width)
+                } else {
+                    ui.available_size()
+                };
+                let current_color_desired_size =
+                    vec2(total_desired_size.x, ui.spacing().interact_size.y);
+                let hue_slider_desired_size =
+                    vec2(total_desired_size.x, ui.spacing().interact_size.y);
 
-        let main_color_picker_response = ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
-            let scale_factor = desired_size.x / ui.spacing().slider_width;
-            let desired_size_slider_2d = scale_factor * Vec2::splat(ui.spacing().slider_width);
+                let mut is_modifying_index: Option<usize> = self
+                    .dragging_bezier_index
+                    .or(self.last_modifying_point_index);
 
-            let mut is_modifying_index: Option<usize> = self
-                .dragging_bezier_index
-                .or(self.last_modifying_point_index);
+                let modifying_control_point = match is_modifying_index {
+                    Some(index) => self.control_points.get_mut(index),
+                    None => None,
+                };
 
-            let modifying_control_point = match is_modifying_index {
-                Some(index) => self.control_points.get_mut(index),
-                None => None,
-            };
-
-            let dummy_color = HsvaGamma {
-                h: 0.0,
-                s: 0.0,
-                v: 0.0,
-                a: 1.0,
-            };
-            let mut color_to_show = match modifying_control_point.as_ref() {
-                Some(cp) => cp.val().hsv(),
-                None => dummy_color,
-            };
-
-            let current_color_size =
-                scale_factor * vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
-            let response: Response =
-                show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
-            response_copy_color_on_click(
-                ui,
-                &response,
-                color_to_show,
-                self.color_copy_format,
-                PointerButton::Middle,
-            );
-
-            let alpha = Alpha::Opaque;
-            color_text_ui(ui, color_to_show, alpha, self.color_copy_format);
-
-            if alpha == Alpha::BlendOrAdditive {
-                // We signal additive blending by storing a negative alpha (a bit ironic).
-                let a = &mut color_to_show.a;
-                let mut additive = *a < 0.0;
-                ui.horizontal(|ui| {
-                    ui.label("Blending:");
-                    ui.radio_value(&mut additive, false, "Normal");
-                    ui.radio_value(&mut additive, true, "Additive");
-
-                    if additive {
-                        *a = -a.abs();
-                    }
-
-                    if !additive {
-                        *a = a.abs();
-                    }
-                });
-            }
-
-            let additive = color_to_show.a < 0.0;
-
-            let opaque = HsvaGamma {
-                a: 1.0,
-                ..color_to_show
-            };
-
-            let hue_slider_desired_size =
-                scale_factor * vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
-
-            if alpha == Alpha::Opaque {
-                color_to_show.a = 1.0;
-            } else {
-                let a = &mut color_to_show.a;
-
-                if alpha == Alpha::OnlyBlend {
-                    if *a < 0.0 {
-                        *a = 0.5; // was additive, but isn't allowed to be
-                    }
-                    color_slider_1d(ui, hue_slider_desired_size, Some(a), |a| {
-                        HsvaGamma { a, ..opaque }.into()
-                    })
-                    .on_hover_text("Alpha");
-                } else if !additive {
-                    color_slider_1d(ui, hue_slider_desired_size, Some(a), |a| {
-                        HsvaGamma { a, ..opaque }.into()
-                    })
-                    .on_hover_text("Alpha");
-                }
-            }
-
-            let _prev_hue = color_to_show.h;
-            let mut delta_hue = None;
-            let mut pick_hue_unused = 0.0_f32;
-            let pick_hue = Some(&mut pick_hue_unused);
-            let hue_response = color_slider_1d(ui, hue_slider_desired_size, pick_hue, |h| {
-                HsvaGamma {
-                    h,
-                    s: 1.0,
-                    v: 1.0,
+                let dummy_color = HsvaGamma {
+                    h: 0.0,
+                    s: 0.0,
+                    v: 0.0,
                     a: 1.0,
+                };
+                let mut color_to_show = match modifying_control_point.as_ref() {
+                    Some(cp) => cp.val().hsv(),
+                    None => dummy_color,
+                };
+
+                let response: Response = show_color(ui, color_to_show, current_color_desired_size)
+                    .on_hover_text("Selected color");
+                response_copy_color_on_click(
+                    ui,
+                    &response,
+                    color_to_show,
+                    self.color_copy_format,
+                    PointerButton::Middle,
+                );
+
+                let alpha = Alpha::Opaque;
+                let current_color_text_response =
+                    color_text_ui(ui, color_to_show, alpha, self.color_copy_format);
+
+                if alpha == Alpha::BlendOrAdditive {
+                    // We signal additive blending by storing a negative alpha (a bit ironic).
+                    let a = &mut color_to_show.a;
+                    let mut additive = *a < 0.0;
+                    ui.horizontal(|ui| {
+                        ui.label("Blending:");
+                        ui.radio_value(&mut additive, false, "Normal");
+                        ui.radio_value(&mut additive, true, "Additive");
+
+                        if additive {
+                            *a = -a.abs();
+                        }
+
+                        if !additive {
+                            *a = a.abs();
+                        }
+                    });
                 }
-                .into()
-            })
-            .on_hover_text("Hue");
 
-            if hue_response.clicked_by(PointerButton::Primary) {
-                delta_hue = Some(color_to_show.h - pick_hue_unused);
-            } else if hue_response.dragged_by(PointerButton::Primary) {
-                delta_hue = Some(color_to_show.h - pick_hue_unused);
-            }
+                let additive = color_to_show.a < 0.0;
 
-            let (_control_points_hue_response, hue_selected_index) = ui_hue_control_points_overlay(
-                ui,
-                &hue_response,
-                self.control_points,
-                is_modifying_index,
-                self.is_hue_middle_interpolated,
-            );
+                let opaque = HsvaGamma {
+                    a: 1.0,
+                    ..color_to_show
+                };
 
-            if let Some(new_selected_index) = hue_selected_index {
-                is_modifying_index = Some(new_selected_index);
-            }
+                if alpha == Alpha::Opaque {
+                    color_to_show.a = 1.0;
+                } else {
+                    let a = &mut color_to_show.a;
 
-            if let Some(h) = delta_hue {
-                if let Some(index) = is_modifying_index {
-                    if self.is_curve_locked {
-                        // Move all points
-                        for i in 0..num_control_points {
-                            let val_mut_ref = self.control_points[i].val_mut();
-                            let clamped_new_h = (val_mut_ref.h() - h).rem_euclid(1.0);
-                            val_mut_ref.val[2] = clamped_new_h;
+                    if alpha == Alpha::OnlyBlend {
+                        if *a < 0.0 {
+                            *a = 0.5; // was additive, but isn't allowed to be
                         }
-                    } else {
-                        const MOVE_EVEN_IF_NOT_DRAG: bool = false;
-                        if MOVE_EVEN_IF_NOT_DRAG {
-                            let val_mut_ref = self.control_points[index].val_mut();
-                            // Prevent wrapping from 1.0 -> 0.0, then wrap around [0,1.0]
-                            let clamped_new_h =
-                                (val_mut_ref.h() - h).clamp(0.0, 0.999).rem_euclid(1.0);
-                            val_mut_ref.val[2] = clamped_new_h;
-                        }
+                        color_slider_1d(ui, hue_slider_desired_size, Some(a), |a| {
+                            HsvaGamma { a, ..opaque }.into()
+                        })
+                        .on_hover_text("Alpha");
+                    } else if !additive {
+                        color_slider_1d(ui, hue_slider_desired_size, Some(a), |a| {
+                            HsvaGamma { a, ..opaque }.into()
+                        })
+                        .on_hover_text("Alpha");
                     }
                 }
-            }
 
-            let slider_2d_reponse: Response = color_slider_2d(
-                ui,
-                desired_size_slider_2d,
-                &mut color_to_show.s,
-                &mut color_to_show.v,
-                main_color_picker_color_at_function(color_to_show.h, 1.0),
-            );
-
-            // Do not see what this is doing, probably unuseful old code
-            // if modifying_control_point.is_some() {
-            //     let control_point = match modifying_control_point {
-            //         Some(a) => Some(ctx.control_points[a].val_mut()),
-            //         _ => None,
-            //     };
-            //     let unwrapped = &mut control_point.unwrap();
-            //     unwrapped.val[0] = color_to_show.s;
-            //     unwrapped.val[1] = color_to_show.v;
-            // }
-
-            let _spline_gradient_repsonse = ui_ordered_spline_gradient(
-                ui,
-                self.control_points,
-                self.spline_mode,
-                &slider_2d_reponse,
-            );
-
-            let (
-                dragged_points_response,
-                selected_index,
-                hovering_control_point,
-                selected_tangent_index,
-                dragged_tangent_response,
-            ) = ui_ordered_control_points(
-                ui,
-                self.control_points,
-                &is_modifying_index,
-                self.is_hue_middle_interpolated,
-                &slider_2d_reponse,
-                self.spline_mode == SplineMode::Bezier,
-            );
-
-            self.control_point_right_clicked = match hovering_control_point {
-                Some(a) => {
-                    if a.0.clicked_by(PointerButton::Secondary) {
-                        Some(a.1)
-                    } else {
-                        None
+                let _prev_hue = color_to_show.h;
+                let mut delta_hue = None;
+                let mut pick_hue_unused = 0.0_f32;
+                let pick_hue = Some(&mut pick_hue_unused);
+                let hue_response = color_slider_1d(ui, hue_slider_desired_size, pick_hue, |h| {
+                    HsvaGamma {
+                        h,
+                        s: 1.0,
+                        v: 1.0,
+                        a: 1.0,
                     }
+                    .into()
+                })
+                .on_hover_text("Hue");
+
+                if hue_response.clicked_by(PointerButton::Primary) {
+                    delta_hue = Some(color_to_show.h - pick_hue_unused);
+                } else if hue_response.dragged_by(PointerButton::Primary) {
+                    delta_hue = Some(color_to_show.h - pick_hue_unused);
                 }
-                _ => None,
-            };
 
-            if dragged_points_response.is_none() {
-                self.dragging_bezier_index = None;
-            }
+                let (_control_points_hue_response, hue_selected_index) =
+                    ui_hue_control_points_overlay(
+                        ui,
+                        &hue_response,
+                        self.control_points,
+                        is_modifying_index,
+                        self.options.is_hue_middle_interpolated,
+                    );
 
-            match selected_index {
-                Some(index) => self.last_modifying_point_index = Some(index),
-                _ => {}
-            }
+                if let Some(new_selected_index) = hue_selected_index {
+                    is_modifying_index = Some(new_selected_index);
+                }
 
-            match dragged_points_response {
-                Some(r) => {
-                    if r.dragged_by(PointerButton::Primary) {
-                        self.dragging_bezier_index = selected_index;
-                        match is_modifying_index {
-                            Some(index) => {
-                                {
-                                    let point_x_ref = &mut self.control_points[index].val_mut()[0];
-                                    *point_x_ref +=
-                                        r.drag_delta().x / slider_2d_reponse.rect.size().x;
-                                }
-                                {
-                                    let point_y_ref = &mut self.control_points[index].val_mut()[1];
-                                    *point_y_ref -=
-                                        r.drag_delta().y / slider_2d_reponse.rect.size().y;
-                                }
-                            }
-                            _ => {}
-                        }
-
-                        if self.is_curve_locked {
-                            // Move all other points
+                if let Some(h) = delta_hue {
+                    if let Some(index) = is_modifying_index {
+                        if self.options.is_curve_locked {
+                            // Move all points
                             for i in 0..num_control_points {
-                                if i == is_modifying_index.unwrap_or(0) {
-                                    continue;
-                                }
-
-                                {
-                                    let point_x_ref = &mut self.control_points[i].val_mut()[0];
-                                    *point_x_ref +=
-                                        r.drag_delta().x / slider_2d_reponse.rect.size().x;
-                                }
-                                {
-                                    let point_y_ref = &mut self.control_points[i].val_mut()[1];
-                                    *point_y_ref -=
-                                        r.drag_delta().y / slider_2d_reponse.rect.size().y;
-                                }
+                                let val_mut_ref = self.control_points[i].val_mut();
+                                let clamped_new_h = (val_mut_ref.h() - h).rem_euclid(1.0);
+                                val_mut_ref.val[2] = clamped_new_h;
+                            }
+                        } else {
+                            const MOVE_EVEN_IF_NOT_DRAG: bool = false;
+                            if MOVE_EVEN_IF_NOT_DRAG {
+                                let val_mut_ref = self.control_points[index].val_mut();
+                                // Prevent wrapping from 1.0 -> 0.0, then wrap around [0,1.0]
+                                let clamped_new_h =
+                                    (val_mut_ref.h() - h).clamp(0.0, 0.999).rem_euclid(1.0);
+                                val_mut_ref.val[2] = clamped_new_h;
                             }
                         }
                     }
                 }
-                _ => {}
-            }
 
-            match dragged_tangent_response {
-                Some(r) => {
-                    if r.dragged_by(PointerButton::Primary) {
-                        match self.last_modifying_point_index {
-                            Some(index) => {
-                                if let Some(tang) = &mut self.control_points[index].tangents_mut()
-                                    [selected_tangent_index.unwrap()]
-                                {
+                let desired_size_slider_2d = Vec2::new(
+                    total_desired_size.x,
+                    total_desired_size.y
+                        - current_color_desired_size.y
+                        - hue_slider_desired_size.y
+                        - current_color_text_response.response.rect.size().y,
+                );
+                let slider_2d_reponse: Response = color_slider_2d(
+                    ui,
+                    desired_size_slider_2d,
+                    &mut color_to_show.s,
+                    &mut color_to_show.v,
+                    main_color_picker_color_at_function(color_to_show.h, 1.0),
+                );
+
+                // Do not see what this is doing, probably unuseful old code
+                // if modifying_control_point.is_some() {
+                //     let control_point = match modifying_control_point {
+                //         Some(a) => Some(ctx.control_points[a].val_mut()),
+                //         _ => None,
+                //     };
+                //     let unwrapped = &mut control_point.unwrap();
+                //     unwrapped.val[0] = color_to_show.s;
+                //     unwrapped.val[1] = color_to_show.v;
+                // }
+
+                let _spline_gradient_repsonse = ui_ordered_spline_gradient(
+                    ui,
+                    self.control_points,
+                    self.options.spline_mode,
+                    &slider_2d_reponse,
+                );
+
+                let (
+                    dragged_points_response,
+                    selected_index,
+                    hovering_control_point,
+                    selected_tangent_index,
+                    dragged_tangent_response,
+                ) = ui_ordered_control_points(
+                    ui,
+                    self.control_points,
+                    &is_modifying_index,
+                    self.options.is_hue_middle_interpolated,
+                    &slider_2d_reponse,
+                    self.options.spline_mode == SplineMode::Bezier,
+                );
+
+                self.control_point_right_clicked = match hovering_control_point {
+                    Some(a) => {
+                        if a.0.clicked_by(PointerButton::Secondary) {
+                            Some(a.1)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+
+                if dragged_points_response.is_none() {
+                    self.dragging_bezier_index = None;
+                }
+
+                match selected_index {
+                    Some(index) => self.last_modifying_point_index = Some(index),
+                    _ => {}
+                }
+
+                match dragged_points_response {
+                    Some(r) => {
+                        if r.dragged_by(PointerButton::Primary) {
+                            self.dragging_bezier_index = selected_index;
+                            match is_modifying_index {
+                                Some(index) => {
                                     {
-                                        let point_x_ref = &mut tang[0];
+                                        let point_x_ref =
+                                            &mut self.control_points[index].val_mut()[0];
                                         *point_x_ref +=
                                             r.drag_delta().x / slider_2d_reponse.rect.size().x;
                                     }
+                                    {
+                                        let point_y_ref =
+                                            &mut self.control_points[index].val_mut()[1];
+                                        *point_y_ref -=
+                                            r.drag_delta().y / slider_2d_reponse.rect.size().y;
+                                    }
+                                }
+                                _ => {}
+                            }
+
+                            if self.options.is_curve_locked {
+                                // Move all other points
+                                for i in 0..num_control_points {
+                                    if i == is_modifying_index.unwrap_or(0) {
+                                        continue;
+                                    }
 
                                     {
-                                        let point_y_ref = &mut tang[1];
+                                        let point_x_ref = &mut self.control_points[i].val_mut()[0];
+                                        *point_x_ref +=
+                                            r.drag_delta().x / slider_2d_reponse.rect.size().x;
+                                    }
+                                    {
+                                        let point_y_ref = &mut self.control_points[i].val_mut()[1];
                                         *point_y_ref -=
                                             r.drag_delta().y / slider_2d_reponse.rect.size().y;
                                     }
                                 }
                             }
-                            _ => {}
                         }
-
-                        // if is_curve_locked {
-                        //     // Move all other points
-                        //     for i in 0..num_control_points {
-                        //         if i == is_modifying_index.unwrap_or(0) {
-                        //             continue;
-                        //         }
-
-                        //         {
-                        //             let point_x_ref = &mut control_points[i].val[0];
-                        //             *point_x_ref += r.drag_delta().x / slider_2d_reponse.rect.size().x;
-                        //         }
-                        //         {
-                        //             let point_y_ref = &mut control_points[i].val[1];
-                        //             *point_y_ref -= r.drag_delta().y / slider_2d_reponse.rect.size().y;
-                        //         }
-                        //     }
-                        // }
                     }
+                    _ => {}
                 }
-                _ => {}
-            }
 
-            slider_2d_reponse
-        });
+                match dragged_tangent_response {
+                    Some(r) => {
+                        if r.dragged_by(PointerButton::Primary) {
+                            match self.last_modifying_point_index {
+                                Some(index) => {
+                                    if let Some(tang) = &mut self.control_points[index]
+                                        .tangents_mut()[selected_tangent_index.unwrap()]
+                                    {
+                                        {
+                                            let point_x_ref = &mut tang[0];
+                                            *point_x_ref +=
+                                                r.drag_delta().x / slider_2d_reponse.rect.size().x;
+                                        }
 
-        // return main_color_picker_response.inner;
+                                        {
+                                            let point_y_ref = &mut tang[1];
+                                            *point_y_ref -=
+                                                r.drag_delta().y / slider_2d_reponse.rect.size().y;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                slider_2d_reponse
+            });
+
+        return collection_response;
     }
 
     /// Just the slider, no text
-    fn allocate_space(&self, ui: &mut Ui, vec2: Option<Vec2>) -> Response {
-        let desired_size = if let Some(v) = vec2 {
-            v
-        } else {
-            Vec2::new(200.0, 500.0)
-        };
+    fn allocate_space(&self, ui: &mut Ui) -> Response {
+        let thickness = ui
+            .text_style_height(&TextStyle::Body)
+            .at_least(ui.spacing().interact_size.y);
+
+        let desired_size = Vec2::new(ui.spacing().slider_width, thickness);
         ui.allocate_response(desired_size, Sense::click_and_drag())
     }
 
     fn add_contents(&mut self, ui: &mut Ui) -> Response {
-        let mut old_value = self.control_points.to_vec();
+        let old_value = self.control_points.to_vec();
 
-        let mut response = self.allocate_space(ui, None);
-        self.picker_ui(ui, &response);
+        let mut response = self.picker_ui(ui, false);
 
         let value = self.control_points.to_vec();
 
-        response.changed = value != old_value;
-        response.widget_info(|| WidgetInfo::new(egui::WidgetType::Other));
+        response.response.changed = value != old_value;
+        response
+            .response
+            .widget_info(|| WidgetInfo::new(egui::WidgetType::Other));
 
         #[cfg(feature = "accesskit")]
         if let Some(mut node) = ui.ctx().accesskit_node(response.id) {
@@ -603,40 +589,7 @@ impl<'a> ZColorPicker<'a> {
             }
         }
 
-        let slider_response = response.clone();
-
-        // let value_response = if self.show_value {
-        //     let position_range = self.position_range(&response.rect);
-        //     let value_response = self.value_ui(ui, position_range);
-        //     if value_response.gained_focus()
-        //         || value_response.has_focus()
-        //         || value_response.lost_focus()
-        //     {
-        //         // Use the [`DragValue`] id as the id of the whole widget,
-        //         // so that the focus events work as expected.
-        //         response = value_response.union(response);
-        //     } else {
-        //         // Use the slider id as the id for the whole widget
-        //         response = response.union(value_response.clone());
-        //     }
-        //     Some(value_response)
-        // } else {
-        //     None
-        // };
-
-        // if !self.text.is_empty() {
-        //     let label_response = ui.add(Label::new(self.text.clone()).wrap(false));
-        //     // The slider already has an accessibility label via widget info,
-        //     // but sometimes it's useful for a screen reader to know
-        //     // that a piece of text is a label for another widget,
-        //     // e.g. so the text itself can be excluded from navigation.
-        //     slider_response.labelled_by(label_response.id);
-        //     if let Some(value_response) = value_response {
-        //         value_response.labelled_by(label_response.id);
-        //     }
-        // }
-
-        response
+        response.response
     }
 }
 
