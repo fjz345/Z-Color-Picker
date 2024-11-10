@@ -410,27 +410,33 @@ impl ZApp {
                 self.draw_ui_post(ctx, &mut ui);
             });
 
-            self.handle_middleclick_event();
+            self.handle_middleclick_event(&response.response);
         });
     }
 
-    fn handle_middleclick_event(&mut self) -> bool {
-        if let Some(event) = &self.z_color_picker_ctx.middle_click_event {
-            let mut found_rect = None;
-            for rect in self.z_color_picker_ctx.stored_ui_responses.get_rects() {
-                if rect.contains(event.mouse_pos) {
-                    found_rect = Some(rect.clone());
-                    break;
-                }
-            }
+    fn handle_middleclick_event(&mut self, response: &Response) -> bool {
+        if response.clicked_by(PointerButton::Middle) {
+            match response.interact_pointer_pos() {
+                Some(pos) => {
+                    let mut found_rect = None;
+                    for rect in self.z_color_picker_ctx.stored_ui_responses.get_rects() {
+                        if rect.contains(pos) {
+                            found_rect = Some(rect.clone());
+                            break;
+                        }
+                    }
 
-            let rect =
-                found_rect.unwrap_or(Rect::from_min_size(event.mouse_pos, Vec2::new(1.0, 1.0)));
-            self.z_color_picker_ctx.clipboard_event = Some(ClipboardCopyEvent {
-                frame_rect: rect,
-                frame_pixels: None,
-            });
+                    let rect = found_rect.unwrap_or(Rect::from_min_size(pos, Vec2::new(1.0, 1.0)));
+                    self.z_color_picker_ctx.clipboard_event = Some(ClipboardCopyEvent {
+                        frame_rect: rect,
+                        frame_pixels: None,
+                    });
+                }
+                None => {}
+            }
         }
+
+        if let Some(event) = &self.z_color_picker_ctx.middle_click_event {}
 
         false
     }
