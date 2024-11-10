@@ -34,7 +34,7 @@ use crate::{
 };
 
 pub struct ZColorPicker<'a> {
-    pub control_points: &'a mut [ControlPoint],
+    pub control_points: &'a mut Vec<ControlPoint>,
     pub spline_mode: SplineMode,
     pub last_modifying_point_index: Option<usize>,
     pub dragging_bezier_index: Option<usize>,
@@ -42,6 +42,8 @@ pub struct ZColorPicker<'a> {
     pub color_copy_format: ColorStringCopy,
     pub is_hue_middle_interpolated: bool,
     pub is_curve_locked: bool,
+    pub is_insert_right: bool,
+    pub is_window_lock: bool,
 }
 
 impl<'a> Widget for ZColorPicker<'a> {
@@ -53,7 +55,7 @@ impl<'a> Widget for ZColorPicker<'a> {
 }
 
 impl<'a> ZColorPicker<'a> {
-    pub fn new(control_points: &'a mut [ControlPoint]) -> Self {
+    pub fn new(control_points: &'a mut Vec<ControlPoint>) -> Self {
         Self {
             control_points,
             spline_mode: SplineMode::HermiteBezier,
@@ -63,8 +65,191 @@ impl<'a> ZColorPicker<'a> {
             color_copy_format: ColorStringCopy::default(),
             is_hue_middle_interpolated: true,
             is_curve_locked: false,
+            is_insert_right: true,
+            is_window_lock: true,
             // MainColorPickerCtx
         }
+    }
+
+    pub fn post_update_control_points(&mut self) {
+        if self.is_hue_middle_interpolated {
+            let num_points = self.control_points.len();
+            if num_points >= 2 {
+                let points = &mut self.control_points[..];
+
+                let first_index = 0;
+                let last_index = points.len() - 1;
+                let first_hue = points[first_index].val()[2];
+                let last_hue: f32 = points[last_index].val()[2];
+
+                for i in 1..last_index {
+                    let t = (i as f32) / (points.len() - 1) as f32;
+                    let hue = hue_lerp(first_hue, last_hue, t);
+                    points[i].val_mut()[2] = hue;
+                }
+            }
+        }
+
+        if self.is_window_lock {
+            for i in 0..self.control_points.len() {
+                let cp = &mut self.control_points[i];
+                cp.val_mut()[0] = cp.val()[0].clamp(0.0, 1.0);
+                cp.val_mut()[1] = cp.val()[1].clamp(0.0, 1.0);
+                cp.val_mut()[2] = cp.val()[2].clamp(0.0, 1.0);
+            }
+        }
+
+        match self.control_point_right_clicked {
+            Some(index) => {
+                self.remove_control_point(index);
+            }
+            _ => {}
+        }
+
+        // self.options_window.update();
+    }
+
+    pub fn remove_control_point(&mut self, index: usize) {
+        self.control_points.remove(index);
+        println!(
+            "CP {} removed, new len {}",
+            index,
+            self.control_points.len()
+        );
+        if self.control_points.len() > 1 {
+            self.last_modifying_point_index = Some(index.max(1) - 1);
+            self.dragging_bezier_index = Some(index.max(1) - 1);
+        } else {
+            self.dragging_bezier_index = None;
+            self.last_modifying_point_index = None;
+        }
+    }
+
+    fn remove_all_control_points(&mut self) {
+        for i in (0..self.control_points.len()).rev() {
+            self.remove_control_point(i);
+        }
+        self.last_modifying_point_index = None;
+        self.dragging_bezier_index = None;
+    }
+
+    pub fn spawn_control_point(&mut self, cp: ControlPoint) {
+        let control_point_pivot = self.last_modifying_point_index;
+
+        let new_index = match control_point_pivot {
+            Some(index) => {
+                if self.is_insert_right {
+                    index + 1
+                } else {
+                    index
+                }
+            }
+            None => {
+                if self.control_points.len() <= 0 {
+                    0
+                } else {
+                    if self.is_insert_right {
+                        self.control_points.len()
+                    } else {
+                        0
+                    }
+                }
+            }
+        };
+
+        self.dragging_bezier_index = None;
+
+        println!(
+            "ControlPoint#{} spawned @[{}]{},{},{}",
+            self.control_points.len(),
+            cp.t(),
+            cp.val()[0],
+            cp.val()[1],
+            cp.val()[2],
+        );
+        self.control_points.insert(new_index, cp);
+        // Adding keys messes with the indicies
+        self.last_modifying_point_index = Some(new_index);
+    }
+
+    pub fn get_control_points_sdf_2d(&self, xy: Pos2) -> Option<(&ControlPoint, f32)> {
+        let mut closest_dist: Option<f32> = None;
+        let mut closest_cp: Option<&ControlPoint> = None;
+        for cp in self.control_points.iter() {
+            let pos_2d = Pos2::new(
+                cp.val()[0].clamp(0.0, 1.0),
+                1.0 - cp.val()[1].clamp(0.0, 1.0),
+            );
+            let distance_2d = pos_2d.distance(xy);
+
+            match closest_dist {
+                Some(closest_dist_2d) => {
+                    if distance_2d < closest_dist_2d {
+                        closest_cp = Some(cp);
+                        closest_dist = Some(distance_2d);
+                    }
+                }
+                None => {
+                    closest_cp = Some(cp);
+                    closest_dist = Some(distance_2d);
+                }
+            };
+        }
+
+        match closest_dist {
+            Some(closest_dist_2d) => {
+                let dist = closest_dist_2d;
+                println!("Closest Dist: {}", dist);
+                Some((closest_cp.unwrap(), dist))
+            }
+            None => {
+                println!("Did not find closest dist");
+                None
+            }
+        }
+    }
+
+    fn handle_doubleclick_event(&mut self, z_color_picker_response: &Response) -> bool {
+        if z_color_picker_response.double_clicked_by(PointerButton::Primary) {
+            match z_color_picker_response.interact_pointer_pos() {
+                Some(pos) => {
+                    if z_color_picker_response.rect.contains(pos) {
+                        let z_color_picker_response_xy = pos - z_color_picker_response.rect.min;
+                        let normalized_xy =
+                            z_color_picker_response_xy / z_color_picker_response.rect.size();
+
+                        let closest = self.get_control_points_sdf_2d(normalized_xy.to_pos2());
+                        const MIN_DIST: f32 = 0.1;
+
+                        let color_xy = Pos2::new(
+                            normalized_xy.x.clamp(0.0, 1.0),
+                            1.0 - normalized_xy.y.clamp(0.0, 1.0),
+                        );
+
+                        match closest {
+                            Some((cp, dist)) => {
+                                let should_spawn_control_point = dist > MIN_DIST;
+                                if should_spawn_control_point {
+                                    let color_hue: f32 = cp.val().h();
+
+                                    let color: [f32; 3] = [color_xy[0], color_xy[1], color_hue];
+                                    self.spawn_control_point(cp.clone());
+                                }
+                            }
+                            _ => {
+                                let color: [f32; 3] = [color_xy[0], color_xy[1], 0.0];
+                                let new_cp = ControlPoint::new_simple(color.into(), 0.0);
+                                self.spawn_control_point(new_cp);
+                            }
+                        };
+                        self.post_update_control_points();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
     }
 
     fn picker_ui(&mut self, ui: &mut Ui, response: &Response) {
@@ -548,7 +733,7 @@ impl ZColorPickerWrapper {
             new_color_picker.apply_selected_preset();
         } else {
             for control_point in &DEFAULT_STARTUP_CONTROL_POINTS {
-                new_color_picker.spawn_control_point(control_point.clone());
+                new_color_picker.control_points.push(control_point.clone());
             }
         }
 
@@ -558,18 +743,10 @@ impl ZColorPickerWrapper {
         new_color_picker
     }
 
-    fn remove_all_control_points(&mut self) {
-        for i in (0..self.control_points.len()).rev() {
-            self.remove_control_point(i);
-        }
-        self.last_modifying_point_index = None;
-        self.dragging_bezier_index = None;
-    }
-
     fn apply_preset(&mut self, preset: Preset) {
-        self.remove_all_control_points();
+        self.control_points.clear();
         for preset_control_point in preset.data.control_points {
-            self.spawn_control_point(preset_control_point);
+            self.control_points.push(preset_control_point);
         }
         self.options.spline_mode = preset.data.spline_mode;
     }
@@ -640,98 +817,6 @@ impl ZColorPickerWrapper {
         ))
     }
 
-    pub fn remove_control_point(&mut self, index: usize) {
-        self.control_points.remove(index);
-        println!(
-            "CP {} removed, new len {}",
-            index,
-            self.control_points.len()
-        );
-        if self.control_points.len() > 1 {
-            self.last_modifying_point_index = Some(index.max(1) - 1);
-            self.dragging_bezier_index = Some(index.max(1) - 1);
-        } else {
-            self.dragging_bezier_index = None;
-            self.last_modifying_point_index = None;
-        }
-    }
-
-    pub fn spawn_control_point(&mut self, cp: ControlPoint) {
-        let control_point_pivot = self.last_modifying_point_index;
-
-        let new_index = match control_point_pivot {
-            Some(index) => {
-                if self.options.is_insert_right {
-                    index + 1
-                } else {
-                    index
-                }
-            }
-            None => {
-                if self.control_points.len() <= 0 {
-                    0
-                } else {
-                    if self.options.is_insert_right {
-                        self.control_points.len()
-                    } else {
-                        0
-                    }
-                }
-            }
-        };
-
-        self.dragging_bezier_index = None;
-
-        println!(
-            "ControlPoint#{} spawned @[{}]{},{},{}",
-            self.control_points.len(),
-            cp.t(),
-            cp.val()[0],
-            cp.val()[1],
-            cp.val()[2],
-        );
-        self.control_points.insert(new_index, cp);
-        // Adding keys messes with the indicies
-        self.last_modifying_point_index = Some(new_index);
-    }
-
-    pub fn get_control_points_sdf_2d(&self, xy: Pos2) -> Option<(&ControlPoint, f32)> {
-        let mut closest_dist: Option<f32> = None;
-        let mut closest_cp: Option<&ControlPoint> = None;
-        for cp in self.control_points.iter() {
-            let pos_2d = Pos2::new(
-                cp.val()[0].clamp(0.0, 1.0),
-                1.0 - cp.val()[1].clamp(0.0, 1.0),
-            );
-            let distance_2d = pos_2d.distance(xy);
-
-            match closest_dist {
-                Some(closest_dist_2d) => {
-                    if distance_2d < closest_dist_2d {
-                        closest_cp = Some(cp);
-                        closest_dist = Some(distance_2d);
-                    }
-                }
-                None => {
-                    closest_cp = Some(cp);
-                    closest_dist = Some(distance_2d);
-                }
-            };
-        }
-
-        match closest_dist {
-            Some(closest_dist_2d) => {
-                let dist = closest_dist_2d;
-                println!("Closest Dist: {}", dist);
-                Some((closest_cp.unwrap(), dist))
-            }
-            None => {
-                println!("Did not find closest dist");
-                None
-            }
-        }
-    }
-
     pub fn pre_draw_update(&mut self) {
         if self.options.spline_mode == SplineMode::Bezier {
             // Force init tangents
@@ -746,49 +831,9 @@ impl ZColorPickerWrapper {
         }
     }
 
-    pub fn post_update_control_points(&mut self) {
-        if self.options.is_hue_middle_interpolated {
-            let num_points = self.control_points.len();
-            if num_points >= 2 {
-                let points = &mut self.control_points[..];
-
-                let first_index = 0;
-                let last_index = points.len() - 1;
-                let first_hue = points[first_index].val()[2];
-                let last_hue: f32 = points[last_index].val()[2];
-
-                for i in 1..last_index {
-                    let t = (i as f32) / (points.len() - 1) as f32;
-                    let hue = hue_lerp(first_hue, last_hue, t);
-                    points[i].val_mut()[2] = hue;
-                }
-            }
-        }
-
-        if self.options.is_window_lock {
-            for i in 0..self.control_points.len() {
-                let cp = &mut self.control_points[i];
-                cp.val_mut()[0] = cp.val()[0].clamp(0.0, 1.0);
-                cp.val_mut()[1] = cp.val()[1].clamp(0.0, 1.0);
-                cp.val_mut()[2] = cp.val()[2].clamp(0.0, 1.0);
-            }
-        }
-
-        match self.control_point_right_clicked {
-            Some(index) => {
-                self.remove_control_point(index);
-            }
-            _ => {}
-        }
-
-        // self.options_window.update();
-    }
-
     pub fn draw_ui(&mut self, ui: &mut Ui, color_copy_format: &mut ColorStringCopy) -> Response {
         let inner_response = ui.vertical(|ui| {
             self.pre_draw_update();
-
-            self.post_update_control_points();
 
             let ctx = MainColorPickerCtx {
                 control_points: &mut self.control_points[..],

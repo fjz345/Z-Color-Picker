@@ -330,6 +330,12 @@ impl ZApp {
         // frame.set_maximized(true);
     }
 
+    fn draw_ui_post(&mut self, _ctx: &egui::Context, ui: &mut Ui) {
+        self.update_and_draw_debug_windows(ui);
+        self.z_color_picker_ctx.clipboard_copy_window.update();
+        self.z_color_picker_ctx.clipboard_copy_window.draw_ui(ui);
+    }
+
     fn draw_ui_tree(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -358,7 +364,7 @@ impl ZApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui| {
+            let response = ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui| {
                 let layer_id = LayerId::background();
                 let max_rect = ctx.available_rect();
                 let clip_rect = ctx.available_rect();
@@ -401,70 +407,14 @@ impl ZApp {
                 //     .previewer
                 //     .draw_ui(&mut ui, self.z_color_picker_ctx.color_copy_format);
 
-                // self.handle_doubleclick_event(&z_color_picker_response_option);
-
-                self.handle_middleclick_event(&mut ui);
-
-                self.update_and_draw_debug_windows(&mut ui);
+                self.draw_ui_post(ctx, &mut ui);
             });
 
-            self.z_color_picker_ctx.clipboard_copy_window.update();
-            self.z_color_picker_ctx.clipboard_copy_window.draw_ui(ui);
+            self.handle_middleclick_event();
         });
     }
 
-    fn handle_doubleclick_event(&mut self, z_color_picker_response: &Response) -> bool {
-        match &self.z_color_picker_ctx.double_click_event {
-            Some(pos) => {
-                if z_color_picker_response.rect.contains(pos.mouse_pos) {
-                    let z_color_picker_response_xy =
-                        pos.mouse_pos - z_color_picker_response.rect.min;
-                    let normalized_xy =
-                        z_color_picker_response_xy / z_color_picker_response.rect.size();
-
-                    let closest = self
-                        .z_color_picker_ctx
-                        .z_color_picker
-                        .get_control_points_sdf_2d(normalized_xy.to_pos2());
-                    const MIN_DIST: f32 = 0.1;
-
-                    let color_xy = Pos2::new(
-                        normalized_xy.x.clamp(0.0, 1.0),
-                        1.0 - normalized_xy.y.clamp(0.0, 1.0),
-                    );
-
-                    match closest {
-                        Some((cp, dist)) => {
-                            let should_spawn_control_point = dist > MIN_DIST;
-                            if should_spawn_control_point {
-                                let color_hue: f32 = cp.val().h();
-
-                                let color: [f32; 3] = [color_xy[0], color_xy[1], color_hue];
-                                self.z_color_picker_ctx
-                                    .z_color_picker
-                                    .spawn_control_point(cp.clone());
-                            }
-                        }
-                        _ => {
-                            let color: [f32; 3] = [color_xy[0], color_xy[1], 0.0];
-                            let new_cp = ControlPoint::new_simple(color.into(), 0.0);
-                            self.z_color_picker_ctx
-                                .z_color_picker
-                                .spawn_control_point(new_cp);
-                        }
-                    };
-                    self.z_color_picker_ctx
-                        .z_color_picker
-                        .post_update_control_points();
-                }
-            }
-            _ => {}
-        }
-
-        false
-    }
-
-    fn handle_middleclick_event(&mut self, _ui: &mut Ui) -> bool {
+    fn handle_middleclick_event(&mut self) -> bool {
         if let Some(event) = &self.z_color_picker_ctx.middle_click_event {
             let mut found_rect = None;
             for rect in self.z_color_picker_ctx.stored_ui_responses.get_rects() {
