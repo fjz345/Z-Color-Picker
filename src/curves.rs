@@ -1,5 +1,6 @@
 //https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
 
+use crate::common::SplineMode;
 use crate::control_point::{ControlPoint, ControlPointType};
 #[allow(unused_imports)]
 use crate::error::Result;
@@ -10,7 +11,6 @@ use eframe::epaint::{Pos2, Rect, Shape, Stroke, Vec2};
 use egui::epaint::PathShape;
 use splines::{Interpolation, Key, Spline};
 
-use crate::color_picker::SplineMode;
 use crate::math::{add_array_array, mul_array};
 
 pub fn ui_ordered_control_points(

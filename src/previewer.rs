@@ -8,7 +8,7 @@ use splines::Spline;
 #[allow(unused_imports)]
 use crate::error::Result;
 use crate::{
-    color_picker::{ColorStringCopy, SplineMode},
+    common::{ColorStringCopy, SplineMode},
     control_point::{ControlPoint, ControlPointType},
     curves::{control_points_to_spline, find_spline_max_t, flatten_control_points},
     gradient::color_function_gradient,
@@ -290,7 +290,6 @@ fn ui_previewer_options(ui: &mut Ui, _size: Vec2, previewer_data: &mut Previewer
 
 pub fn ui_previewer(
     ui: &mut Ui,
-    control_points: &[ControlPoint],
     spline_mode: SplineMode,
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
@@ -298,6 +297,8 @@ pub fn ui_previewer(
     let previewer_rect = ui.available_rect_before_wrap();
 
     let inner_response = ui.vertical(|ui| {
+        let control_points = &previewer_data.control_points.clone();
+
         let response_control_points = ui_previewer_control_points_with_drag(
             ui,
             previewer_rect.size() * Vec2::new(1.0, 0.16),
@@ -445,13 +446,8 @@ impl ZPreviewer {
         ui: &mut Ui,
         color_copy_format: ColorStringCopy,
     ) -> PreviewerUiResponses {
-        let previewer_response = ui_previewer(
-            ui,
-            &self.data.control_points.clone(),
-            self.data.spline_mode,
-            &mut self.data,
-            color_copy_format,
-        );
+        let previewer_response =
+            ui_previewer(ui, self.data.spline_mode, &mut self.data, color_copy_format);
 
         previewer_response
     }

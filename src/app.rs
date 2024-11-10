@@ -1,9 +1,9 @@
 use arboard::ImageData;
 use ecolor::Color32;
-use eframe::egui::{InnerResponse, Response, Ui};
+use eframe::egui::{InnerResponse, Response, Slider, Ui, WidgetText};
 use egui_dock::{
     egui::{self, Context, Id, LayerId, Layout, PointerButton, Rect, TopBottomPanel, Window},
-    DockArea, Node, NodeIndex, Style, Tree,
+    DockArea, Node, NodeIndex, Style, TabViewer, Tree,
 };
 use std::{borrow::Cow, collections::HashSet, time::Instant};
 
@@ -14,10 +14,12 @@ use eframe::{
 
 use crate::{
     clipboard::{write_color_to_clipboard, write_pixels_to_clipboard},
-    color_picker::{ColorStringCopy, ZColorPicker},
+    color_picker::{main_color_picker, MainColorPickerCtx, ZColorPickerWrapper},
+    common::{ColorStringCopy, SplineMode},
     control_point::ControlPoint,
     debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8},
+    preset::Preset,
     previewer::{PreviewerUiResponses, ZPreviewer},
     ui_common::{read_pixels_from_frame, ContentWindow, FramePixelRead},
 };
@@ -121,9 +123,41 @@ impl ClipboardPopup {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ZColorPickerOptions {
+    pub is_curve_locked: bool,
+    pub is_hue_middle_interpolated: bool,
+    pub is_insert_right: bool,
+    pub is_window_lock: bool,
+    pub spline_mode: SplineMode,
+    pub presets: Vec<Preset>,
+    pub preset_selected_index: Option<usize>,
+}
+
+impl Default for ZColorPickerOptions {
+    fn default() -> Self {
+        Self {
+            is_curve_locked: false,
+            is_hue_middle_interpolated: true,
+            is_insert_right: true,
+            is_window_lock: true,
+            spline_mode: SplineMode::HermiteBezier,
+            presets: Vec::new(),
+            preset_selected_index: None,
+        }
+    }
+}
+
+pub struct WindowZColorPickerOptions {
+    open: bool,
+    pub position: Pos2,
+    new_preset_is_open: bool,
+    new_preset_window_text: String,
+}
+
 struct ZColorPickerContext {
     style: Option<Style>,
-    z_color_picker: ZColorPicker,
+    z_color_picker: ZColorPickerWrapper,
     previewer: ZPreviewer,
     color_copy_format: ColorStringCopy,
     debug_window_control_points: DebugWindowControlPoints,
@@ -133,6 +167,543 @@ struct ZColorPickerContext {
     clipboard_event: Option<ClipboardCopyEvent>,
     clipboard_copy_window: ClipboardPopup,
     stored_ui_responses: PreviewerUiResponses,
+    open_tabs: HashSet<String>,
+
+    pub options: ZColorPickerOptions,
+    pub options_window: WindowZColorPickerOptions,
+    pub main_color_picker_window: WindowZColorPicker,
+}
+
+impl WindowZColorPickerOptions {
+    pub fn new(window_position: Pos2) -> Self {
+        Self {
+            open: false,
+            position: window_position,
+            new_preset_window_text: String::new(),
+            new_preset_is_open: false,
+        }
+    }
+
+    pub fn update(&mut self) {}
+
+    fn draw_content(
+        &mut self,
+        ui: &mut Ui,
+        options: &mut ZColorPickerOptions,
+        control_points: &mut Vec<ControlPoint>,
+        color_copy_format: &mut ColorStringCopy,
+    ) -> WindowZColorPickerOptionsDrawResult {
+        let mut draw_result = WindowZColorPickerOptionsDrawResult::default();
+
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut options.is_curve_locked, "🔒")
+                .on_hover_text("Apply changes to all control points");
+            ui.checkbox(&mut options.is_hue_middle_interpolated, "🎨")
+                .on_hover_text("Only modify first/last control points");
+            const INSERT_RIGHT_UNICODE: &str = "👉";
+            const INSERT_LEFT_UNICODE: &str = "👈";
+            let insert_mode_unicode = if options.is_insert_right {
+                INSERT_RIGHT_UNICODE
+            } else {
+                INSERT_LEFT_UNICODE
+            };
+            ui.checkbox(&mut options.is_insert_right, insert_mode_unicode)
+                .on_hover_text(format!(
+                    "Insert new points in {} direction",
+                    insert_mode_unicode
+                ));
+            ui.checkbox(&mut options.is_window_lock, "🆘")
+                .on_hover_text("Clamps the control points so they are contained");
+        });
+
+        ui.horizontal(|ui| {
+            egui::ComboBox::new(12312312, "")
+                .selected_text(format!("{:?}", *color_copy_format))
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(60.0);
+                    ui.selectable_value(color_copy_format, ColorStringCopy::HEX, "Hex");
+                    ui.selectable_value(color_copy_format, ColorStringCopy::HEXNOA, "Hex(no A)");
+                })
+                .response
+                .on_hover_text("Color Copy Format");
+
+            egui::ComboBox::new(12312313, "")
+                .selected_text(format!("{:?}", options.spline_mode))
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(60.0);
+                    ui.selectable_value(&mut options.spline_mode, SplineMode::Linear, "Linear");
+                    ui.selectable_value(
+                        &mut options.spline_mode,
+                        SplineMode::Bezier,
+                        "Bezier(Bugged)",
+                    );
+                    ui.selectable_value(
+                        &mut options.spline_mode,
+                        SplineMode::HermiteBezier,
+                        "Hermite(NYI)",
+                    );
+                    // TODO: enable Polynomial combo box
+                    // ui.selectable_value(
+                    //     &mut self.spline_mode,
+                    //     SplineMode::Polynomial,
+                    //     "Polynomial(Crash)",
+                    // );
+                })
+                .response
+                .on_hover_text("Spline Mode");
+
+            if ui.button("Flip").clicked_by(PointerButton::Primary) {
+                // Also Flip the tangets
+                for cp in control_points.iter_mut() {
+                    cp.flip_tangents();
+                }
+
+                control_points.reverse();
+            }
+        });
+
+        ui.horizontal(|ui| {
+            let combobox_selected_text_to_show = match options.preset_selected_index {
+                Some(i) => options.presets[i].name.to_string(),
+                None => "".to_string(),
+            };
+
+            let mut combobox_selected_index = 0;
+            let mut combobox_has_selected = false;
+            let _combobox_response = egui::ComboBox::new(1232313, "")
+                .selected_text(combobox_selected_text_to_show)
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(60.0);
+
+                    for (i, preset) in &mut options.presets.iter().enumerate() {
+                        let selectable_value_response = ui.selectable_value(
+                            &mut combobox_selected_index,
+                            i + 1,
+                            preset.name.as_str(),
+                        );
+
+                        if selectable_value_response.clicked() {
+                            combobox_has_selected = true;
+                        }
+                    }
+
+                    // New
+                    let selectable_new_response =
+                        ui.selectable_value(&mut combobox_selected_index, 0, "<NEW>");
+                    // None
+                    let selectable_none_response =
+                        ui.selectable_value(&mut combobox_selected_index, 0, "<None>");
+
+                    if selectable_new_response.clicked() {
+                        combobox_has_selected = true;
+                    } else if selectable_none_response.clicked() {
+                        combobox_has_selected = false;
+                        options.preset_selected_index = None;
+                    }
+                })
+                .response
+                .on_hover_text("Presets");
+
+            if combobox_has_selected {
+                if combobox_selected_index == 0 {
+                    self.new_preset_is_open = true;
+                    self.new_preset_window_text.clear();
+                    println!("New Preset");
+                } else {
+                    options.preset_selected_index = Some(combobox_selected_index - 1);
+                    draw_result.preset_result.should_apply = Some(());
+                    println!("Selected Preset {:?}", combobox_selected_index - 1);
+                }
+            };
+
+            if ui.button("Save").clicked_by(PointerButton::Primary) {
+                if let Some(_s) = options.preset_selected_index {
+                    draw_result.preset_result.should_save = Some(());
+                } else {
+                    println!("Could not save, no preset selected");
+                }
+            }
+            if ui.button("Delete").clicked_by(PointerButton::Primary) {
+                draw_result.preset_result.should_delete = Some(());
+            }
+        });
+
+        let mut create_preset_open = self.new_preset_is_open;
+        let mut create_preset_create_clicked = false;
+        if self.new_preset_is_open {
+            egui::Window::new("Create Preset")
+                .open(&mut create_preset_open)
+                .show(ui.ctx(), |ui| {
+                    let _text_response = ui.text_edit_singleline(&mut self.new_preset_window_text);
+
+                    if ui.button("Create").clicked() {
+                        self.new_preset_is_open = false;
+                        create_preset_create_clicked = true;
+
+                        draw_result.preset_result.should_create =
+                            Some(self.new_preset_window_text.clone());
+                    }
+                });
+
+            if create_preset_create_clicked {
+                create_preset_open = false;
+            }
+            self.new_preset_is_open = create_preset_open;
+        }
+        draw_result
+    }
+
+    fn draw_ui(
+        &mut self,
+        ui: &mut Ui,
+        options: &mut ZColorPickerOptions,
+        control_points: &mut Vec<ControlPoint>,
+        color_copy_format: &mut ColorStringCopy,
+    ) -> Option<InnerResponse<Option<WindowZColorPickerOptionsDrawResult>>> {
+        let prev_visuals = ui.visuals_mut().clone();
+
+        let mut open = self.is_open();
+        let response = Window::new(self.title())
+            .resizable(false)
+            .title_bar(false)
+            .open(&mut open)
+            .auto_sized()
+            .show(ui.ctx(), |ui: &mut Ui| {
+                self.draw_content(ui, options, control_points, color_copy_format)
+            });
+
+        if open {
+            self.open();
+        } else {
+            self.close();
+        }
+
+        ui.ctx().set_visuals(prev_visuals);
+
+        response
+    }
+}
+
+struct WindowZColorPickerOptionsDrawResult {
+    pub preset_result: PresetDrawResult,
+}
+
+impl Default for WindowZColorPickerOptionsDrawResult {
+    fn default() -> Self {
+        Self {
+            preset_result: Default::default(),
+        }
+    }
+}
+
+pub struct WindowZColorPicker {
+    open: bool,
+    position: Pos2,
+}
+
+impl ContentWindow for WindowZColorPickerOptions {
+    fn title(&self) -> &str {
+        "ZColorPicker Options"
+    }
+
+    fn is_open(&self) -> bool {
+        return self.open;
+    }
+
+    fn close(&mut self) {
+        self.open = false;
+    }
+
+    fn open(&mut self) {
+        self.open = true;
+    }
+}
+
+impl WindowZColorPicker {
+    pub fn new(window_position: Pos2) -> Self {
+        Self {
+            open: false,
+            position: window_position,
+        }
+    }
+
+    pub fn update(&mut self) {}
+
+    fn draw_content(&mut self, ui: &mut Ui, ctx: MainColorPickerCtx) -> Response {
+        let main_color_picker_response = main_color_picker(ui, ui.available_size(), ctx);
+
+        main_color_picker_response
+    }
+
+    fn draw_ui(
+        &mut self,
+        ui: &mut Ui,
+        ctx: MainColorPickerCtx,
+    ) -> Option<InnerResponse<Option<Response>>> {
+        let prev_visuals = ui.visuals_mut().clone();
+
+        let mut open = self.is_open();
+        let response = Window::new(self.title())
+            .resizable(true)
+            .title_bar(false)
+            .open(&mut open)
+            .show(ui.ctx(), |ui: &mut Ui| self.draw_content(ui, ctx));
+
+        if open {
+            self.open();
+        } else {
+            self.close();
+        }
+
+        ui.ctx().set_visuals(prev_visuals);
+
+        response
+    }
+}
+
+struct PresetDrawResult {
+    pub should_create: Option<String>,
+    pub should_apply: Option<()>,
+    pub should_save: Option<()>,
+    pub should_delete: Option<()>,
+}
+
+impl Default for PresetDrawResult {
+    fn default() -> Self {
+        Self {
+            should_create: Default::default(),
+            should_apply: Default::default(),
+            should_save: Default::default(),
+            should_delete: Default::default(),
+        }
+    }
+}
+
+impl ContentWindow for WindowZColorPicker {
+    fn title(&self) -> &str {
+        "ZColorPicker Main Window"
+    }
+
+    fn is_open(&self) -> bool {
+        return self.open;
+    }
+
+    fn close(&mut self) {
+        self.open = false;
+    }
+
+    fn open(&mut self) {
+        self.open = true;
+    }
+}
+
+impl ZColorPickerContext {
+    pub fn default() -> Self {
+        Self {
+            style: None,
+            z_color_picker: ZColorPickerWrapper::default(),
+            previewer: ZPreviewer::default(),
+            color_copy_format: ColorStringCopy::default(),
+            debug_window_control_points: DebugWindowControlPoints::new(Pos2 { x: 200.0, y: 200.0 }),
+            debug_window_test: DebugWindowTestWindow::new(Pos2 { x: 200.0, y: 200.0 }),
+            double_click_event: None,
+            middle_click_event: None,
+            clipboard_event: None,
+            clipboard_copy_window: ClipboardPopup::new(
+                false,
+                Pos2::new(0.0, 0.0),
+                Instant::now(),
+                0.7,
+            ),
+            stored_ui_responses: PreviewerUiResponses::default(),
+            open_tabs: HashSet::default(),
+            options: ZColorPickerOptions::default(),
+            options_window: WindowZColorPickerOptions::new(Pos2::new(200.0, 200.0)),
+            main_color_picker_window: WindowZColorPicker::new(Pos2::new(200.0, 200.0)),
+        }
+    }
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn simple_demo_menu(&mut self, ui: &mut Ui) {
+        ui.label("Egui widget example");
+        ui.menu_button("Sub menu", |ui| {
+            ui.label("hello :)");
+        });
+    }
+
+    fn simple_demo(&mut self, ui: &mut Ui) {
+        ui.heading("My egui Application");
+
+        ui.horizontal(|ui| {
+            ui.label("Your name: ");
+            let mut mut_title = "";
+            ui.text_edit_singleline(&mut mut_title);
+        });
+        // ui.add(Slider::new(&mut self.age, 0..=120).text("age"));
+        if ui.button("Click each year").clicked() {
+            // self.age += 1;
+        }
+        // ui.label(format!("Hello '{}', age {}", &self.title, &self.age));
+    }
+
+    fn style_editor(&mut self, ui: &mut Ui) {
+        ui.heading("Style Editor");
+
+        let style = self.style.as_mut().unwrap();
+
+        ui.collapsing("Border", |ui| {
+            ui.separator();
+
+            ui.label("Width");
+            ui.add(Slider::new(&mut style.border_width, 1.0..=50.0));
+
+            ui.separator();
+
+            ui.label("Color");
+            // color_picker_color32(ui, &mut style.border_color, Alpha::OnlyBlend);
+        });
+
+        ui.collapsing("Selection", |ui| {
+            ui.separator();
+
+            ui.label("Color");
+            // color_picker_color32(ui, &mut style.selection_color, Alpha::OnlyBlend);
+        });
+
+        ui.collapsing("Separator", |ui| {
+            ui.separator();
+
+            ui.label("Width");
+            // ui.add(Slider::new(&mut style.separator_width, 1.0..=50.0));
+
+            ui.label("Offset limit");
+            // ui.add(Slider::new(&mut style.separator_extra, 1.0..=300.0));
+
+            ui.separator();
+
+            ui.label("Idle color");
+            // color_picker_color32(ui, &mut style.separator_color_idle, Alpha::OnlyBlend);
+
+            ui.label("Hovered color");
+            // color_picker_color32(ui, &mut style.separator_color_hovered, Alpha::OnlyBlend);
+
+            ui.label("Dragged color");
+            // color_picker_color32(ui, &mut style.separator_color_dragged, Alpha::OnlyBlend);
+        });
+
+        ui.collapsing("Tabs", |ui| {
+            ui.separator();
+
+            ui.checkbox(
+                &mut style.tab_hover_name,
+                "Show tab name when hoverd over them",
+            );
+            ui.checkbox(&mut style.tabs_are_draggable, "Tabs are draggable");
+            ui.checkbox(&mut style.expand_tabs, "Expand tabs");
+            ui.checkbox(&mut style.show_context_menu, "Show context_menu");
+            ui.checkbox(
+                &mut style.tab_include_scrollarea,
+                "Include ScrollArea inside of tabs",
+            );
+
+            ui.separator();
+
+            ui.label("Rounding");
+            ui.horizontal(|ui| {
+                ui.add(Slider::new(&mut style.tab_rounding.nw, 0.0..=15.0));
+                ui.label("North-West");
+            });
+            ui.horizontal(|ui| {
+                ui.add(Slider::new(&mut style.tab_rounding.ne, 0.0..=15.0));
+                ui.label("North-East");
+            });
+            ui.horizontal(|ui| {
+                ui.add(Slider::new(&mut style.tab_rounding.sw, 0.0..=15.0));
+                ui.label("South-West");
+            });
+            ui.horizontal(|ui| {
+                ui.add(Slider::new(&mut style.tab_rounding.se, 0.0..=15.0));
+                ui.label("South-East");
+            });
+
+            ui.separator();
+
+            ui.label("Title text color unfocused");
+            // color_picker_color32(ui, &mut style.tab_text_color_unfocused, Alpha::OnlyBlend);
+
+            ui.label("Title text color focused");
+            // color_picker_color32(ui, &mut style.tab_text_color_focused, Alpha::OnlyBlend);
+
+            ui.separator();
+
+            ui.checkbox(&mut style.show_close_buttons, "Allow closing tabs");
+
+            ui.separator();
+
+            ui.label("Close button color unfocused");
+            // color_picker_color32(ui, &mut style.close_tab_color, Alpha::OnlyBlend);
+
+            ui.separator();
+
+            ui.label("Close button color focused");
+            // color_picker_color32(ui, &mut style.close_tab_active_color, Alpha::OnlyBlend);
+
+            ui.separator();
+
+            ui.label("Close button background color");
+            // color_picker_color32(ui, &mut style.close_tab_background_color, Alpha::OnlyBlend);
+
+            ui.separator();
+
+            ui.label("Bar background color");
+            // color_picker_color32(ui, &mut style.tab_bar_background_color, Alpha::OnlyBlend);
+
+            ui.separator();
+
+            ui.label("Outline color");
+            // color_picker_color32(ui, &mut style.tab_outline_color, Alpha::OnlyBlend);
+
+            ui.separator();
+
+            ui.label("Background color");
+            // color_picker_color32(ui, &mut style.tab_background_color, Alpha::OnlyBlend);
+        });
+    }
+}
+
+impl TabViewer for ZColorPickerContext {
+    type Tab = String;
+
+    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+        match tab.as_str() {
+            "Simple Demo" => self.simple_demo(ui),
+            "Style Editor" => self.style_editor(ui),
+            _ => {
+                ui.label(tab.as_str());
+            }
+        }
+    }
+
+    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+        match tab.as_str() {
+            "Simple Demo" => self.simple_demo_menu(ui),
+            _ => {
+                ui.label(tab.to_string());
+                ui.label("This is a context menu");
+            }
+        }
+    }
+
+    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+        tab.as_str().into()
+    }
+
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        self.open_tabs.remove(tab);
+        true
+    }
 }
 
 pub struct ZApp {
@@ -149,24 +720,7 @@ impl ZApp {
         const RESOLUTION_REF: f32 = 1080.0;
         let scale_factor: f32 = monitor_size.x.min(monitor_size.y) / RESOLUTION_REF;
 
-        let z_color_picker_ctx = ZColorPickerContext {
-            previewer: ZPreviewer::new(),
-            color_copy_format: ColorStringCopy::HEX,
-            double_click_event: None,
-            middle_click_event: None,
-            z_color_picker: ZColorPicker::new(),
-            clipboard_copy_window: ClipboardPopup::new(
-                false,
-                Pos2::new(0.0, 0.0),
-                Instant::now(),
-                0.7,
-            ),
-            stored_ui_responses: PreviewerUiResponses::default(),
-            clipboard_event: None,
-            debug_window_control_points: DebugWindowControlPoints::new(Pos2 { x: 200.0, y: 0.0 }),
-            debug_window_test: DebugWindowTestWindow::new(Pos2 { x: 200.0, y: 0.0 }),
-            style: None,
-        };
+        let z_color_picker_ctx = ZColorPickerContext::default();
 
         let mut tree = Tree::new(vec!["Simple Demo".to_owned(), "Style Editor".to_owned()]);
         let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["Inspector".to_owned()]);
@@ -248,9 +802,9 @@ impl ZApp {
                     .style
                     .get_or_insert(Style::from_egui(&ui.ctx().style()))
                     .clone();
-                // DockArea::new(&mut self.tree)
-                //     .style(style)
-                //     .show_inside(&mut ui, &mut self.context);
+                DockArea::new(&mut self.tree)
+                    .style(style)
+                    .show_inside(&mut ui, &mut self.z_color_picker_ctx);
 
                 ui.spacing_mut().slider_width =
                     color_picker_desired_size.x.min(color_picker_desired_size.y);
@@ -275,11 +829,7 @@ impl ZApp {
                     .previewer
                     .draw_ui(&mut ui, self.z_color_picker_ctx.color_copy_format);
 
-                if let Some(z_color_picker_response) = z_color_picker_response_option {
-                    self.handle_doubleclick_event(&z_color_picker_response);
-                } else {
-                    println!("Something went very wrong with z_color_picker, response missing");
-                }
+                self.handle_doubleclick_event(&z_color_picker_response_option);
 
                 self.handle_middleclick_event(&mut ui);
 

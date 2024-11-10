@@ -13,7 +13,7 @@ pub type ControlPointTangents = [Option<ControlPointTangent>; 2];
 pub type ControlPointT = f32;
 
 #[repr(C)]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ControlPointStorage {
     pub val: ControlPointType,
     pub t: ControlPointT,
@@ -42,7 +42,7 @@ macro_rules! offset_of {
 }
 
 #[repr(C)]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum ControlPoint {
     ControlPointSimple(ControlPointStorage),
     ControlPointLeftRightTangent(ControlPointStorage),

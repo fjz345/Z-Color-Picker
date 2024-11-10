@@ -4,12 +4,13 @@ use std::{
 };
 
 use crate::{
+    common::SplineMode,
     control_point::ControlPoint,
     error::{Result, ZError},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{color_picker::SplineMode, fs::write_string_to_file};
+use crate::fs::write_string_to_file;
 
 pub const PRESETS_FOLDER_NAME: &str = "presets";
 

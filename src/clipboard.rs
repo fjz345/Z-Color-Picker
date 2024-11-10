@@ -4,9 +4,7 @@ use arboard::{Clipboard, ImageData};
 use ecolor::Color32;
 
 use crate::{
-    color_picker::{format_color_as, ColorStringCopy},
-    error::Result,
-    image_processing::Rgb,
+    color_picker::format_color_as, common::ColorStringCopy, error::Result, image_processing::Rgb,
 };
 
 pub fn write_string_to_clipboard(text: String) -> Result<()> {

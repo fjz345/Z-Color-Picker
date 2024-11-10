@@ -8,7 +8,7 @@ use crate::math::{hue_abs_distance, hue_lerp};
 
 type HsvKeyValueInnerType = [f32; 3];
 #[repr(C)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HsvKeyValue {
     pub val: HsvKeyValueInnerType,
 }

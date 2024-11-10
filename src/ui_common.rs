@@ -1,4 +1,5 @@
 use crate::color_picker::format_color_as;
+use crate::common::ColorStringCopy;
 use crate::control_point::ControlPoint;
 use crate::egui::PointerButton;
 use crate::egui::TextStyle;
@@ -17,8 +18,6 @@ use eframe::{
 };
 use std::borrow::BorrowMut;
 use std::sync::Arc;
-
-use crate::color_picker::ColorStringCopy;
 
 pub fn contrast_color(color: impl Into<Rgba>) -> Color32 {
     if color.into().intensity() < 0.5 {
