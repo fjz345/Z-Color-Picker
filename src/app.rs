@@ -5,7 +5,12 @@ use eframe::egui::{
     color_picker::{color_picker_color32, Alpha},
     InnerResponse, Layout, PointerButton, Rect, Response, Slider, TopBottomPanel, Ui, WidgetText,
 };
-use std::{borrow::Cow, collections::HashSet, time::Instant};
+use std::{
+    borrow::Cow,
+    collections::HashSet,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 use winapi::shared::winerror::ERROR_INCOMPATIBLE_SERVICE_SID_TYPE;
 
 use crate::{
@@ -65,7 +70,7 @@ impl Default for ZColorPickerOptions {
 }
 
 struct ZColorPickerAppContext {
-    z_color_picker: ZColorPickerWrapper,
+    z_color_picker: Arc<Mutex<ZColorPickerWrapper>>,
     previewer: ZPreviewer,
     color_copy_format: ColorStringCopy,
     debug_window_control_points: DebugWindowControlPoints,
@@ -84,7 +89,7 @@ struct ZColorPickerAppContext {
 impl ZColorPickerAppContext {
     pub fn default() -> Self {
         Self {
-            z_color_picker: ZColorPickerWrapper::default(),
+            z_color_picker: Arc::new(Mutex::new(ZColorPickerWrapper::default())),
             previewer: ZPreviewer::default(),
             color_copy_format: ColorStringCopy::default(),
             debug_window_control_points: DebugWindowControlPoints::new(Pos2 { x: 200.0, y: 200.0 }),
@@ -109,8 +114,48 @@ impl ZColorPickerAppContext {
     }
 }
 
+const PANE_COLOR_PICKER: usize = 1;
+const PANE_COLOR_PICKER_OPTIONS: usize = 2;
+const PANE_COLOR_PICKER_PREVIEWER: usize = 3;
 struct Pane {
     nr: usize,
+    color_picker: Arc<Mutex<ZColorPickerWrapper>>,
+}
+
+impl Pane {
+    pub fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
+        if self.nr == PANE_COLOR_PICKER {
+            // ui.painter().rect_filled(ui.max_rect(), 0.0, Color32::WHITE);
+            ui.allocate_ui(ui.max_rect().size(), |ui| {
+                let color_picker_response = self
+                    .color_picker
+                    .lock()
+                    .unwrap()
+                    .draw_ui(ui, &mut ColorStringCopy::HEXNOA);
+
+                color_picker_response
+            });
+
+            return egui_tiles::UiResponse::None;
+        } else if self.nr == PANE_COLOR_PICKER_OPTIONS {
+        }
+        // else if self.nr == PANE_COLOR_PICKER_PREVIEWER
+        // {
+
+        // }
+
+        let color = egui::epaint::Hsva::new(0.103 * self.nr as f32, 0.5, 0.5, 1.0);
+        ui.painter().rect_filled(ui.max_rect(), 0.0, color);
+        let dragged = ui
+            .allocate_rect(ui.max_rect(), egui::Sense::click_and_drag())
+            .on_hover_cursor(egui::CursorIcon::Grab)
+            .dragged();
+        if dragged {
+            egui_tiles::UiResponse::DragStarted
+        } else {
+            egui_tiles::UiResponse::None
+        }
+    }
 }
 
 struct TreeBehavior {}
@@ -126,21 +171,7 @@ impl egui_tiles::Behavior<Pane> for TreeBehavior {
         _tile_id: egui_tiles::TileId,
         pane: &mut Pane,
     ) -> egui_tiles::UiResponse {
-        // Give each pane a unique color:
-        let color = egui::epaint::Hsva::new(0.103 * pane.nr as f32, 0.5, 0.5, 1.0);
-        ui.painter().rect_filled(ui.max_rect(), 0.0, color);
-
-        ui.label(format!("The contents of pane {}.", pane.nr));
-
-        // You can make your pane draggable like so:
-        if ui
-            .add(egui::Button::new("Drag me!").sense(egui::Sense::drag()))
-            .drag_started()
-        {
-            egui_tiles::UiResponse::DragStarted
-        } else {
-            egui_tiles::UiResponse::None
-        }
+        pane.ui(ui)
     }
 }
 
@@ -150,6 +181,7 @@ pub struct ZApp {
     native_pixel_per_point: f32,
     state: AppState,
     z_color_picker_ctx: ZColorPickerAppContext,
+    tree: egui_tiles::Tree<Pane>,
 }
 
 impl ZApp {
@@ -162,12 +194,15 @@ impl ZApp {
 
         let z_color_picker_ctx = ZColorPickerAppContext::default();
 
+        let tree = Self::create_tree(z_color_picker_ctx.z_color_picker.clone());
+
         Self {
             monitor_size: monitor_size,
             native_pixel_per_point: native_pixel_per_point.unwrap_or(1.0),
             scale_factor: scale_factor,
             state: AppState::Startup,
             z_color_picker_ctx,
+            tree: tree,
         }
     }
 
@@ -178,6 +213,8 @@ impl ZApp {
         println!("native_pixels_per_point{:?}", ctx.native_pixels_per_point());
         ctx.set_pixels_per_point(self.scale_factor); // Maybe mult native_pixels_per_point?
                                                      // ctx.set_debug_on_hover(true);
+
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
     }
 
     fn draw_ui_post(&mut self, _ctx: &egui::Context, ui: &mut Ui) {
@@ -186,26 +223,30 @@ impl ZApp {
         self.z_color_picker_ctx.clipboard_copy_window.draw_ui(ui);
     }
 
-    fn create_tree(&self) -> egui_tiles::Tree<Pane> {
-        let mut next_view_nr = 0;
-        let mut gen_pane = || {
-            let pane = Pane { nr: next_view_nr };
-            next_view_nr += 1;
-            pane
-        };
-
+    fn create_tree(color_picker: Arc<Mutex<ZColorPickerWrapper>>) -> egui_tiles::Tree<Pane> {
         let mut tiles = egui_tiles::Tiles::default();
 
         let mut tabs = vec![];
-        tabs.push({
-            let children = (0..7).map(|_| tiles.insert_pane(gen_pane())).collect();
-            tiles.insert_horizontal_tile(children)
-        });
-        tabs.push({
-            let cells = (0..11).map(|_| tiles.insert_pane(gen_pane())).collect();
-            tiles.insert_grid_tile(cells)
-        });
-        tabs.push(tiles.insert_pane(gen_pane()));
+
+        let pane_color_picker = Pane {
+            nr: PANE_COLOR_PICKER,
+            color_picker: color_picker.clone(),
+        };
+        let pane_options = Pane {
+            nr: PANE_COLOR_PICKER_OPTIONS,
+            color_picker: color_picker.clone(),
+        };
+        let pane_previewer = Pane {
+            nr: PANE_COLOR_PICKER_OPTIONS,
+            color_picker: color_picker.clone(),
+        };
+
+        let tile_color_picker = tiles.insert_pane(pane_color_picker);
+        let tile_options = tiles.insert_pane(pane_options);
+        let tile_previewer = tiles.insert_pane(pane_previewer);
+
+        let vertical_tile = tiles.insert_vertical_tile(vec![tile_options, tile_previewer]);
+        tabs.push(tiles.insert_horizontal_tile(vec![tile_color_picker, vertical_tile]));
 
         let root = tiles.insert_tab_tile(tabs);
 
@@ -215,36 +256,8 @@ impl ZApp {
     fn draw_ui_tree(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let response = ui.with_layout(Layout::left_to_right(egui::Align::Min), |mut ui| {
-                let mut tree = self.create_tree();
                 let mut behavior = TreeBehavior {};
-                tree.ui(&mut behavior, ui);
-
-                // let color_picker_desired_size = Vec2 {
-                //     x: ui.available_width() * 0.5,
-                //     y: ui.available_height().min(ui.available_width()),
-                // };
-                // ui.spacing_mut().slider_width =
-                //     color_picker_desired_size.x.min(color_picker_desired_size.y);
-
-                // let left_side_reponse = ui.vertical(|ui| {
-                //     let z_color_picker_response = self
-                //         .z_color_picker_ctx
-                //         .z_color_picker
-                //         .draw_ui(ui, &mut self.z_color_picker_ctx.color_copy_format);
-
-                //     z_color_picker_response
-                // });
-
-                // let z_color_picker_response_option = left_side_reponse.inner;
-
-                // self.z_color_picker_ctx.previewer.update(
-                //     &self.z_color_picker_ctx.z_color_picker.control_points,
-                //     self.z_color_picker_ctx.z_color_picker.options.spline_mode,
-                // );
-                // self.z_color_picker_ctx.stored_ui_responses = self
-                //     .z_color_picker_ctx
-                //     .previewer
-                //     .draw_ui(&mut ui, self.z_color_picker_ctx.color_copy_format);
+                self.tree.ui(&mut behavior, ui);
 
                 self.draw_ui_post(ctx, &mut ui);
             });
@@ -321,30 +334,18 @@ impl ZApp {
     }
 
     fn update_and_draw_debug_windows(&mut self, ui: &mut Ui) {
+        let color_picker = self.z_color_picker_ctx.z_color_picker.lock().unwrap();
+
         self.z_color_picker_ctx
             .debug_window_control_points
-            .update(&self.z_color_picker_ctx.z_color_picker.control_points);
+            .update(&color_picker.control_points);
         self.z_color_picker_ctx
             .debug_window_control_points
             .draw_ui(ui);
 
-        if self.z_color_picker_ctx.z_color_picker.control_points.len() >= 2 {
-            let src_color = self
-                .z_color_picker_ctx
-                .z_color_picker
-                .control_points
-                .first()
-                .unwrap()
-                .val()
-                .hsv();
-            let trg_color = self
-                .z_color_picker_ctx
-                .z_color_picker
-                .control_points
-                .last()
-                .unwrap()
-                .val()
-                .hsv();
+        if color_picker.control_points.len() >= 2 {
+            let src_color = color_picker.control_points.first().unwrap().val().hsv();
+            let trg_color = color_picker.control_points.last().unwrap().val().hsv();
 
             self.z_color_picker_ctx
                 .debug_window_test
