@@ -307,11 +307,9 @@ pub fn color_button_copy(
 ) {
     let button_response = ui.button("📋").on_hover_text("Copy (middle mouse click)");
     if button_response.clicked() {
-        ui.output().borrow_mut().copied_text =
-            format_color_as(color.into(), color_copy_format, None);
-        // ui.output_mut(|o| {
-        //     o.copied_text = format_color_as(color.into(), color_copy_format, None);
-        // });
+        ui.output_mut(|w| {
+            w.copied_text = format_color_as(color.into(), color_copy_format, None);
+        });
     }
 }
 
@@ -323,11 +321,9 @@ pub fn response_copy_color_on_click(
     button_click_type: PointerButton,
 ) {
     if response.clicked_by(button_click_type) {
-        ui.output().borrow_mut().copied_text =
-            format_color_as(color.into(), color_copy_format, None);
-        // ui.output_mut(|o| {
-        //     o.copied_text = format_color_as(color.into(), color_copy_format, None);
-        // });
+        ui.output_mut(|w| {
+            w.copied_text = format_color_as(color.into(), color_copy_format, None);
+        });
     }
 }
 
@@ -366,11 +362,21 @@ pub fn color_text_ui(
 pub fn read_pixels_from_frame_one_pixel(
     frame: &eframe::Frame,
     screen_size_px: [u32; 2],
+    native_pixel_per_point: f32,
     scale_factor: f32,
     x: f32,
     y: f32,
 ) -> Option<Rgb> {
-    let res = read_pixels_from_frame(frame, screen_size_px, scale_factor, x, y, 1.0, 1.0);
+    let res = read_pixels_from_frame(
+        frame,
+        screen_size_px,
+        native_pixel_per_point,
+        scale_factor,
+        x,
+        y,
+        1.0,
+        1.0,
+    );
     res.data.first().cloned()
 }
 
@@ -383,6 +389,7 @@ pub struct FramePixelRead {
 pub fn read_pixels_from_frame(
     frame: &eframe::Frame,
     screen_size_px: [u32; 2],
+    native_pixel_per_point: f32,
     scale_factor: f32,
     x_start: f32,
     y_start: f32,
@@ -394,7 +401,6 @@ pub fn read_pixels_from_frame(
     dbg!(x_size);
     dbg!(y_size);
 
-    let native_pixel_per_point = frame.info().native_pixels_per_point.unwrap_or(1.0);
     let screen_scale_factor = scale_factor * native_pixel_per_point;
 
     let x_ = (x_start * screen_scale_factor).round() as i32;

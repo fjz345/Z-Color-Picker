@@ -24,8 +24,11 @@ fn ui_previewer_colors(
 ) -> Response {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
-    let mut previewer_ui_control_points =
-        ui.child_ui(rect, Layout::left_to_right(egui::Align::Min));
+    let mut previewer_ui_control_points = ui.new_child(
+        egui::UiBuilder::default()
+            .max_rect(rect)
+            .layout(Layout::left_to_right(egui::Align::Min)),
+    );
 
     previewer_ui_control_points.spacing_mut().item_spacing = Vec2::ZERO;
 
@@ -85,8 +88,11 @@ fn ui_previewer_control_points_with_drag(
 ) -> Response {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
-    let mut previewer_ui_control_points =
-        ui.child_ui(rect, Layout::left_to_right(egui::Align::Min));
+    let mut previewer_ui_control_points = ui.new_child(
+        egui::UiBuilder::default()
+            .max_rect(rect)
+            .layout(Layout::left_to_right(egui::Align::Min)),
+    );
 
     previewer_ui_control_points.spacing_mut().item_spacing = Vec2::ZERO;
 
@@ -194,7 +200,11 @@ fn ui_previewer_curve(
 ) -> Response {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
     ui.allocate_rect(rect, Sense::click_and_drag());
-    let mut previewer_ui_curve = ui.child_ui(rect, Layout::left_to_right(egui::Align::Min));
+    let mut previewer_ui_curve = ui.new_child(
+        egui::UiBuilder::default()
+            .max_rect(rect)
+            .layout(Layout::left_to_right(egui::Align::Min)),
+    );
     previewer_ui_curve.spacing_mut().item_spacing = Vec2::ZERO;
 
     let flatten_control_points = flatten_control_points(control_points);
@@ -328,7 +338,7 @@ pub fn ui_previewer(
             previewer_data,
         );
 
-        let reset_button = egui::Button::new("❌").small().wrap(true).frame(true);
+        let reset_button = egui::Button::new("❌").small().frame(true).wrap();
         let reset_button_size: Vec2 = Vec2::new(25.0, 25.0);
         let reset_button_rect: Rect = Rect {
             min: previewer_rect.min,

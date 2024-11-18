@@ -1,19 +1,12 @@
 use arboard::ImageData;
 use ecolor::Color32;
 use eframe::egui::{
+    self,
     color_picker::{color_picker_color32, Alpha},
-    InnerResponse, Response, Slider, Ui, WidgetText,
-};
-use egui_dock::{
-    egui::{self, Id, LayerId, Layout, PointerButton, Rect, TopBottomPanel, Window},
-    DockArea, Node, NodeIndex, Style, TabViewer, Tree,
+    InnerResponse, Layout, PointerButton, Rect, Response, Slider, TopBottomPanel, Ui, WidgetText,
 };
 use std::{borrow::Cow, collections::HashSet, time::Instant};
-
-use eframe::{
-    epaint::{Pos2, Vec2},
-    CreationContext,
-};
+use winapi::shared::winerror::ERROR_INCOMPATIBLE_SERVICE_SID_TYPE;
 
 use crate::{
     clipboard::{
@@ -29,6 +22,11 @@ use crate::{
     previewer::{PreviewerUiResponses, ZPreviewer},
     ui_common::{read_pixels_from_frame, ContentWindow, FramePixelRead},
 };
+use eframe::{
+    epaint::{Pos2, Vec2},
+    CreationContext,
+};
+use egui_tiles::{Tile, TileId, Tiles};
 
 #[derive(Debug, Clone, Copy)]
 enum AppState {
@@ -67,7 +65,6 @@ impl Default for ZColorPickerOptions {
 }
 
 struct ZColorPickerAppContext {
-    style: Option<Style>,
     z_color_picker: ZColorPickerWrapper,
     previewer: ZPreviewer,
     color_copy_format: ColorStringCopy,
@@ -87,7 +84,6 @@ struct ZColorPickerAppContext {
 impl ZColorPickerAppContext {
     pub fn default() -> Self {
         Self {
-            style: None,
             z_color_picker: ZColorPickerWrapper::default(),
             previewer: ZPreviewer::default(),
             color_copy_format: ColorStringCopy::default(),
@@ -111,218 +107,77 @@ impl ZColorPickerAppContext {
     pub fn new() -> Self {
         Self::default()
     }
-
-    fn tab_color_picker(&mut self, ui: &mut Ui) {
-        let style = self.style.as_mut().unwrap();
-
-        let z_color_picker = ZColorPicker::new(&mut self.z_color_picker.control_points);
-        ui.add_sized(Vec2::new(200.0, 200.0), z_color_picker);
-    }
-
-    fn tab_style_editor(&mut self, ui: &mut Ui) {
-        ui.heading("Style Editor");
-
-        let style = self.style.as_mut().unwrap();
-
-        ui.collapsing("Border", |ui| {
-            ui.separator();
-
-            ui.label("Width");
-            ui.add(Slider::new(&mut style.border_width, 1.0..=50.0));
-
-            ui.separator();
-
-            ui.label("Color");
-            color_picker_color32(ui, &mut style.border_color, Alpha::OnlyBlend);
-        });
-
-        ui.collapsing("Selection", |ui| {
-            ui.separator();
-
-            ui.label("Color");
-            color_picker_color32(ui, &mut style.selection_color, Alpha::OnlyBlend);
-        });
-
-        ui.collapsing("Separator", |ui| {
-            ui.separator();
-
-            ui.label("Width");
-            ui.add(Slider::new(&mut style.separator_width, 1.0..=50.0));
-
-            ui.label("Offset limit");
-            ui.add(Slider::new(&mut style.separator_extra, 1.0..=300.0));
-
-            ui.separator();
-
-            ui.label("Idle color");
-            // color_picker_color32(ui, &mut style.separator_color_idle, Alpha::OnlyBlend);
-
-            ui.label("Hovered color");
-            // color_picker_color32(ui, &mut style.separator_color_hovered, Alpha::OnlyBlend);
-
-            ui.label("Dragged color");
-            // color_picker_color32(ui, &mut style.separator_color_dragged, Alpha::OnlyBlend);
-        });
-
-        ui.collapsing("Tabs", |ui| {
-            ui.separator();
-
-            ui.checkbox(
-                &mut style.tab_hover_name,
-                "Show tab name when hoverd over them",
-            );
-            ui.checkbox(&mut style.tabs_are_draggable, "Tabs are draggable");
-            ui.checkbox(&mut style.expand_tabs, "Expand tabs");
-            ui.checkbox(&mut style.show_context_menu, "Show context_menu");
-            ui.checkbox(
-                &mut style.tab_include_scrollarea,
-                "Include ScrollArea inside of tabs",
-            );
-
-            ui.separator();
-
-            ui.label("Rounding");
-            ui.horizontal(|ui| {
-                ui.add(Slider::new(&mut style.tab_rounding.nw, 0.0..=15.0));
-                ui.label("North-West");
-            });
-            ui.horizontal(|ui| {
-                ui.add(Slider::new(&mut style.tab_rounding.ne, 0.0..=15.0));
-                ui.label("North-East");
-            });
-            ui.horizontal(|ui| {
-                ui.add(Slider::new(&mut style.tab_rounding.sw, 0.0..=15.0));
-                ui.label("South-West");
-            });
-            ui.horizontal(|ui| {
-                ui.add(Slider::new(&mut style.tab_rounding.se, 0.0..=15.0));
-                ui.label("South-East");
-            });
-
-            ui.separator();
-
-            ui.label("Title text color unfocused");
-            // color_picker_color32(ui, &mut style.tab_text_color_unfocused, Alpha::OnlyBlend);
-
-            ui.label("Title text color focused");
-            // color_picker_color32(ui, &mut style.tab_text_color_focused, Alpha::OnlyBlend);
-
-            ui.separator();
-
-            ui.checkbox(&mut style.show_close_buttons, "Allow closing tabs");
-
-            ui.separator();
-
-            ui.label("Close button color unfocused");
-            // color_picker_color32(ui, &mut style.close_tab_color, Alpha::OnlyBlend);
-
-            ui.separator();
-
-            ui.label("Close button color focused");
-            // color_picker_color32(ui, &mut style.close_tab_active_color, Alpha::OnlyBlend);
-
-            ui.separator();
-
-            ui.label("Close button background color");
-            // color_picker_color32(ui, &mut style.close_tab_background_color, Alpha::OnlyBlend);
-
-            ui.separator();
-
-            ui.label("Bar background color");
-            // color_picker_color32(ui, &mut style.tab_bar_background_color, Alpha::OnlyBlend);
-
-            ui.separator();
-
-            ui.label("Outline color");
-            // color_picker_color32(ui, &mut style.tab_outline_color, Alpha::OnlyBlend);
-
-            ui.separator();
-
-            ui.label("Background color");
-            // color_picker_color32(ui, &mut style.tab_background_color, Alpha::OnlyBlend);
-        });
-    }
 }
 
-impl TabViewer for ZColorPickerAppContext {
-    type Tab = String;
+struct Pane {
+    nr: usize,
+}
 
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        match tab.as_str() {
-            "Color Picker" => self.tab_color_picker(ui),
-            "Style Editor" => self.tab_style_editor(ui),
-            _ => {
-                ui.label(tab.as_str());
-            }
+struct TreeBehavior {}
+
+impl egui_tiles::Behavior<Pane> for TreeBehavior {
+    fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
+        format!("Pane {}", pane.nr).into()
+    }
+
+    fn pane_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _tile_id: egui_tiles::TileId,
+        pane: &mut Pane,
+    ) -> egui_tiles::UiResponse {
+        // Give each pane a unique color:
+        let color = egui::epaint::Hsva::new(0.103 * pane.nr as f32, 0.5, 0.5, 1.0);
+        ui.painter().rect_filled(ui.max_rect(), 0.0, color);
+
+        ui.label(format!("The contents of pane {}.", pane.nr));
+
+        // You can make your pane draggable like so:
+        if ui
+            .add(egui::Button::new("Drag me!").sense(egui::Sense::drag()))
+            .drag_started()
+        {
+            egui_tiles::UiResponse::DragStarted
+        } else {
+            egui_tiles::UiResponse::None
         }
-    }
-
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        // match tab.as_str() {
-        //     "Simple Demo" => self.simple_demo_menu(ui),
-        //     _ => {
-        //         ui.label(tab.to_string());
-        //         ui.label("This is a context menu");
-        //     }
-        // }
-    }
-
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
-    }
-
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
-        self.open_tabs.remove(tab);
-        true
     }
 }
 
 pub struct ZApp {
     monitor_size: Vec2,
     scale_factor: f32,
+    native_pixel_per_point: f32,
     state: AppState,
     z_color_picker_ctx: ZColorPickerAppContext,
-    tree: Tree<String>,
 }
 
 impl ZApp {
     pub fn new(cc: &CreationContext<'_>) -> Self {
-        let monitor_size = cc.integration_info.window_info.monitor_size.unwrap();
+        // Can not get window screen size from CreationContext
+        let monitor_size = Vec2::new(2560.0, 1440.0);
         const RESOLUTION_REF: f32 = 1080.0;
         let scale_factor: f32 = monitor_size.x.min(monitor_size.y) / RESOLUTION_REF;
+        let native_pixel_per_point = cc.egui_ctx.native_pixels_per_point();
 
         let z_color_picker_ctx = ZColorPickerAppContext::default();
 
-        let mut tree = Tree::new(vec!["Color Picker".to_owned()]);
-        let [a, b] = tree.split_right(NodeIndex::root(), 0.3, vec!["Style Editor".to_owned()]);
-        let mut open_tabs = HashSet::new();
-        for node in tree.iter() {
-            if let Node::Leaf { tabs, .. } = node {
-                for tab in tabs {
-                    open_tabs.insert(tab.clone());
-                }
-            }
-        }
-
         Self {
             monitor_size: monitor_size,
+            native_pixel_per_point: native_pixel_per_point.unwrap_or(1.0),
             scale_factor: scale_factor,
             state: AppState::Startup,
             z_color_picker_ctx,
-            tree,
         }
     }
 
     fn startup(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let visuals: egui::Visuals = egui::Visuals::dark();
         ctx.set_visuals(visuals);
-        ctx.set_pixels_per_point(self.scale_factor);
-        frame.set_window_size(self.monitor_size);
-        frame.set_visible(true);
-
-        ctx.set_debug_on_hover(true);
-        // frame.set_fullscreen(false);
-        // frame.set_maximized(true);
+        println!("pixels_per_point{:?}", ctx.pixels_per_point());
+        println!("native_pixels_per_point{:?}", ctx.native_pixels_per_point());
+        ctx.set_pixels_per_point(self.scale_factor); // Maybe mult native_pixels_per_point?
+                                                     // ctx.set_debug_on_hover(true);
     }
 
     fn draw_ui_post(&mut self, _ctx: &egui::Context, ui: &mut Ui) {
@@ -331,49 +186,38 @@ impl ZApp {
         self.z_color_picker_ctx.clipboard_copy_window.draw_ui(ui);
     }
 
-    fn draw_ui_tree(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
-                ui.menu_button("View", |ui| {
-                    // allow certain tabs to be toggled
-                    for tab in &["Color Picker"] {
-                        if ui
-                            .selectable_label(
-                                self.z_color_picker_ctx.open_tabs.contains(*tab),
-                                *tab,
-                            )
-                            .clicked()
-                        {
-                            if let Some(index) = self.tree.find_tab(&tab.to_string()) {
-                                self.tree.remove_tab(index);
-                                self.z_color_picker_ctx.open_tabs.remove(*tab);
-                            } else {
-                                self.tree.push_to_focused_leaf(tab.to_string());
-                            }
+    fn create_tree(&self) -> egui_tiles::Tree<Pane> {
+        let mut next_view_nr = 0;
+        let mut gen_pane = || {
+            let pane = Pane { nr: next_view_nr };
+            next_view_nr += 1;
+            pane
+        };
 
-                            ui.close_menu();
-                        }
-                    }
-                });
-            })
+        let mut tiles = egui_tiles::Tiles::default();
+
+        let mut tabs = vec![];
+        tabs.push({
+            let children = (0..7).map(|_| tiles.insert_pane(gen_pane())).collect();
+            tiles.insert_horizontal_tile(children)
         });
+        tabs.push({
+            let cells = (0..11).map(|_| tiles.insert_pane(gen_pane())).collect();
+            tiles.insert_grid_tile(cells)
+        });
+        tabs.push(tiles.insert_pane(gen_pane()));
 
+        let root = tiles.insert_tab_tile(tabs);
+
+        egui_tiles::Tree::new("my_tree", root, tiles)
+    }
+
+    fn draw_ui_tree(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            let response = ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui| {
-                let layer_id = LayerId::background();
-                let max_rect = ctx.available_rect();
-                let clip_rect = ctx.available_rect();
-                let id = Id::new("egui_dock::DockArea");
-                let mut ui = Ui::new(ctx.clone(), layer_id, id, max_rect, clip_rect);
-
-                let style = self
-                    .z_color_picker_ctx
-                    .style
-                    .get_or_insert(Style::from_egui(&ui.ctx().style()))
-                    .clone();
-                DockArea::new(&mut self.tree)
-                    .style(style)
-                    .show_inside(&mut ui, &mut self.z_color_picker_ctx);
+            let response = ui.with_layout(Layout::left_to_right(egui::Align::Min), |mut ui| {
+                let mut tree = self.create_tree();
+                let mut behavior = TreeBehavior {};
+                tree.ui(&mut behavior, ui);
 
                 // let color_picker_desired_size = Vec2 {
                 //     x: ui.available_width() * 0.5,
@@ -511,63 +355,65 @@ impl ZApp {
     }
 
     fn process_ctx_inputs(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let input_ctx = ctx.input();
-
-        // Esc
-        if input_ctx.key_down(egui::Key::Escape) {
-            _frame.close();
-        }
-
-        // DoubleLeftClick
-        self.z_color_picker_ctx.double_click_event = None;
-        if input_ctx
-            .pointer
-            .button_double_clicked(PointerButton::Primary)
-        {
-            let mouse_pos = input_ctx.pointer.interact_pos().unwrap();
-            self.z_color_picker_ctx.double_click_event = Some(MouseClickEvent { mouse_pos });
-            println!("double click @({},{})", mouse_pos.x, mouse_pos.y);
-        }
-
-        self.z_color_picker_ctx.middle_click_event = None;
-        if input_ctx.pointer.button_clicked(PointerButton::Middle) {
-            let mouse_pos: Pos2 = input_ctx.pointer.interact_pos().unwrap();
-            self.z_color_picker_ctx.middle_click_event = Some(MouseClickEvent { mouse_pos });
-
-            println!("middle click @({},{})", mouse_pos.x, mouse_pos.y);
-        }
-
-        // Debug toggles
-        self.z_color_picker_ctx.double_click_event = None;
-        if input_ctx.key_pressed(egui::Key::F12) {
-            if self
-                .z_color_picker_ctx
-                .debug_window_control_points
-                .is_open()
-            {
-                self.z_color_picker_ctx.debug_window_control_points.close();
-            } else {
-                self.z_color_picker_ctx.debug_window_control_points.open();
+        let mut user_quit: bool = false;
+        let _input_ctx = ctx.input(|r| {
+            // Esc
+            if r.key_down(egui::Key::Escape) {
+                user_quit = true;
             }
 
-            println!(
-                "debug_control_points {}",
-                self.z_color_picker_ctx
+            // DoubleLeftClick
+            self.z_color_picker_ctx.double_click_event = None;
+            if r.pointer.button_double_clicked(PointerButton::Primary) {
+                let mouse_pos = r.pointer.interact_pos().unwrap();
+                self.z_color_picker_ctx.double_click_event = Some(MouseClickEvent { mouse_pos });
+                println!("double click @({},{})", mouse_pos.x, mouse_pos.y);
+            }
+
+            self.z_color_picker_ctx.middle_click_event = None;
+            if r.pointer.button_clicked(PointerButton::Middle) {
+                let mouse_pos: Pos2 = r.pointer.interact_pos().unwrap();
+                self.z_color_picker_ctx.middle_click_event = Some(MouseClickEvent { mouse_pos });
+
+                println!("middle click @({},{})", mouse_pos.x, mouse_pos.y);
+            }
+
+            // Debug toggles
+            self.z_color_picker_ctx.double_click_event = None;
+            if r.key_pressed(egui::Key::F12) {
+                if self
+                    .z_color_picker_ctx
                     .debug_window_control_points
                     .is_open()
-            );
-        }
-        self.z_color_picker_ctx.double_click_event = None;
-        if input_ctx.key_pressed(egui::Key::F11) {
-            if self.z_color_picker_ctx.debug_window_test.is_open() {
-                self.z_color_picker_ctx.debug_window_test.close();
-            } else {
-                self.z_color_picker_ctx.debug_window_test.open();
+                {
+                    self.z_color_picker_ctx.debug_window_control_points.close();
+                } else {
+                    self.z_color_picker_ctx.debug_window_control_points.open();
+                }
+
+                println!(
+                    "debug_control_points {}",
+                    self.z_color_picker_ctx
+                        .debug_window_control_points
+                        .is_open()
+                );
             }
-            println!(
-                "debug_window {}",
-                self.z_color_picker_ctx.debug_window_test.is_open()
-            );
+            self.z_color_picker_ctx.double_click_event = None;
+            if r.key_pressed(egui::Key::F11) {
+                if self.z_color_picker_ctx.debug_window_test.is_open() {
+                    self.z_color_picker_ctx.debug_window_test.close();
+                } else {
+                    self.z_color_picker_ctx.debug_window_test.open();
+                }
+                println!(
+                    "debug_window {}",
+                    self.z_color_picker_ctx.debug_window_test.is_open()
+                );
+            }
+        });
+
+        if user_quit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 }
@@ -585,30 +431,30 @@ impl eframe::App for ZApp {
                 self.process_ctx_inputs(ctx, frame);
             }
             AppState::Exit => {
-                frame.close();
+                // ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             _ => {
                 panic!("Not a valid state {:?}", self.state);
             }
         }
-    }
 
-    fn post_rendering(&mut self, screen_size_px: [u32; 2], frame: &eframe::Frame) {
-        if let Some(event) = &mut self.z_color_picker_ctx.clipboard_event {
-            let pixel_read = read_pixels_from_frame(
-                frame,
-                screen_size_px,
-                self.scale_factor,
-                event.frame_rect.min.x,
-                event.frame_rect.max.y,
-                event.frame_rect.size().x,
-                event.frame_rect.size().y,
-            );
-            if pixel_read.data.len() > 0 {
-                event.frame_pixels = Some(pixel_read);
-            } else {
-                event.frame_pixels = None;
-            }
-        }
+        // let screen_size_px = [ctx.used_size().x as u32, ctx.used_size().y as u32];
+        // if let Some(event) = &mut self.z_color_picker_ctx.clipboard_event {
+        //     let pixel_read = read_pixels_from_frame(
+        //         frame,
+        //         screen_size_px,
+        //         self.native_pixel_per_point,
+        //         self.scale_factor,
+        //         event.frame_rect.min.x,
+        //         event.frame_rect.max.y,
+        //         event.frame_rect.size().x,
+        //         event.frame_rect.size().y,
+        //     );
+        //     if pixel_read.data.len() > 0 {
+        //         event.frame_pixels = Some(pixel_read);
+        //     } else {
+        //         event.frame_pixels = None;
+        //     }
+        // }
     }
 }

@@ -138,7 +138,7 @@ impl ClipboardPopup {
         ui.visuals_mut().window_stroke.color = color_bg;
         ui.visuals_mut().window_stroke.width = 0.0;
         ui.visuals_mut().widgets.active.fg_stroke.color = color_text;
-        ui.visuals_mut().window_shadow.extrusion = 0.0;
+        // ui.visuals_mut().window_shadow.extrusion = 0.0;
         ui.ctx().set_visuals(ui.visuals().clone());
 
         let mut should_open: bool = self.open;
