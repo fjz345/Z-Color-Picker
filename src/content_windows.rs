@@ -60,6 +60,7 @@ impl Default for PresetDrawResult {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct WindowZColorPickerOptions {
     pub open: bool,
     pub position: Pos2,
@@ -79,7 +80,7 @@ impl WindowZColorPickerOptions {
 
     pub fn update(&mut self) {}
 
-    fn draw_content(
+    pub fn draw_content(
         &mut self,
         ui: &mut Ui,
         options: &mut ZColorPickerOptions,

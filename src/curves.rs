@@ -80,7 +80,7 @@ pub fn ui_ordered_control_points(
             let control_point_response = ui.interact(
                 control_point_ui_rect,
                 parent_response.id.with(i),
-                Sense::drag(),
+                Sense::click_and_drag(),
             );
 
             // TODO: CHECK THIS LOGIC (is_inactive, is_inactive_click_or_drag)

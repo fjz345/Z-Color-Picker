@@ -394,6 +394,7 @@ impl PreviewerUiResponses {
 }
 
 const PREVIEWER_DEFAULT_VALUE: f32 = 100.0;
+#[derive(Debug, Clone)]
 pub struct PreviewerData {
     pub control_points: Vec<ControlPoint>,
     pub spline_mode: SplineMode,
@@ -427,12 +428,13 @@ impl PreviewerData {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ZPreviewer {
     pub data: PreviewerData,
 }
 
 impl ZPreviewer {
-    pub fn new() -> Self {
+    pub fn default() -> Self {
         Self {
             data: PreviewerData::new(0),
         }
@@ -465,6 +467,6 @@ impl ZPreviewer {
 
 impl Default for ZPreviewer {
     fn default() -> Self {
-        Self::new()
+        Self::default()
     }
 }
