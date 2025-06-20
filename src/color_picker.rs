@@ -306,7 +306,6 @@ impl ZColorPickerWrapper {
     }
 
     pub fn draw_ui(&mut self, ui: &mut Ui, color_copy_format: &ColorStringCopy) -> Response {
-        println!("draw_ui SPLINEMODE: {:?}", &self.options.spline_mode);
         let inner_response = ui.vertical(|ui| {
             self.pre_draw_update();
 

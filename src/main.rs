@@ -44,8 +44,9 @@ fn main() -> eframe::Result {
                 // Try to load saved state from storage
                 if let Some(storage) = cc.storage {
                     if let Some(json) = storage.get_string(eframe::APP_KEY) {
-                        if let Ok(app) = serde_json::from_str::<ZApp>(&json) {
+                        if let Ok(mut app) = serde_json::from_str::<ZApp>(&json) {
                             println!("Found previous app storage");
+                            app.request_init();
                             return Ok(Box::new(app));
                         }
                     }

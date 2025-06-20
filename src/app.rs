@@ -15,6 +15,7 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     collections::HashSet,
+    ops::DerefMut,
     path::PathBuf,
     rc::Rc,
     sync::{Arc, Mutex},
@@ -43,7 +44,7 @@ use eframe::{
 };
 use egui_tiles::{Tile, TileId, Tiles, Tree};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 enum AppState {
     #[default]
     Startup,
@@ -136,7 +137,7 @@ const PANE_COLOR_PICKER_PREVIEWER: usize = 3;
 const PANE_CONSOLE: usize = 4;
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Pane {
+pub struct Pane {
     id: usize,
     title: Option<String>,
     #[serde(skip)]
@@ -144,6 +145,10 @@ struct Pane {
 }
 
 impl Pane {
+    pub fn update_ctx(&mut self, new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {
+        self.ctx = new_ctx.clone();
+    }
+
     pub fn title(&self) -> String {
         self.title.clone().unwrap_or(format!("Pane {}", self.id))
     }
@@ -156,18 +161,7 @@ impl Pane {
         if self.id == PANE_COLOR_PICKER {
             // ui.painter().rect_filled(ui.max_rect(), 0.0, Color32::WHITE);
             ui.allocate_ui(ui.max_rect().size(), |ui| {
-                println!(
-                    "color_picker_response before SPLINEMODE: {:?}",
-                    &color_picker.options.spline_mode
-                );
-
                 let color_picker_response = color_picker.draw_ui(ui, &color_copy_format);
-
-                println!(
-                    "color_picker_response after SPLINEMODE: {:?}",
-                    &color_picker.options.spline_mode
-                );
-
                 *mut_ctx.z_color_picker.borrow_mut() = color_picker;
                 color_picker_response
             });
@@ -189,17 +183,7 @@ impl Pane {
             mut_ctx.options_window = options_window;
             color_picker.options = options;
 
-            println!(
-                "pane ui SPLINEMODE: {:?}",
-                &color_picker.options.spline_mode
-            );
-
             *mut_ctx.z_color_picker.borrow_mut() = color_picker;
-
-            println!(
-                "pane ui SPLINEMODE: {:?}",
-                &mut_ctx.z_color_picker.borrow_mut().options.spline_mode
-            );
 
             return egui_tiles::UiResponse::None;
         } else if self.id == PANE_COLOR_PICKER_PREVIEWER {
@@ -261,36 +245,48 @@ pub struct ZApp {
     monitor_size: Vec2,
     scale_factor: f32,
     native_pixel_per_point: f32,
-    #[serde(skip)]
     state: AppState,
     app_ctx: Rc<RefCell<ZColorPickerAppContext>>,
     tree: egui_tiles::Tree<Pane>,
 }
 
+const HARDCODED_MONITOR_SIZE: Vec2 = Vec2::new(2560.0, 1440.0);
 impl ZApp {
+    // stupid work around since persistance storage does not work??
+    pub fn request_init(&mut self) {
+        self.state = AppState::Startup;
+    }
+
     pub fn new(cc: &CreationContext<'_>) -> Self {
         // Can not get window screen size from CreationContext
-        let monitor_size = Vec2::new(2560.0, 1440.0);
+        let monitor_size = HARDCODED_MONITOR_SIZE;
         const RESOLUTION_REF: f32 = 1080.0;
         let scale_factor: f32 = monitor_size.x.min(monitor_size.y) / RESOLUTION_REF;
-        let native_pixel_per_point = cc.egui_ctx.native_pixels_per_point();
 
         let app_ctx = ZColorPickerAppContext::default();
         let app_ctx = Rc::new(RefCell::new(app_ctx));
 
-        let tree = Self::create_tree(app_ctx.clone());
+        let native_pixel_per_point = cc.egui_ctx.native_pixels_per_point().unwrap_or(1.0);
 
         Self {
             monitor_size: monitor_size,
-            native_pixel_per_point: native_pixel_per_point.unwrap_or(1.0),
             scale_factor: scale_factor,
+            native_pixel_per_point: native_pixel_per_point,
             state: AppState::Startup,
-            app_ctx,
-            tree: tree,
+            tree: Self::create_tree(app_ctx.clone()),
+            app_ctx: app_ctx,
         }
     }
 
     fn startup(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Somehow these are not correct when starting?
+        for tile in &mut self.tree.tiles.iter_mut() {
+            match tile.1 {
+                Tile::Pane(p) => p.ctx = self.app_ctx.clone(),
+                _ => {}
+            }
+        }
+
         let visuals: egui::Visuals = egui::Visuals::dark();
         ctx.set_visuals(visuals);
         println!("pixels_per_point{:?}", ctx.pixels_per_point());
@@ -306,20 +302,6 @@ impl ZApp {
         let copy_window = &mut self.app_ctx.borrow_mut().clipboard_copy_window;
         copy_window.update();
         copy_window.draw_ui(ui);
-    }
-
-    fn load_tree(path: &std::path::Path) -> Option<egui_tiles::Tree<Pane>> {
-        let res = std::fs::read_to_string(path);
-        if let Err(e) = &res {
-            println!("load_tree failed [path: {:?}]: {e}", &path);
-            return None;
-        }
-        let json_res = serde_json::from_str(&res.unwrap());
-        if let Err(e) = json_res {
-            println!("load_tree failed [path: {:?}]: {e}", &path);
-            return None;
-        }
-        return json_res.unwrap();
     }
 
     fn create_tree(ctx: Rc<RefCell<ZColorPickerAppContext>>) -> egui_tiles::Tree<Pane> {
@@ -536,6 +518,7 @@ impl eframe::App for ZApp {
 
         #[cfg(feature = "serde")]
         if let Ok(json) = serde_json::to_string(self) {
+            println!("SAVED with state: {:?}", self.state);
             storage.set_string(eframe::APP_KEY, json);
         }
         println!("SAVED!");
