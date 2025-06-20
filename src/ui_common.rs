@@ -128,7 +128,12 @@ pub fn color_slider_1d(
         }
         ui.painter().add(Shape::mesh(mesh));
 
-        ui.painter().rect_stroke(rect, 0.0, visuals.bg_stroke); // outline
+        ui.painter().rect_stroke(
+            rect,
+            0.0,
+            visuals.bg_stroke,
+            eframe::egui::StrokeKind::Middle,
+        ); // outline
     }
 
     response
@@ -282,7 +287,12 @@ pub fn color_slider_2d(
         }
         ui.painter().add(Shape::mesh(mesh)); // fill
 
-        ui.painter().rect_stroke(rect, 0.0, visuals.bg_stroke); // outline
+        ui.painter().rect_stroke(
+            rect,
+            0.0,
+            visuals.bg_stroke,
+            eframe::egui::StrokeKind::Middle,
+        ); // outline
 
         // // Show where the slider is at:
         // let x = lerp(rect.left()..=rect.right(), *x_value);
@@ -380,6 +390,7 @@ pub fn read_pixels_from_frame_one_pixel(
     res.data.first().cloned()
 }
 
+#[derive(Debug)]
 pub struct FramePixelRead {
     pub width: usize,
     pub height: usize,
@@ -413,7 +424,7 @@ pub fn read_pixels_from_frame(
     let buf_size = (3 * x_size_ * y_size_) as usize;
     let colors: Vec<Rgb> = unsafe {
         let mut buf: Vec<u8> = vec![0u8; buf_size];
-        let pixels = glow::PixelPackData::Slice(&mut buf[..]);
+        let pixels = glow::PixelPackData::Slice(Some(&mut buf[..]));
         frame.gl().unwrap().read_pixels(
             x_,
             y_,

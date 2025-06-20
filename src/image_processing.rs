@@ -3,7 +3,7 @@ use std::ops::Rem;
 use crate::ui_common::FramePixelRead;
 
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Rgb {
     pub val: (u8, u8, u8),
 }

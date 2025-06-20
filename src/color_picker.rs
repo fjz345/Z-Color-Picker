@@ -82,7 +82,9 @@ impl<'a> ZColorPicker<'a> {
 
         let value = self.ctx.control_points.to_vec();
 
-        response.changed = value != old_value;
+        if value != old_value {
+            response.mark_changed();
+        }
         response.widget_info(|| WidgetInfo::new(egui::WidgetType::Other));
 
         #[cfg(feature = "accesskit")]
@@ -105,7 +107,7 @@ impl<'a> ZColorPicker<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZColorPickerWrapper {
     pub control_points: Vec<ControlPoint>,
     pub last_modifying_point_index: Option<usize>,

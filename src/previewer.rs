@@ -3,6 +3,7 @@ use eframe::{
     egui::{self, Layout, PointerButton, Response, Sense, Ui, Vec2},
     epaint::Rect,
 };
+use serde::{Deserialize, Serialize};
 use splines::Spline;
 
 #[allow(unused_imports)]
@@ -359,6 +360,7 @@ pub fn ui_previewer(
     inner_response.inner
 }
 
+#[derive(Debug)]
 pub struct PreviewerUiResponses {
     pub controlpoints: Option<Response>,
     pub curve: Option<Response>,
@@ -394,7 +396,7 @@ impl PreviewerUiResponses {
 }
 
 const PREVIEWER_DEFAULT_VALUE: f32 = 100.0;
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreviewerData {
     pub control_points: Vec<ControlPoint>,
     pub spline_mode: SplineMode,
@@ -428,7 +430,7 @@ impl PreviewerData {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZPreviewer {
     pub data: PreviewerData,
 }

@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::fs::write_string_to_file;
 
 pub const PRESETS_FOLDER_NAME: &str = "presets";
+pub const SAVED_FOLDER_NAME: &str = "saved";
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Preset {
     pub name: String,
     pub data: PresetData,

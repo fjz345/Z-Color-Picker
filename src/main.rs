@@ -38,6 +38,20 @@ fn main() -> eframe::Result {
         Box::new(|cc: &eframe::CreationContext<'_>| {
             // This gives us image support:
             egui_extras::install_image_loaders(&cc.egui_ctx);
+
+            #[cfg(feature = "serde")]
+            {
+                // Try to load saved state from storage
+                if let Some(storage) = cc.storage {
+                    if let Some(json) = storage.get_string(eframe::APP_KEY) {
+                        if let Ok(app) = serde_json::from_str::<ZApp>(&json) {
+                            println!("Found previous app storage");
+                            return Ok(Box::new(app));
+                        }
+                    }
+                }
+            }
+
             let app = ZApp::new(cc);
             Ok(Box::<ZApp>::new(app))
         }),

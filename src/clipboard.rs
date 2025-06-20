@@ -73,16 +73,28 @@ pub fn write_pixels_to_test_ppm(image_data: &ImageData, test_vec: Vec<Rgb>) -> R
     Ok(())
 }
 
+#[derive(Debug)]
 pub struct ClipboardCopyEvent {
     pub frame_rect: Rect,
     pub frame_pixels: Option<FramePixelRead>,
 }
-
+#[derive(Debug)]
 pub struct ClipboardPopup {
     pub open: bool,
     pub position: Pos2,
     pub open_timestamp: Instant,
     pub open_duration: f32,
+}
+
+impl Default for ClipboardPopup {
+    fn default() -> Self {
+        Self {
+            open: false,
+            position: Pos2::ZERO, // assuming Pos2::ZERO exists, else use Pos2::new(0.0, 0.0)
+            open_timestamp: Instant::now(),
+            open_duration: 0.0,
+        }
+    }
 }
 
 impl ClipboardPopup {

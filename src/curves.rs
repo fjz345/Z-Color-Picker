@@ -230,6 +230,7 @@ pub fn ui_ordered_control_points(
                     ),
                     0.0,
                     stroke,
+                    eframe::egui::StrokeKind::Middle,
                 )
             } else {
                 Shape::circle_stroke(point_in_screen, control_point_radius, stroke)
@@ -270,6 +271,7 @@ pub fn ui_ordered_control_points(
             ),
             0.0,
             stroke,
+            eframe::egui::StrokeKind::Middle,
         );
         ui.painter().add(shape);
     }

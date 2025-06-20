@@ -1,14 +1,21 @@
 use arboard::ImageData;
 use ecolor::Color32;
-use eframe::egui::{
-    self,
-    color_picker::{color_picker_color32, Alpha},
-    InnerResponse, Layout, PointerButton, Rect, Response, Slider, TopBottomPanel, Ui, WidgetText,
+use eframe::{
+    egui::{
+        self,
+        color_picker::{color_picker_color32, Alpha},
+        InnerResponse, Layout, PointerButton, Rect, Response, Slider, TopBottomPanel, Ui,
+        WidgetText,
+    },
+    epaint::tessellator::Path,
 };
+use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 use std::{
     borrow::Cow,
     cell::RefCell,
     collections::HashSet,
+    path::PathBuf,
     rc::Rc,
     sync::{Arc, Mutex},
     time::Instant,
@@ -26,7 +33,7 @@ use crate::{
     control_point::ControlPoint,
     debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8},
-    preset::Preset,
+    preset::{Preset, SAVED_FOLDER_NAME},
     previewer::{self, PreviewerUiResponses, ZPreviewer},
     ui_common::{read_pixels_from_frame, ContentWindow, FramePixelRead},
 };
@@ -34,20 +41,22 @@ use eframe::{
     epaint::{Pos2, Vec2},
     CreationContext,
 };
-use egui_tiles::{Tile, TileId, Tiles};
+use egui_tiles::{Tile, TileId, Tiles, Tree};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 enum AppState {
+    #[default]
     Startup,
     Idle,
     Exit,
 }
 
+#[derive(Debug)]
 struct MouseClickEvent {
     mouse_pos: Pos2,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZColorPickerOptions {
     pub is_curve_locked: bool,
     pub is_hue_middle_interpolated: bool,
@@ -72,20 +81,29 @@ impl Default for ZColorPickerOptions {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Default)]
 struct ZColorPickerAppContext {
     z_color_picker: Arc<Mutex<ZColorPickerWrapper>>,
+    pub options: ZColorPickerOptions,
     previewer: ZPreviewer,
     color_copy_format: ColorStringCopy,
+    #[serde(skip)]
     debug_window_control_points: DebugWindowControlPoints,
+    #[serde(skip)]
     debug_window_test: DebugWindowTestWindow,
+    #[serde(skip)]
     double_click_event: Option<MouseClickEvent>,
+    #[serde(skip)]
     middle_click_event: Option<MouseClickEvent>,
+    #[serde(skip)]
     clipboard_event: Option<ClipboardCopyEvent>,
+    #[serde(skip)]
     clipboard_copy_window: ClipboardPopup,
+    #[serde(skip)]
     stored_ui_responses: PreviewerUiResponses,
     open_tabs: HashSet<String>,
 
-    pub options: ZColorPickerOptions,
+    #[serde(skip)]
     pub options_window: WindowZColorPickerOptions,
 }
 
@@ -121,12 +139,20 @@ const PANE_COLOR_PICKER: usize = 1;
 const PANE_COLOR_PICKER_OPTIONS: usize = 2;
 const PANE_COLOR_PICKER_PREVIEWER: usize = 3;
 const PANE_CONSOLE: usize = 4;
+
+#[derive(Serialize, Deserialize, Debug)]
 struct Pane {
     id: usize,
+    title: Option<String>,
+    #[serde(skip)]
     ctx: Rc<RefCell<ZColorPickerAppContext>>,
 }
 
 impl Pane {
+    pub fn title(&self) -> String {
+        self.title.clone().unwrap_or(format!("Pane {}", self.id))
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
         let mut mut_ctx = self.ctx.borrow_mut();
         let color_picker = mut_ctx.z_color_picker.clone();
@@ -197,7 +223,7 @@ struct TreeBehavior {}
 
 impl egui_tiles::Behavior<Pane> for TreeBehavior {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
-        format!("Pane {}", pane.id).into()
+        pane.title().into()
     }
 
     fn pane_ui(
@@ -210,10 +236,12 @@ impl egui_tiles::Behavior<Pane> for TreeBehavior {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ZApp {
     monitor_size: Vec2,
     scale_factor: f32,
     native_pixel_per_point: f32,
+    #[serde(skip)]
     state: AppState,
     app_ctx: Rc<RefCell<ZColorPickerAppContext>>,
     tree: egui_tiles::Tree<Pane>,
@@ -260,6 +288,20 @@ impl ZApp {
         copy_window.draw_ui(ui);
     }
 
+    fn load_tree(path: &std::path::Path) -> Option<egui_tiles::Tree<Pane>> {
+        let res = std::fs::read_to_string(path);
+        if let Err(e) = &res {
+            println!("load_tree failed [path: {:?}]: {e}", &path);
+            return None;
+        }
+        let json_res = serde_json::from_str(&res.unwrap());
+        if let Err(e) = json_res {
+            println!("load_tree failed [path: {:?}]: {e}", &path);
+            return None;
+        }
+        return json_res.unwrap();
+    }
+
     fn create_tree(ctx: Rc<RefCell<ZColorPickerAppContext>>) -> egui_tiles::Tree<Pane> {
         let mut tiles = egui_tiles::Tiles::default();
 
@@ -267,18 +309,22 @@ impl ZApp {
 
         let pane_color_picker = Pane {
             id: PANE_COLOR_PICKER,
+            title: None,
             ctx: ctx.clone(),
         };
         let pane_options = Pane {
             id: PANE_COLOR_PICKER_OPTIONS,
+            title: None,
             ctx: ctx.clone(),
         };
         let pane_previewer = Pane {
             id: PANE_COLOR_PICKER_PREVIEWER,
+            title: None,
             ctx: ctx.clone(),
         };
         let pane_console = Pane {
             id: PANE_CONSOLE,
+            title: None,
             ctx: ctx.clone(),
         };
 
@@ -332,8 +378,6 @@ impl ZApp {
             }
         }
 
-        if let Some(event) = &app_ctx.middle_click_event {}
-
         false
     }
 
@@ -375,6 +419,10 @@ impl ZApp {
         false
     }
 
+    fn request_shutdown(&mut self) {
+        self.state = AppState::Exit;
+    }
+
     fn update_and_draw_debug_windows(&mut self, ui: &mut Ui) {
         let mut app_ctx = self.app_ctx.borrow_mut();
         let color_picker_clone = if let Ok(a) = app_ctx.z_color_picker.try_lock() {
@@ -401,67 +449,78 @@ impl ZApp {
     }
 
     fn process_ctx_inputs(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let app_ctx = &mut self.app_ctx.borrow_mut();
-
         let mut user_quit: bool = false;
-        let _input_ctx = ctx.input(|r| {
-            // Esc
-            if r.key_down(egui::Key::Escape) {
-                user_quit = true;
-            }
-
-            // DoubleLeftClick
-            app_ctx.double_click_event = None;
-            if r.pointer.button_double_clicked(PointerButton::Primary) {
-                let mouse_pos = r.pointer.interact_pos().unwrap();
-                app_ctx.double_click_event = Some(MouseClickEvent { mouse_pos });
-                println!("double click @({},{})", mouse_pos.x, mouse_pos.y);
-            }
-
-            app_ctx.middle_click_event = None;
-            if r.pointer.button_clicked(PointerButton::Middle) {
-                let mouse_pos: Pos2 = r.pointer.interact_pos().unwrap();
-                app_ctx.middle_click_event = Some(MouseClickEvent { mouse_pos });
-
-                println!("middle click @({},{})", mouse_pos.x, mouse_pos.y);
-            }
-
-            // Debug toggles
-            app_ctx.double_click_event = None;
-            if r.key_pressed(egui::Key::F12) {
-                if app_ctx.debug_window_control_points.is_open() {
-                    app_ctx.debug_window_control_points.close();
-                } else {
-                    app_ctx.debug_window_control_points.open();
+        {
+            let app_ctx = &mut self.app_ctx.borrow_mut();
+            let _input_ctx = ctx.input(|r| {
+                // Esc
+                if r.key_down(egui::Key::Escape) {
+                    user_quit = true;
                 }
 
-                println!(
-                    "debug_control_points {}",
-                    app_ctx.debug_window_control_points.is_open()
-                );
-            }
-            app_ctx.double_click_event = None;
-            if r.key_pressed(egui::Key::F11) {
-                if app_ctx.debug_window_test.is_open() {
-                    app_ctx.debug_window_test.close();
-                } else {
-                    app_ctx.debug_window_test.open();
+                // DoubleLeftClick
+                app_ctx.double_click_event = None;
+                if r.pointer.button_double_clicked(PointerButton::Primary) {
+                    let mouse_pos = r.pointer.interact_pos().unwrap();
+                    app_ctx.double_click_event = Some(MouseClickEvent { mouse_pos });
+                    println!("double click @({},{})", mouse_pos.x, mouse_pos.y);
                 }
-                println!("debug_window {}", app_ctx.debug_window_test.is_open());
-            }
-        });
 
-        if let Some(mouse_event) = &app_ctx.double_click_event {
-            // let color_picker = app_ctx.z_color_picker.lock().unwrap();
+                app_ctx.middle_click_event = None;
+                if r.pointer.button_clicked(PointerButton::Middle) {
+                    let mouse_pos: Pos2 = r.pointer.interact_pos().unwrap();
+                    app_ctx.middle_click_event = Some(MouseClickEvent { mouse_pos });
+
+                    println!("middle click @({},{})", mouse_pos.x, mouse_pos.y);
+                }
+
+                // Debug toggles
+                app_ctx.double_click_event = None;
+                if r.key_pressed(egui::Key::F12) {
+                    if app_ctx.debug_window_control_points.is_open() {
+                        app_ctx.debug_window_control_points.close();
+                    } else {
+                        app_ctx.debug_window_control_points.open();
+                    }
+
+                    println!(
+                        "debug_control_points {}",
+                        app_ctx.debug_window_control_points.is_open()
+                    );
+                }
+                app_ctx.double_click_event = None;
+                if r.key_pressed(egui::Key::F11) {
+                    if app_ctx.debug_window_test.is_open() {
+                        app_ctx.debug_window_test.close();
+                    } else {
+                        app_ctx.debug_window_test.open();
+                    }
+                    println!("debug_window {}", app_ctx.debug_window_test.is_open());
+                }
+            });
+
+            if let Some(mouse_event) = &app_ctx.double_click_event {
+                // let color_picker = app_ctx.z_color_picker.lock().unwrap();
+            }
         }
 
         if user_quit {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.request_shutdown();
         }
     }
 }
 
 impl eframe::App for ZApp {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        println!("SAVING...");
+
+        #[cfg(feature = "serde")]
+        if let Ok(json) = serde_json::to_string(self) {
+            storage.set_string(eframe::APP_KEY, json);
+        }
+        println!("SAVED!");
+    }
+
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         match self.state {
             AppState::Startup => {
@@ -474,7 +533,7 @@ impl eframe::App for ZApp {
                 self.process_ctx_inputs(ctx, frame);
             }
             AppState::Exit => {
-                // ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             _ => {
                 panic!("Not a valid state {:?}", self.state);

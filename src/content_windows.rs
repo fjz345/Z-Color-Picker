@@ -60,7 +60,7 @@ impl Default for PresetDrawResult {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct WindowZColorPickerOptions {
     pub open: bool,
     pub position: Pos2,

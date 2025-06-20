@@ -5,6 +5,7 @@ use ecolor::HsvaGamma;
 use eframe::egui::color_picker::show_color;
 use eframe::egui::{Slider, Ui, Vec2};
 
+#[derive(Default, Debug)]
 pub struct DebugWindowControlPoints {
     open: bool,
     pub position: Pos2,
@@ -66,6 +67,7 @@ impl ContentWindow for DebugWindowControlPoints {
     }
 }
 
+#[derive(Default, Debug)]
 pub struct DebugWindowTestWindow {
     open: bool,
     pub position: Pos2,
