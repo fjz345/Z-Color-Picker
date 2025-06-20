@@ -300,6 +300,7 @@ impl ZColorPickerWrapper {
     }
 
     pub fn draw_ui(&mut self, ui: &mut Ui, color_copy_format: &ColorStringCopy) -> Response {
+        println!("SPLINEMODE: {:?}", &self.options.spline_mode);
         let inner_response = ui.vertical(|ui| {
             self.pre_draw_update();
 
@@ -455,7 +456,7 @@ impl ZColorPickerWrapper {
         }
     }
 
-    pub fn post_draw(&mut self, z_color_picker_response: &Response) {
+    fn post_draw(&mut self, z_color_picker_response: &Response) {
         match self.control_point_right_clicked {
             Some(index) => {
                 self.remove_control_point(index);
@@ -734,6 +735,7 @@ pub fn main_color_picker(
         //     unwrapped.val[1] = color_to_show.v;
         // }
 
+        println!("ctx.spline_mode{:?}", &ctx.spline_mode);
         let _spline_gradient_repsonse =
             ui_ordered_spline_gradient(ui, ctx.control_points, ctx.spline_mode, &slider_2d_reponse);
 

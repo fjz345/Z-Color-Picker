@@ -83,8 +83,7 @@ impl Default for ZColorPickerOptions {
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 struct ZColorPickerAppContext {
-    z_color_picker: Arc<Mutex<ZColorPickerWrapper>>,
-    pub options: ZColorPickerOptions,
+    z_color_picker: Rc<RefCell<ZColorPickerWrapper>>,
     previewer: ZPreviewer,
     color_copy_format: ColorStringCopy,
     #[serde(skip)]
@@ -110,7 +109,7 @@ struct ZColorPickerAppContext {
 impl ZColorPickerAppContext {
     pub fn default() -> Self {
         Self {
-            z_color_picker: Arc::new(Mutex::new(ZColorPickerWrapper::default())),
+            z_color_picker: Rc::new(RefCell::new(ZColorPickerWrapper::default())),
             previewer: ZPreviewer::default(),
             color_copy_format: ColorStringCopy::default(),
             debug_window_control_points: DebugWindowControlPoints::new(Pos2 { x: 200.0, y: 200.0 }),
@@ -126,7 +125,6 @@ impl ZColorPickerAppContext {
             ),
             stored_ui_responses: PreviewerUiResponses::default(),
             open_tabs: HashSet::default(),
-            options: ZColorPickerOptions::default(),
             options_window: WindowZColorPickerOptions::new(Pos2::new(200.0, 200.0)),
         }
     }
@@ -156,20 +154,29 @@ impl Pane {
     pub fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
         let mut mut_ctx = self.ctx.borrow_mut();
         let color_picker = mut_ctx.z_color_picker.clone();
-        let mut color_picker = color_picker.lock().unwrap();
+        let color_picker = &mut color_picker.borrow_mut();
         let color_copy_format = mut_ctx.color_copy_format;
 
         if self.id == PANE_COLOR_PICKER {
             // ui.painter().rect_filled(ui.max_rect(), 0.0, Color32::WHITE);
             ui.allocate_ui(ui.max_rect().size(), |ui| {
+                println!(
+                    "color_picker_response before SPLINEMODE: {:?}",
+                    &color_picker.options.spline_mode
+                );
+
                 let color_picker_response = color_picker.draw_ui(ui, &color_copy_format);
 
+                println!(
+                    "color_picker_response after SPLINEMODE: {:?}",
+                    &color_picker.options.spline_mode
+                );
                 color_picker_response
             });
 
             return egui_tiles::UiResponse::None;
         } else if self.id == PANE_COLOR_PICKER_OPTIONS {
-            let mut options = mut_ctx.options.clone();
+            let mut options = color_picker.options.clone();
             let mut options_window = mut_ctx.options_window.clone();
             options_window.update();
             let mut color_copy_format = color_copy_format;
@@ -181,8 +188,13 @@ impl Pane {
                 &mut color_copy_format,
             );
             mut_ctx.color_copy_format = color_copy_format;
-            mut_ctx.options = options;
             mut_ctx.options_window = options_window;
+            color_picker.options = options;
+
+            println!(
+                "pane ui SPLINEMODE: {:?}",
+                &color_picker.options.spline_mode
+            );
 
             return egui_tiles::UiResponse::None;
         } else if self.id == PANE_COLOR_PICKER_PREVIEWER {
@@ -425,7 +437,7 @@ impl ZApp {
 
     fn update_and_draw_debug_windows(&mut self, ui: &mut Ui) {
         let mut app_ctx = self.app_ctx.borrow_mut();
-        let color_picker_clone = if let Ok(a) = app_ctx.z_color_picker.try_lock() {
+        let color_picker_clone = if let Ok(a) = app_ctx.z_color_picker.try_borrow_mut() {
             Some(a.clone())
         } else {
             None
