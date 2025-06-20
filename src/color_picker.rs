@@ -116,8 +116,14 @@ pub struct ZColorPickerWrapper {
     pub options: ZColorPickerOptions,
 }
 
+impl Default for ZColorPickerWrapper {
+    fn default() -> Self {
+        Self::default()
+    }
+}
+
 impl ZColorPickerWrapper {
-    pub fn new() -> Self {
+    pub fn default() -> Self {
         let mut new_color_picker = Self {
             control_points: Vec::with_capacity(4),
             last_modifying_point_index: None,
@@ -300,7 +306,7 @@ impl ZColorPickerWrapper {
     }
 
     pub fn draw_ui(&mut self, ui: &mut Ui, color_copy_format: &ColorStringCopy) -> Response {
-        println!("SPLINEMODE: {:?}", &self.options.spline_mode);
+        println!("draw_ui SPLINEMODE: {:?}", &self.options.spline_mode);
         let inner_response = ui.vertical(|ui| {
             self.pre_draw_update();
 
@@ -509,12 +515,6 @@ impl ZColorPickerWrapper {
         }
 
         false
-    }
-}
-
-impl Default for ZColorPickerWrapper {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -735,7 +735,6 @@ pub fn main_color_picker(
         //     unwrapped.val[1] = color_to_show.v;
         // }
 
-        println!("ctx.spline_mode{:?}", &ctx.spline_mode);
         let _spline_gradient_repsonse =
             ui_ordered_spline_gradient(ui, ctx.control_points, ctx.spline_mode, &slider_2d_reponse);
 

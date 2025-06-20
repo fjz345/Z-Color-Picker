@@ -128,9 +128,6 @@ impl ZColorPickerAppContext {
             options_window: WindowZColorPickerOptions::new(Pos2::new(200.0, 200.0)),
         }
     }
-    pub fn new() -> Self {
-        Self::default()
-    }
 }
 
 const PANE_COLOR_PICKER: usize = 1;
@@ -152,9 +149,8 @@ impl Pane {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
+        let mut color_picker = self.ctx.borrow().z_color_picker.borrow().clone();
         let mut mut_ctx = self.ctx.borrow_mut();
-        let color_picker = mut_ctx.z_color_picker.clone();
-        let color_picker = &mut color_picker.borrow_mut();
         let color_copy_format = mut_ctx.color_copy_format;
 
         if self.id == PANE_COLOR_PICKER {
@@ -171,6 +167,8 @@ impl Pane {
                     "color_picker_response after SPLINEMODE: {:?}",
                     &color_picker.options.spline_mode
                 );
+
+                *mut_ctx.z_color_picker.borrow_mut() = color_picker;
                 color_picker_response
             });
 
@@ -196,11 +194,21 @@ impl Pane {
                 &color_picker.options.spline_mode
             );
 
+            *mut_ctx.z_color_picker.borrow_mut() = color_picker;
+
+            println!(
+                "pane ui SPLINEMODE: {:?}",
+                &mut_ctx.z_color_picker.borrow_mut().options.spline_mode
+            );
+
             return egui_tiles::UiResponse::None;
         } else if self.id == PANE_COLOR_PICKER_PREVIEWER {
             let mut previewer = mut_ctx.previewer.clone();
 
-            previewer.update(&color_picker.control_points, SplineMode::Linear);
+            previewer.update(
+                &color_picker.control_points,
+                color_picker.options.spline_mode,
+            );
             previewer.draw_ui(ui, ColorStringCopy::HEXNOA);
 
             mut_ctx.previewer = previewer;
