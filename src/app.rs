@@ -347,7 +347,7 @@ impl ZApp {
                         frame_pixels.data[0].val.2,
                     );
                     let _ = write_color_to_clipboard(color, app_ctx.color_copy_format);
-                    log::info!("Wrote {:?} to clipboard", color);
+                    log::debug!("Wrote {:?} to clipboard", color);
                 } else if frame_pixels.data.len() > 1 {
                     let a_padded = u8u8u8_to_u8u8u8u8(&frame_pixels.data[..]);
                     let u8_stream = u8u8u8u8_to_u8(&a_padded[..]);
@@ -358,7 +358,7 @@ impl ZApp {
                         bytes: cow,
                     };
                     // let _ = write_pixels_to_test_ppm(&data, copy);
-                    log::info!(
+                    log::debug!(
                         "Writing pixels ({},{}) to clipboard",
                         &data.width,
                         &data.height
@@ -474,7 +474,7 @@ impl eframe::App for ZApp {
 
         #[cfg(feature = "serde")]
         if let Ok(json) = serde_json::to_string(self) {
-            log::info!("SAVED with state: {:?}", self.state);
+            log::debug!("SAVED with state: {:?}", self.state);
             storage.set_string(eframe::APP_KEY, json);
         }
         log::info!("SAVED!");
