@@ -165,7 +165,6 @@ impl ZAppPane for PreviewerPane {
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
         let mut color_picker = self.ctx.borrow().z_color_picker.borrow().clone();
         let mut mut_ctx = self.ctx.borrow_mut();
-        let color_copy_format = mut_ctx.color_copy_format;
 
         let mut previewer = mut_ctx.previewer.clone();
 
@@ -173,8 +172,9 @@ impl ZAppPane for PreviewerPane {
             &color_picker.control_points,
             color_picker.options.spline_mode,
         );
-        previewer.draw_ui(ui, ColorStringCopy::HEXNOA);
+        let response = previewer.draw_ui(ui, ColorStringCopy::HEXNOA);
 
+        mut_ctx.stored_ui_responses = response;
         mut_ctx.previewer = previewer;
 
         return egui_tiles::UiResponse::None;

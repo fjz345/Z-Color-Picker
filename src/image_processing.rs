@@ -63,6 +63,15 @@ pub fn u8u8u8_to_u8u8u8u8(buf: &[Rgb]) -> Vec<(u8, u8, u8, u8)> {
     ret
 }
 
+pub fn u8u8u8u8_to_u8u8u8(buf: &[Rgb]) -> Vec<(u8, u8, u8)> {
+    let mut ret: Vec<(u8, u8, u8)> = Vec::new();
+    for i in 0..buf.len() {
+        ret.push((buf[i].val.0, buf[i].val.1, buf[i].val.2));
+    }
+
+    ret
+}
+
 /// Vertically flips the image pixels in memory
 pub fn flip_v(image: FramePixelRead, bytes_per_pixel: usize) -> FramePixelRead {
     let w = image.width;

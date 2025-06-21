@@ -33,7 +33,10 @@ use crate::{
     content_windows::WindowZColorPickerOptions,
     control_point::ControlPoint,
     debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
-    image_processing::{gl_read_rect_pixels, u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead},
+    image_processing::{
+        gl_read_rect_pixels, u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, u8u8u8u8_to_u8u8u8,
+        FramePixelRead, Rgb,
+    },
     logger::{ui_log_window, LogCollector},
     panes::{
         ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
@@ -105,7 +108,7 @@ pub struct ZColorPickerAppContext {
     #[serde(skip)]
     clipboard_copy_window: ClipboardPopup,
     #[serde(skip)]
-    stored_ui_responses: PreviewerUiResponses,
+    pub stored_ui_responses: PreviewerUiResponses,
     open_tabs: HashSet<String>,
 
     #[serde(skip)]
@@ -263,7 +266,7 @@ impl ZApp {
             if middle_mouse_clicked {
                 let interact_pos = ctx.input(|i| i.pointer.interact_pos());
                 if let Some(pos) = interact_pos {
-                    self.handle_middleclick_event(pos, ctx, frame);
+                    self.handle_middleclick_event(pos, ui, ctx, frame);
                 }
             }
         });
@@ -272,6 +275,7 @@ impl ZApp {
     fn handle_middleclick_event(
         &mut self,
         pointer_pos: Pos2,
+        ui: &egui::Ui,
         ctx: &egui::Context,
         frame: &eframe::Frame,
     ) {
@@ -280,20 +284,53 @@ impl ZApp {
         for rect in app_ctx.stored_ui_responses.get_rects() {
             if rect.contains(pointer_pos) {
                 found_rect = Some(rect.clone());
+                log::debug!("Found Rect");
                 break;
             }
         }
-        found_rect = None;
-
+        // found_rect = None;
         // Fallback rect if none found: 1x1 rect at pointer_pos
-        let rect = found_rect.unwrap_or(Rect::from_min_size(pointer_pos, Vec2::new(1.0, 1.0)));
-        let frame_pixels = gl_read_rect_pixels(rect, ctx, frame);
-        dbg!(&frame_pixels);
+        let rect = found_rect.unwrap_or(Rect::from_min_size(
+            pointer_pos.clamp(
+                Pos2 { x: 0.0, y: 0.0 },
+                ctx.screen_rect().max - Vec2 { x: 1.0, y: 1.0 },
+            ),
+            Vec2::new(1.0, 1.0),
+        ));
 
-        app_ctx.clipboard_event = Some(ClipboardCopyEvent {
-            frame_rect: rect,
-            frame_pixels: frame_pixels,
+        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+        let rect_image = ui.input(|i| {
+            for event in &i.raw.events {
+                if let egui::Event::Screenshot { image, .. } = event {
+                    let pixels_per_point = i.pixels_per_point();
+                    let region = rect;
+                    let rect_image = image.region(&region, Some(pixels_per_point));
+
+                    return Some(rect_image);
+                }
+            }
+            None
         });
+
+        if let Some(img) = rect_image {
+            let rgb_vec = img
+                .pixels
+                .iter()
+                .map(|f| Rgb {
+                    val: (f.r(), f.g(), f.b()),
+                })
+                .collect();
+
+            let frame_pixels = FramePixelRead {
+                width: img.width(),
+                height: img.height(),
+                data: rgb_vec,
+            };
+            app_ctx.clipboard_event = Some(ClipboardCopyEvent {
+                frame_rect: rect,
+                frame_pixels: Some(frame_pixels),
+            });
+        }
     }
 
     fn handle_clipboardcopy_event(&mut self) -> bool {
@@ -302,7 +339,6 @@ impl ZApp {
             app_ctx.clipboard_copy_window.open(event.frame_rect.min);
 
             // Copy to clipboard
-            log::debug!("COPY TO CLIPBOARD");
             if let Some(frame_pixels) = event.frame_pixels {
                 if frame_pixels.data.len() == 1 {
                     let color = Color32::from_rgb(

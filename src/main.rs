@@ -38,7 +38,7 @@ mod previewer;
 mod ui_common;
 
 fn main() -> eframe::Result {
-    env::set_var("RUST_LOG", "debug"); // or "info" or "debug"
+    env::set_var("RUST_LOG", "info"); // or "info" or "debug"
 
     let log_buffer = LogCollector::init().expect("Failed to init logger");
 
