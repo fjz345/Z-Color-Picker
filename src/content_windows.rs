@@ -200,12 +200,12 @@ impl WindowZColorPickerOptions {
                 if combobox_selected_index == 0 {
                     self.new_preset_is_open = true;
                     self.new_preset_window_text.clear();
-                    println!("Selected New Preset");
+                    log::info!("Selected New Preset");
                 } else {
                     options.preset_selected_index = Some(combobox_selected_index - 1);
                     if let Some(s) = options.preset_selected_index {
                         draw_result.preset_result.should_apply = Some(options.presets[s].clone());
-                        println!("Selected Preset {:?}", combobox_selected_index - 1);
+                        log::info!("Selected Preset {:?}", combobox_selected_index - 1);
                     }
                 }
             };
@@ -214,9 +214,9 @@ impl WindowZColorPickerOptions {
                 if let Some(s) = options.preset_selected_index {
                     options.presets[s].data.spline_mode = options.spline_mode;
                     options.presets[s].data.control_points = control_points.to_vec();
-                    println!("Saved preset [{}]", options.presets[s].name);
+                    log::info!("Saved preset [{}]", options.presets[s].name);
                 } else {
-                    println!("Could not save, no preset selected");
+                    log::info!("Could not save, no preset selected");
                 }
             }
             if ui.button("Delete").clicked_by(PointerButton::Primary) {

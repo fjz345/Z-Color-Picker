@@ -42,20 +42,20 @@ pub fn load_presets(path: &Path, presets: &mut Vec<Preset>) -> Result<()> {
 
     const DEBUG_PRINT: bool = true;
     if DEBUG_PRINT {
-        println!("PRINTING FOUND PRESETS ========");
+        log::info!("PRINTING FOUND PRESETS ========");
     }
     for path in paths {
         match path {
             Ok(dir) => {
                 if DEBUG_PRINT {
-                    println!("Name: {}", dir.path().display());
+                    log::info!("Name: {}", dir.path().display());
                 }
 
                 let maybe_loaded_preset = load_preset_from_disk(&dir);
                 match maybe_loaded_preset {
                     Ok(p) => presets.push(p),
                     Err(e) => {
-                        println!(
+                        log::info!(
                             "Error: {:?}, Failed to load preset {:?} from file, maybe old version?",
                             e,
                             dir.file_name()
@@ -67,7 +67,7 @@ pub fn load_presets(path: &Path, presets: &mut Vec<Preset>) -> Result<()> {
         }
     }
     if DEBUG_PRINT {
-        println!("=====================");
+        log::info!("=====================");
     }
 
     if presets.len() <= 0 {
@@ -100,7 +100,7 @@ pub fn save_preset_to_disk(preset: &Preset) -> Result<()> {
     let file_path = &get_preset_save_path(&preset);
 
     write_string_to_file(&preset_data_string, file_path)?;
-    println!("SAVED TO PATH {}", file_path);
+    log::info!("SAVED TO PATH {}", file_path);
 
     Ok(())
 }

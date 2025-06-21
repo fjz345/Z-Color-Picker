@@ -195,7 +195,7 @@ impl ZColorPickerWrapper {
         let cur_dir = std::env::current_dir().unwrap();
         let presets_path_buf = cur_dir.join(PRESETS_FOLDER_NAME);
         let presets_path = presets_path_buf.as_path();
-        println!("Loading presets from: {}", presets_path.to_str().unwrap());
+        log::info!("Loading presets from: {}", presets_path.to_str().unwrap());
         let r = load_presets(presets_path, &mut new_color_picker.options.presets);
         if let Err(e) = r {
             dbg!(e);
@@ -205,8 +205,8 @@ impl ZColorPickerWrapper {
         if new_color_picker.options.presets.len() >= 1 {
             new_color_picker.options.preset_selected_index = Some(0);
             match new_color_picker.apply_selected_preset() {
-                Ok(_) => println!("Preset Applied!"),
-                Err(e) => println!("{e}"),
+                Ok(_) => log::info!("Preset Applied!"),
+                Err(e) => log::info!("{e}"),
             }
         } else {
             for control_point in &DEFAULT_STARTUP_CONTROL_POINTS {
@@ -348,7 +348,7 @@ impl ZColorPickerWrapper {
 
     pub fn remove_control_point(&mut self, index: usize) {
         self.control_points.remove(index);
-        println!(
+        log::info!(
             "CP {} removed, new len {}",
             index,
             self.control_points.len()
@@ -396,7 +396,7 @@ impl ZColorPickerWrapper {
 
         self.dragging_index = None;
 
-        println!(
+        log::info!(
             "ControlPoint#{} spawned @[{}]{},{},{}",
             self.control_points.len(),
             cp.t(),
@@ -436,11 +436,11 @@ impl ZColorPickerWrapper {
         match closest_dist {
             Some(closest_dist_2d) => {
                 let dist = closest_dist_2d;
-                println!("Closest Dist: {}", dist);
+                log::info!("Closest Dist: {}", dist);
                 Some((closest_cp.unwrap(), dist))
             }
             None => {
-                println!("Did not find closest dist");
+                log::info!("Did not find closest dist");
                 None
             }
         }
@@ -565,7 +565,7 @@ pub fn format_color_as(
             format!("{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
         }
         _ => {
-            println!("Not Implemented {:?}", format_type);
+            log::info!("Not Implemented {:?}", format_type);
             format!("rgb({}, {}, {})", color.r(), color.g(), color.b())
         }
     };

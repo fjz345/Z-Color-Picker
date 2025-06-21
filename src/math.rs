@@ -104,7 +104,7 @@ pub fn color_lerp_ex(
     _alpha: f32,
 ) -> Color32 {
     if t < 0.0 || t > 1.0 {
-        println!("t value {} is not a valid input", t);
+        log::info!("t value {} is not a valid input", t);
         t = t.clamp(0.0, 1.0);
     }
 
@@ -138,8 +138,8 @@ pub fn color_lerp_ex(
         )
     };
 
-    println!("Prev_src_hue {}", lch_src.chroma);
-    println!(
+    log::info!("Prev_src_hue {}", lch_src.chroma);
+    log::info!(
         "new_hue {} (LAB){}",
         lerped_hue_normalized,
         new_hue.into_degrees()

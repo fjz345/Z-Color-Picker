@@ -21,6 +21,7 @@ arboard = "3.3.2"
 image = "0.25.1"
 egui_tiles =  {version = "0.12.0", features = ["serde"]}
 egui_extras = "0.31.0"
+log = "0.4.27"
 
 [features]
 default = ["serde"]

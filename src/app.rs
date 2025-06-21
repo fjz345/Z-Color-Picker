@@ -34,6 +34,7 @@ use crate::{
     control_point::ControlPoint,
     debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8},
+    logger::{ui_log_window, LogCollector},
     preset::{Preset, SAVED_FOLDER_NAME},
     previewer::{self, PreviewerUiResponses, ZPreviewer},
     ui_common::{read_pixels_from_frame, ContentWindow, FramePixelRead},
@@ -142,6 +143,8 @@ pub struct Pane {
     title: Option<String>,
     #[serde(skip)]
     ctx: Rc<RefCell<ZColorPickerAppContext>>,
+    log_buffer: Arc<Mutex<Vec<String>>>,
+    scroll_to_bottom: bool, // to remove, LogPane variable
 }
 
 impl Pane {
@@ -182,7 +185,7 @@ impl Pane {
             if let Some(preset_to_apply) = options_draw_results.preset_result.should_apply {
                 color_picker
                     .apply_preset(&preset_to_apply)
-                    .unwrap_or_else(|e| println!("{e}"))
+                    .unwrap_or_else(|e| log::info!("{e}"))
             }
             mut_ctx.color_copy_format = color_copy_format;
             mut_ctx.options_window = options_window;
@@ -204,12 +207,7 @@ impl Pane {
 
             return egui_tiles::UiResponse::None;
         } else if self.id == PANE_CONSOLE {
-            let logs = vec!["ASD", "111"];
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for log in logs {
-                    ui.label(log);
-                }
-            });
+            ui_log_window(ui, self.log_buffer.clone(), &mut self.scroll_to_bottom);
 
             return egui_tiles::UiResponse::None;
         }
@@ -253,6 +251,8 @@ pub struct ZApp {
     state: AppState,
     app_ctx: Rc<RefCell<ZColorPickerAppContext>>,
     tree: egui_tiles::Tree<Pane>,
+    #[serde(skip)]
+    log_buffer: Arc<Mutex<Vec<String>>>,
 }
 
 const HARDCODED_MONITOR_SIZE: Vec2 = Vec2::new(2560.0, 1440.0);
@@ -262,7 +262,7 @@ impl ZApp {
         self.state = AppState::Startup;
     }
 
-    pub fn new(cc: &CreationContext<'_>) -> Self {
+    pub fn new(cc: &CreationContext<'_>, log_buffer: Arc<Mutex<Vec<String>>>) -> Self {
         // Can not get window screen size from CreationContext
         let monitor_size = HARDCODED_MONITOR_SIZE;
         const RESOLUTION_REF: f32 = 1080.0;
@@ -278,8 +278,9 @@ impl ZApp {
             scale_factor: scale_factor,
             native_pixel_per_point: native_pixel_per_point,
             state: AppState::Startup,
-            tree: Self::create_tree(app_ctx.clone()),
+            tree: Self::create_tree(app_ctx.clone(), log_buffer.clone()),
             app_ctx: app_ctx,
+            log_buffer: log_buffer,
         }
     }
 
@@ -294,8 +295,8 @@ impl ZApp {
 
         let visuals: egui::Visuals = egui::Visuals::dark();
         ctx.set_visuals(visuals);
-        println!("pixels_per_point{:?}", ctx.pixels_per_point());
-        println!("native_pixels_per_point{:?}", ctx.native_pixels_per_point());
+        log::info!("pixels_per_point{:?}", ctx.pixels_per_point());
+        log::info!("native_pixels_per_point{:?}", ctx.native_pixels_per_point());
         ctx.set_pixels_per_point(self.scale_factor); // Maybe mult native_pixels_per_point?
                                                      // ctx.set_debug_on_hover(true);
 
@@ -309,7 +310,10 @@ impl ZApp {
         copy_window.draw_ui(ui);
     }
 
-    fn create_tree(ctx: Rc<RefCell<ZColorPickerAppContext>>) -> egui_tiles::Tree<Pane> {
+    fn create_tree(
+        ctx: Rc<RefCell<ZColorPickerAppContext>>,
+        log_buffer: Arc<Mutex<Vec<String>>>,
+    ) -> egui_tiles::Tree<Pane> {
         let mut tiles = egui_tiles::Tiles::default();
 
         let mut tabs = vec![];
@@ -318,21 +322,29 @@ impl ZApp {
             id: PANE_COLOR_PICKER,
             title: None,
             ctx: ctx.clone(),
+            log_buffer: log_buffer.clone(),
+            scroll_to_bottom: true,
         };
         let pane_options = Pane {
             id: PANE_COLOR_PICKER_OPTIONS,
             title: None,
             ctx: ctx.clone(),
+            log_buffer: log_buffer.clone(),
+            scroll_to_bottom: true,
         };
         let pane_previewer = Pane {
             id: PANE_COLOR_PICKER_PREVIEWER,
             title: None,
             ctx: ctx.clone(),
+            log_buffer: log_buffer.clone(),
+            scroll_to_bottom: true,
         };
         let pane_console = Pane {
             id: PANE_CONSOLE,
             title: None,
             ctx: ctx.clone(),
+            log_buffer: log_buffer.clone(),
+            scroll_to_bottom: true,
         };
 
         let tile_color_picker = tiles.insert_pane(pane_color_picker);
@@ -414,10 +426,10 @@ impl ZApp {
                     // let _ = write_pixels_to_test_ppm(&data, copy);
                     let _ = write_pixels_to_clipboard(data);
                 } else {
-                    println!("clipboard event could not be processed, colors len was 0");
+                    log::info!("clipboard event could not be processed, colors len was 0");
                 }
             } else {
-                println!("clipboard event could not be processed, did not have any colors set");
+                log::info!("clipboard event could not be processed, did not have any colors set");
             }
 
             return true;
@@ -470,7 +482,7 @@ impl ZApp {
                 if r.pointer.button_double_clicked(PointerButton::Primary) {
                     let mouse_pos = r.pointer.interact_pos().unwrap();
                     app_ctx.double_click_event = Some(MouseClickEvent { mouse_pos });
-                    println!("double click @({},{})", mouse_pos.x, mouse_pos.y);
+                    log::info!("double click @({},{})", mouse_pos.x, mouse_pos.y);
                 }
 
                 app_ctx.middle_click_event = None;
@@ -478,7 +490,7 @@ impl ZApp {
                     let mouse_pos: Pos2 = r.pointer.interact_pos().unwrap();
                     app_ctx.middle_click_event = Some(MouseClickEvent { mouse_pos });
 
-                    println!("middle click @({},{})", mouse_pos.x, mouse_pos.y);
+                    log::info!("middle click @({},{})", mouse_pos.x, mouse_pos.y);
                 }
 
                 // Debug toggles
@@ -490,7 +502,7 @@ impl ZApp {
                         app_ctx.debug_window_control_points.open();
                     }
 
-                    println!(
+                    log::info!(
                         "debug_control_points {}",
                         app_ctx.debug_window_control_points.is_open()
                     );
@@ -502,7 +514,7 @@ impl ZApp {
                     } else {
                         app_ctx.debug_window_test.open();
                     }
-                    println!("debug_window {}", app_ctx.debug_window_test.is_open());
+                    log::info!("debug_window {}", app_ctx.debug_window_test.is_open());
                 }
             });
 
@@ -519,14 +531,14 @@ impl ZApp {
 
 impl eframe::App for ZApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        println!("SAVING...");
+        log::info!("SAVING...");
 
         #[cfg(feature = "serde")]
         if let Ok(json) = serde_json::to_string(self) {
-            println!("SAVED with state: {:?}", self.state);
+            log::info!("SAVED with state: {:?}", self.state);
             storage.set_string(eframe::APP_KEY, json);
         }
-        println!("SAVED!");
+        log::info!("SAVED!");
     }
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {

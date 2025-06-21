@@ -13,7 +13,7 @@ pub fn write_string_to_clipboard(text: String) -> Result<()> {
     let mut clipboard = Clipboard::new()?;
     clipboard.set_text(&text)?;
 
-    println!("Clipboard set to: {}", text);
+    log::info!("Clipboard set to: {}", text);
     Ok(())
 }
 
@@ -44,7 +44,7 @@ pub fn write_pixels_to_clipboard(image_data: ImageData) -> Result<()> {
     let copy = image_data.clone();
     clipboard.set_image(image_data)?;
 
-    println!(
+    log::info!(
         "Clipboard set to: W[{}],H[{}], NumBytes[{}]",
         copy.width,
         copy.height,
@@ -63,12 +63,12 @@ pub fn write_pixels_to_test_ppm(image_data: &ImageData, test_vec: Vec<Rgb>) -> R
     }
 
     let render_file_path = "render.ppm";
-    println!("Saving to file {}...", render_file_path);
+    log::info!("Saving to file {}...", render_file_path);
 
     let mut render_file = File::create(render_file_path)?;
     render_file.write_all(image_ppm.as_bytes()).unwrap();
 
-    println!("render.ppm written");
+    log::info!("render.ppm written");
 
     Ok(())
 }

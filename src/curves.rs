@@ -537,7 +537,7 @@ pub fn control_points_to_spline(
         }
         SplineMode::Polynomial => todo!(),
         _ => {
-            println!("Not Implemented...");
+            log::info!("Not Implemented...");
             Spline::from_vec(
                 control_points
                     .iter()
