@@ -241,6 +241,7 @@ impl WindowZColorPickerOptions {
                             },
                         };
                         options.presets.push(new_preset);
+                        options.preset_selected_index = Some(options.presets.len() - 1);
                     }
                 });
 
