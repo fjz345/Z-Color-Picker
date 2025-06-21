@@ -26,6 +26,7 @@ log = "0.4.27"
 [features]
 default = ["serde"]
 serde = ["dep:serde"]
+accesskit = []
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.5", features = ["winnt", "winuser"] }

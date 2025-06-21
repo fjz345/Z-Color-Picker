@@ -11,6 +11,7 @@ use std::{
     time::Instant,
 };
 #[cfg(windows)]
+#[allow(unused_imports)]
 use winapi::shared::winerror::ERROR_INCOMPATIBLE_SERVICE_SID_TYPE;
 
 use crate::{
