@@ -739,17 +739,6 @@ pub fn main_color_picker(
             main_color_picker_color_at_function(color_to_show.h, 1.0),
         );
 
-        // Do not see what this is doing, probably unuseful old code
-        // if modifying_control_point.is_some() {
-        //     let control_point = match modifying_control_point {
-        //         Some(a) => Some(self.control_points[a].val_mut()),
-        //         _ => None,
-        //     };
-        //     let unwrapped = &mut control_point.unwrap();
-        //     unwrapped.val[0] = color_to_show.s;
-        //     unwrapped.val[1] = color_to_show.v;
-        // }
-
         let _spline_gradient_repsonse =
             ui_ordered_spline_gradient(ui, ctx.control_points, ctx.spline_mode, &slider_2d_reponse);
 
