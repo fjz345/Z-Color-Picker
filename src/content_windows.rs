@@ -120,15 +120,11 @@ impl WindowZColorPickerOptions {
                 .show_ui(ui, |ui| {
                     ui.set_min_width(60.0);
                     ui.selectable_value(&mut options.spline_mode, SplineMode::Linear, "Linear");
-                    ui.selectable_value(
-                        &mut options.spline_mode,
-                        SplineMode::Bezier,
-                        "Bezier(Bugged)",
-                    );
+                    ui.selectable_value(&mut options.spline_mode, SplineMode::Bezier, "Bezier");
                     ui.selectable_value(
                         &mut options.spline_mode,
                         SplineMode::HermiteBezier,
-                        "Hermite(NYI)",
+                        "Hermite",
                     );
                     // TODO: enable Polynomial combo box
                     // ui.selectable_value(
