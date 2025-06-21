@@ -33,7 +33,7 @@ use crate::{
     content_windows::WindowZColorPickerOptions,
     control_point::ControlPoint,
     debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
-    image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8},
+    image_processing::{gl_read_rect_pixels, u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead},
     logger::{ui_log_window, LogCollector},
     panes::{
         ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
@@ -41,7 +41,7 @@ use crate::{
     },
     preset::{Preset, SAVED_FOLDER_NAME},
     previewer::{self, PreviewerUiResponses, ZPreviewer},
-    ui_common::{read_pixels_from_frame, ContentWindow, FramePixelRead},
+    ui_common::ContentWindow,
 };
 use eframe::{
     epaint::{Pos2, Vec2},
@@ -250,7 +250,7 @@ impl ZApp {
         egui_tiles::Tree::new("my_tree", root, tiles)
     }
 
-    fn draw_ui_tree(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn draw_ui_tree(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let response = ui.with_layout(Layout::left_to_right(egui::Align::Min), |mut ui| {
                 let mut behavior = TreeBehavior {};
@@ -259,34 +259,41 @@ impl ZApp {
                 self.draw_ui_post(ctx, &mut ui);
             });
 
-            self.handle_middleclick_event(&response.response);
+            let middle_mouse_clicked = ctx.input(|i| i.pointer.middle_down());
+            if middle_mouse_clicked {
+                let interact_pos = ctx.input(|i| i.pointer.interact_pos());
+                if let Some(pos) = interact_pos {
+                    self.handle_middleclick_event(pos, ctx, frame);
+                }
+            }
         });
     }
 
-    fn handle_middleclick_event(&mut self, response: &Response) -> bool {
+    fn handle_middleclick_event(
+        &mut self,
+        pointer_pos: Pos2,
+        ctx: &egui::Context,
+        frame: &eframe::Frame,
+    ) {
         let app_ctx = &mut self.app_ctx.borrow_mut();
-        if response.clicked_by(PointerButton::Middle) {
-            match response.interact_pointer_pos() {
-                Some(pos) => {
-                    let mut found_rect = None;
-                    for rect in app_ctx.stored_ui_responses.get_rects() {
-                        if rect.contains(pos) {
-                            found_rect = Some(rect.clone());
-                            break;
-                        }
-                    }
-
-                    let rect = found_rect.unwrap_or(Rect::from_min_size(pos, Vec2::new(1.0, 1.0)));
-                    app_ctx.clipboard_event = Some(ClipboardCopyEvent {
-                        frame_rect: rect,
-                        frame_pixels: None,
-                    });
-                }
-                None => {}
+        let mut found_rect = None;
+        for rect in app_ctx.stored_ui_responses.get_rects() {
+            if rect.contains(pointer_pos) {
+                found_rect = Some(rect.clone());
+                break;
             }
         }
+        found_rect = None;
 
-        false
+        // Fallback rect if none found: 1x1 rect at pointer_pos
+        let rect = found_rect.unwrap_or(Rect::from_min_size(pointer_pos, Vec2::new(1.0, 1.0)));
+        let frame_pixels = gl_read_rect_pixels(rect, ctx, frame);
+        dbg!(&frame_pixels);
+
+        app_ctx.clipboard_event = Some(ClipboardCopyEvent {
+            frame_rect: rect,
+            frame_pixels: frame_pixels,
+        });
     }
 
     fn handle_clipboardcopy_event(&mut self) -> bool {
@@ -295,6 +302,7 @@ impl ZApp {
             app_ctx.clipboard_copy_window.open(event.frame_rect.min);
 
             // Copy to clipboard
+            log::debug!("COPY TO CLIPBOARD");
             if let Some(frame_pixels) = event.frame_pixels {
                 if frame_pixels.data.len() == 1 {
                     let color = Color32::from_rgb(
@@ -303,6 +311,7 @@ impl ZApp {
                         frame_pixels.data[0].val.2,
                     );
                     let _ = write_color_to_clipboard(color, app_ctx.color_copy_format);
+                    log::info!("Wrote {:?} to clipboard", color);
                 } else if frame_pixels.data.len() > 1 {
                     let a_padded = u8u8u8_to_u8u8u8u8(&frame_pixels.data[..]);
                     let u8_stream = u8u8u8u8_to_u8(&a_padded[..]);
@@ -313,6 +322,11 @@ impl ZApp {
                         bytes: cow,
                     };
                     // let _ = write_pixels_to_test_ppm(&data, copy);
+                    log::info!(
+                        "Writing pixels ({},{}) to clipboard",
+                        &data.width,
+                        &data.height
+                    );
                     let _ = write_pixels_to_clipboard(data);
                 } else {
                     log::info!("clipboard event could not be processed, colors len was 0");
