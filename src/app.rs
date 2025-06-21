@@ -173,12 +173,17 @@ impl Pane {
             options_window.update();
             let mut color_copy_format = color_copy_format;
 
-            options_window.draw_content(
+            let options_draw_results = options_window.draw_content(
                 ui,
                 &mut options,
                 &mut color_picker.control_points,
                 &mut color_copy_format,
             );
+            if let Some(preset_to_apply) = options_draw_results.preset_result.should_apply {
+                color_picker
+                    .apply_preset(&preset_to_apply)
+                    .unwrap_or_else(|e| println!("{e}"))
+            }
             mut_ctx.color_copy_format = color_copy_format;
             mut_ctx.options_window = options_window;
             color_picker.options = options;

@@ -204,7 +204,10 @@ impl ZColorPickerWrapper {
         // Use first as default if exists
         if new_color_picker.options.presets.len() >= 1 {
             new_color_picker.options.preset_selected_index = Some(0);
-            new_color_picker.apply_selected_preset();
+            match new_color_picker.apply_selected_preset() {
+                Ok(_) => println!("Preset Applied!"),
+                Err(e) => println!("{e}"),
+            }
         } else {
             for control_point in &DEFAULT_STARTUP_CONTROL_POINTS {
                 new_color_picker.control_points.push(control_point.clone());
@@ -217,21 +220,32 @@ impl ZColorPickerWrapper {
         new_color_picker
     }
 
-    fn apply_preset(&mut self, preset: Preset) {
+    pub fn apply_preset(&mut self, preset: &Preset) -> Result<()> {
         self.control_points.clear();
-        for preset_control_point in preset.data.control_points {
-            self.control_points.push(preset_control_point);
+        for preset_control_point in &preset.data.control_points {
+            self.control_points.push(preset_control_point.clone());
         }
         self.options.spline_mode = preset.data.spline_mode;
+        Ok(())
     }
 
-    pub fn apply_selected_preset(&mut self) {
+    pub fn apply_selected_preset(&mut self) -> Result<Preset> {
         if let Some(s) = self.options.preset_selected_index {
             if s < self.options.presets.len() {
                 let preset_to_apply = self.options.presets[s].clone();
-                self.apply_preset(preset_to_apply);
+                match self.apply_preset(&preset_to_apply) {
+                    Ok(_) => return Ok(preset_to_apply),
+                    Err(_) => {
+                        return Err(ZError::Message(
+                            "Apply preset failed. Could not apply preset".to_string(),
+                        ))
+                    }
+                }
             }
         }
+        Err(ZError::Message(
+            "Apply preset failed. Could not find preset".to_string(),
+        ))
     }
 
     pub fn save_selected_preset(&mut self) -> Result<()> {

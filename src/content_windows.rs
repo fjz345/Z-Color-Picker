@@ -10,6 +10,8 @@ use crate::egui::PointerButton;
 use crate::egui::Response;
 use crate::egui::Ui;
 use crate::egui::Window;
+use crate::preset::Preset;
+use crate::preset::PresetData;
 use crate::{egui::Pos2, ui_common::ContentWindow};
 
 pub struct WindowZColorPickerOptionsDrawResult {
@@ -42,20 +44,14 @@ impl ContentWindow for WindowZColorPickerOptions {
     }
 }
 
-struct PresetDrawResult {
-    pub should_create: Option<String>,
-    pub should_apply: Option<()>,
-    pub should_save: Option<()>,
-    pub should_delete: Option<()>,
+pub struct PresetDrawResult {
+    pub should_apply: Option<Preset>,
 }
 
 impl Default for PresetDrawResult {
     fn default() -> Self {
         Self {
-            should_create: Default::default(),
             should_apply: Default::default(),
-            should_save: Default::default(),
-            should_delete: Default::default(),
         }
     }
 }
@@ -158,7 +154,9 @@ impl WindowZColorPickerOptions {
 
         ui.horizontal(|ui| {
             let combobox_selected_text_to_show = match options.preset_selected_index {
-                Some(i) => options.presets[i].name.to_string(),
+                Some(i) => options.presets[i.clamp(0, options.presets.len() - 1)]
+                    .name
+                    .to_string(),
                 None => "".to_string(),
             };
 
@@ -202,23 +200,30 @@ impl WindowZColorPickerOptions {
                 if combobox_selected_index == 0 {
                     self.new_preset_is_open = true;
                     self.new_preset_window_text.clear();
-                    println!("New Preset");
+                    println!("Selected New Preset");
                 } else {
                     options.preset_selected_index = Some(combobox_selected_index - 1);
-                    draw_result.preset_result.should_apply = Some(());
-                    println!("Selected Preset {:?}", combobox_selected_index - 1);
+                    if let Some(s) = options.preset_selected_index {
+                        draw_result.preset_result.should_apply = Some(options.presets[s].clone());
+                        println!("Selected Preset {:?}", combobox_selected_index - 1);
+                    }
                 }
             };
 
             if ui.button("Save").clicked_by(PointerButton::Primary) {
-                if let Some(_s) = options.preset_selected_index {
-                    draw_result.preset_result.should_save = Some(());
+                if let Some(s) = options.preset_selected_index {
+                    options.presets[s].data.spline_mode = options.spline_mode;
+                    options.presets[s].data.control_points = control_points.to_vec();
+                    println!("Saved preset [{}]", options.presets[s].name);
                 } else {
                     println!("Could not save, no preset selected");
                 }
             }
             if ui.button("Delete").clicked_by(PointerButton::Primary) {
-                draw_result.preset_result.should_delete = Some(());
+                if let Some(s) = options.preset_selected_index {
+                    options.presets.remove(s);
+                    options.preset_selected_index = None;
+                }
             }
         });
 
@@ -234,8 +239,14 @@ impl WindowZColorPickerOptions {
                         self.new_preset_is_open = false;
                         create_preset_create_clicked = true;
 
-                        draw_result.preset_result.should_create =
-                            Some(self.new_preset_window_text.clone());
+                        let new_preset: Preset = Preset {
+                            name: self.new_preset_window_text.clone(),
+                            data: PresetData {
+                                spline_mode: options.spline_mode,
+                                control_points: control_points.to_vec(),
+                            },
+                        };
+                        options.presets.push(new_preset);
                     }
                 });
 
