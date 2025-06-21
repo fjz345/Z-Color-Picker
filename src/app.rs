@@ -36,8 +36,8 @@ use crate::{
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8},
     logger::{ui_log_window, LogCollector},
     panes::{
-        Pane, ZAppPane, PANE_COLOR_PICKER, PANE_COLOR_PICKER_OPTIONS, PANE_COLOR_PICKER_PREVIEWER,
-        PANE_CONSOLE,
+        ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
+        ZAppPane,
     },
     preset::{Preset, SAVED_FOLDER_NAME},
     previewer::{self, PreviewerUiResponses, ZPreviewer},
@@ -136,24 +136,7 @@ impl ZColorPickerAppContext {
     }
 }
 
-struct TreeBehavior {}
-
-impl egui_tiles::Behavior<Pane> for TreeBehavior {
-    fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
-        pane.title().into()
-    }
-
-    fn pane_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        _tile_id: egui_tiles::TileId,
-        pane: &mut Pane,
-    ) -> egui_tiles::UiResponse {
-        pane.ui(ui)
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct ZApp {
     monitor_size: Vec2,
     scale_factor: f32,
@@ -201,10 +184,10 @@ impl ZApp {
 
             for tile in &mut self.tree.tiles.iter_mut() {
                 match tile.1 {
-                    Tile::Pane(p) => {
-                        p.ctx = self.app_ctx.clone();
-                        p.log_buffer = self.log_buffer.clone();
-                    }
+                    Tile::Pane(p) => match p {
+                        Pane::Log(log_pane) => log_pane.log_buffer = self.log_buffer.clone(),
+                        _ => p.update_ctx(self.app_ctx.clone()),
+                    },
                     _ => {}
                 }
             }
@@ -235,39 +218,28 @@ impl ZApp {
 
         let mut tabs = vec![];
 
-        let pane_color_picker = Pane {
-            id: PANE_COLOR_PICKER,
+        let pane_color_picker = ColorPickerPane {
             title: None,
             ctx: ctx.clone(),
-            log_buffer: log_buffer.clone(),
-            scroll_to_bottom: true,
         };
-        let pane_options = Pane {
-            id: PANE_COLOR_PICKER_OPTIONS,
+        let pane_options = ColorPickerOptionsPane {
             title: None,
             ctx: ctx.clone(),
-            log_buffer: log_buffer.clone(),
-            scroll_to_bottom: true,
         };
-        let pane_previewer = Pane {
-            id: PANE_COLOR_PICKER_PREVIEWER,
+        let pane_previewer = PreviewerPane {
             title: None,
             ctx: ctx.clone(),
-            log_buffer: log_buffer.clone(),
-            scroll_to_bottom: true,
         };
-        let pane_console = Pane {
-            id: PANE_CONSOLE,
-            title: None,
-            ctx: ctx.clone(),
+        let pane_log = LogPane {
+            title: Some("Log".to_string()),
             log_buffer: log_buffer.clone(),
             scroll_to_bottom: true,
         };
 
-        let tile_color_picker = tiles.insert_pane(pane_color_picker);
-        let tile_options = tiles.insert_pane(pane_options);
-        let tile_previewer = tiles.insert_pane(pane_previewer);
-        let tile_console = tiles.insert_pane(pane_console);
+        let tile_color_picker = tiles.insert_pane(Pane::ColorPicker(pane_color_picker));
+        let tile_options = tiles.insert_pane(Pane::ColorPickerOptionsPane(pane_options));
+        let tile_previewer = tiles.insert_pane(Pane::Previewer(pane_previewer));
+        let tile_console = tiles.insert_pane(Pane::Log(pane_log));
 
         let vertical_tile = tiles.insert_vertical_tile(vec![tile_color_picker, tile_options]);
         let master_tile = tiles.insert_horizontal_tile(vec![vertical_tile, tile_previewer]);
