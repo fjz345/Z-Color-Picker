@@ -86,23 +86,6 @@ pub struct ColorPickerPane {
     pub title: Option<String>,
     pub ctx: Rc<RefCell<ZColorPickerAppContext>>,
 }
-#[derive(Serialize, Deserialize)]
-pub struct ColorPickerOptionsPane {
-    pub title: Option<String>,
-    pub ctx: Rc<RefCell<ZColorPickerAppContext>>,
-}
-#[derive(Serialize, Deserialize)]
-pub struct PreviewerPane {
-    pub title: Option<String>,
-    pub ctx: Rc<RefCell<ZColorPickerAppContext>>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct LogPane {
-    pub title: Option<String>,
-    pub log_buffer: Arc<Mutex<Vec<String>>>,
-    pub scroll_to_bottom: bool, // to remove, LogPane variable
-}
 
 impl ZAppPane for ColorPickerPane {
     fn title(&self) -> String {
@@ -126,6 +109,11 @@ impl ZAppPane for ColorPickerPane {
     fn update_ctx(&mut self, new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {
         self.ctx = new_ctx.clone();
     }
+}
+#[derive(Serialize, Deserialize)]
+pub struct ColorPickerOptionsPane {
+    pub title: Option<String>,
+    pub ctx: Rc<RefCell<ZColorPickerAppContext>>,
 }
 impl ZAppPane for ColorPickerOptionsPane {
     fn title(&self) -> String {
@@ -165,6 +153,11 @@ impl ZAppPane for ColorPickerOptionsPane {
         self.ctx = new_ctx.clone();
     }
 }
+#[derive(Serialize, Deserialize)]
+pub struct PreviewerPane {
+    pub title: Option<String>,
+    pub ctx: Rc<RefCell<ZColorPickerAppContext>>,
+}
 impl ZAppPane for PreviewerPane {
     fn title(&self) -> String {
         self.title.clone().unwrap_or(format!("Pane"))
@@ -190,6 +183,13 @@ impl ZAppPane for PreviewerPane {
     fn update_ctx(&mut self, new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {
         self.ctx = new_ctx.clone();
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LogPane {
+    pub title: Option<String>,
+    pub log_buffer: Arc<Mutex<Vec<String>>>,
+    pub scroll_to_bottom: bool, // to remove, LogPane variable
 }
 impl ZAppPane for LogPane {
     fn title(&self) -> String {
