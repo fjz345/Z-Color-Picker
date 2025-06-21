@@ -141,7 +141,6 @@ const PANE_CONSOLE: usize = 4;
 pub struct Pane {
     id: usize,
     title: Option<String>,
-    #[serde(skip)]
     ctx: Rc<RefCell<ZColorPickerAppContext>>,
     log_buffer: Arc<Mutex<Vec<String>>>,
     scroll_to_bottom: bool, // to remove, LogPane variable
@@ -285,11 +284,18 @@ impl ZApp {
     }
 
     fn startup(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // Somehow these are not correct when starting?
-        for tile in &mut self.tree.tiles.iter_mut() {
-            match tile.1 {
-                Tile::Pane(p) => p.ctx = self.app_ctx.clone(),
-                _ => {}
+        // Fix startup not having correct references
+        {
+            self.log_buffer = LogCollector::init().expect("Failed to init logger");
+
+            for tile in &mut self.tree.tiles.iter_mut() {
+                match tile.1 {
+                    Tile::Pane(p) => {
+                        p.ctx = self.app_ctx.clone();
+                        p.log_buffer = self.log_buffer.clone();
+                    }
+                    _ => {}
+                }
             }
         }
 

@@ -1,7 +1,8 @@
 use eframe::egui::{self, ScrollArea};
 use log::{Level, Metadata, Record, SetLoggerError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
+static GLOBAL_LOG_BUFFER: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
 pub struct LogCollector {
     pub buffer: Arc<Mutex<Vec<String>>>,
     delegate: Box<dyn log::Log>,
@@ -18,6 +19,10 @@ impl Default for LogCollector {
 
 impl LogCollector {
     pub fn init() -> Result<Arc<Mutex<Vec<String>>>, SetLoggerError> {
+        if let Some(buffer) = GLOBAL_LOG_BUFFER.get() {
+            return Ok(buffer.clone());
+        }
+
         let env_logger = env_logger::Builder::from_env(env_logger::Env::default()).build();
 
         let buffer = Arc::new(Mutex::new(Vec::new()));
@@ -30,6 +35,8 @@ impl LogCollector {
         // Set our collector as the logger
         log::set_boxed_logger(Box::new(collector))?;
         log::set_max_level(log::LevelFilter::Trace);
+
+        GLOBAL_LOG_BUFFER.set(buffer.clone()).unwrap();
 
         Ok(buffer)
     }
