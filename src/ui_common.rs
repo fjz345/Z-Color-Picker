@@ -1,22 +1,15 @@
-use crate::color_picker::format_color_as;
 use crate::common::ColorStringCopy;
 use crate::control_point::ControlPoint;
 use crate::egui::PointerButton;
 use crate::egui::TextStyle;
-use crate::image_processing::flip_v;
-use crate::image_processing::u8_to_u8u8u8;
-use crate::image_processing::Rgb;
 use eframe::egui::InnerResponse;
 use eframe::egui::Pos2;
 use eframe::egui::Window;
-use eframe::glow;
-use eframe::glow::HasContext;
 use eframe::{
     egui::{color_picker::Alpha, Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
     emath::{lerp, remap_clamp},
     epaint::{pos2, Color32, Mesh, Rect, Rgba, Shape, Stroke, Vec2},
 };
-use std::borrow::BorrowMut;
 use std::sync::Arc;
 
 pub fn contrast_color(color: impl Into<Rgba>) -> Color32 {
@@ -309,46 +302,16 @@ pub fn color_slider_2d(
     response
 }
 
-pub fn color_button_copy(
-    ui: &mut Ui,
-    color: impl Into<Color32>,
-    _alpha: Alpha,
-    color_copy_format: ColorStringCopy,
-) {
-    let button_response = ui.button("📋").on_hover_text("Copy (middle mouse click)");
-    if button_response.clicked() {
-        ui.output_mut(|w| {
-            w.copied_text = format_color_as(color.into(), color_copy_format, None);
-        });
-    }
-}
-
-pub fn response_copy_color_on_click(
-    ui: &mut Ui,
-    response: &Response,
-    color: impl Into<Color32>,
-    color_copy_format: ColorStringCopy,
-    button_click_type: PointerButton,
-) {
-    if response.clicked_by(button_click_type) {
-        ui.output_mut(|w| {
-            w.copied_text = format_color_as(color.into(), color_copy_format, None);
-        });
-    }
-}
-
 pub fn color_text_ui(
     ui: &mut Ui,
     color: impl Into<Color32>,
     alpha: Alpha,
-    color_copy_format: ColorStringCopy,
+    _color_copy_format: ColorStringCopy,
 ) -> InnerResponse<()> {
     let color = color.into();
     let [r, g, b, a] = color.to_array();
 
     ui.horizontal(|ui| {
-        color_button_copy(ui, color, alpha, color_copy_format);
-
         let old_style = Arc::as_ref(ui.style()).clone();
 
         ui.style_mut()

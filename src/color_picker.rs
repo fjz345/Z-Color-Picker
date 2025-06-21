@@ -7,14 +7,12 @@ use crate::{
     },
     error::{Result, ZError},
     preset::PRESETS_FOLDER_NAME,
-    ui_common::ContentWindow,
 };
 use eframe::{
     egui::{
         self,
-        color_picker::{self, show_color, Alpha},
-        InnerResponse, Layout, NumExt, PointerButton, Pos2, Rect, Response, Sense, TextStyle, Ui,
-        Widget, WidgetInfo, Window,
+        color_picker::{show_color, Alpha},
+        Layout, NumExt, PointerButton, Pos2, Response, Sense, TextStyle, Ui, Widget, WidgetInfo,
     },
     epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
@@ -27,10 +25,7 @@ use crate::{
         delete_preset_from_disk, get_preset_save_path, load_presets, save_preset_to_disk, Preset,
         PresetData,
     },
-    ui_common::{
-        color_slider_1d, color_slider_2d, color_text_ui, response_copy_color_on_click,
-        ui_hue_control_points_overlay,
-    },
+    ui_common::{color_slider_1d, color_slider_2d, color_text_ui, ui_hue_control_points_overlay},
 };
 
 pub struct MainColorPickerCtx<'a> {
@@ -614,15 +609,8 @@ pub fn main_color_picker(
 
         let current_color_size =
             scale_factor * vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
-        let response: Response =
-            show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
-        response_copy_color_on_click(
-            ui,
-            &response,
-            color_to_show,
-            ctx.color_copy_format,
-            PointerButton::Middle,
-        );
+
+        show_color(ui, color_to_show, current_color_size).on_hover_text("Selected color");
 
         let alpha = Alpha::Opaque;
         color_text_ui(ui, color_to_show, alpha, ctx.color_copy_format);

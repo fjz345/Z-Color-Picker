@@ -1,13 +1,11 @@
 use eframe::egui;
 
 use crate::app::ZColorPickerOptions;
-use crate::color_picker::MainColorPickerCtx;
 use crate::common::ColorStringCopy;
 use crate::common::SplineMode;
 use crate::control_point::ControlPoint;
 use crate::egui::InnerResponse;
 use crate::egui::PointerButton;
-use crate::egui::Response;
 use crate::egui::Ui;
 use crate::egui::Window;
 use crate::preset::Preset;

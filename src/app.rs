@@ -1,22 +1,11 @@
 use arboard::ImageData;
 use ecolor::Color32;
-use eframe::{
-    egui::{
-        self,
-        color_picker::{color_picker_color32, Alpha},
-        InnerResponse, Layout, PointerButton, Rect, Response, Slider, TopBottomPanel, Ui,
-        WidgetText,
-    },
-    epaint::tessellator::Path,
-};
-use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize};
-use serde_json::Value;
+use eframe::egui::{self, Layout, PointerButton, Rect, Ui};
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     cell::RefCell,
     collections::HashSet,
-    ops::DerefMut,
-    path::PathBuf,
     rc::Rc,
     sync::{Arc, Mutex},
     time::Instant,
@@ -28,29 +17,25 @@ use crate::{
     clipboard::{
         write_color_to_clipboard, write_pixels_to_clipboard, ClipboardCopyEvent, ClipboardPopup,
     },
-    color_picker::{ZColorPicker, ZColorPickerWrapper},
+    color_picker::ZColorPickerWrapper,
     common::{ColorStringCopy, SplineMode},
     content_windows::WindowZColorPickerOptions,
-    control_point::ControlPoint,
     debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
-    image_processing::{
-        gl_read_rect_pixels, u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, u8u8u8u8_to_u8u8u8,
-        FramePixelRead, Rgb,
-    },
-    logger::{ui_log_window, LogCollector},
+    image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead, Rgb},
+    logger::LogCollector,
     panes::{
         ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
         ZAppPane,
     },
-    preset::{Preset, SAVED_FOLDER_NAME},
-    previewer::{self, PreviewerUiResponses, ZPreviewer},
+    preset::Preset,
+    previewer::{PreviewerUiResponses, ZPreviewer},
     ui_common::ContentWindow,
 };
 use eframe::{
     epaint::{Pos2, Vec2},
     CreationContext,
 };
-use egui_tiles::{Tile, TileId, Tiles, Tree};
+use egui_tiles::Tile;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 enum AppState {
@@ -180,7 +165,7 @@ impl ZApp {
         }
     }
 
-    fn startup(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn startup(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Fix startup not having correct references
         {
             self.log_buffer = LogCollector::init().expect("Failed to init logger");
@@ -255,7 +240,7 @@ impl ZApp {
 
     fn draw_ui_tree(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            let response = ui.with_layout(Layout::left_to_right(egui::Align::Min), |mut ui| {
+            ui.with_layout(Layout::left_to_right(egui::Align::Min), |mut ui| {
                 let mut behavior = TreeBehavior {};
                 self.tree.ui(&mut behavior, ui);
 
@@ -277,7 +262,7 @@ impl ZApp {
         pointer_pos: Pos2,
         ui: &egui::Ui,
         ctx: &egui::Context,
-        frame: &eframe::Frame,
+        _frame: &eframe::Frame,
     ) {
         let app_ctx = &mut self.app_ctx.borrow_mut();
         let mut found_rect = None;
@@ -456,10 +441,6 @@ impl ZApp {
                     log::info!("debug_window {}", app_ctx.debug_window_test.is_open());
                 }
             });
-
-            if let Some(mouse_event) = &app_ctx.double_click_event {
-                // let color_picker = app_ctx.z_color_picker.lock().unwrap();
-            }
         }
 
         if user_quit {

@@ -14,14 +14,14 @@ use crate::{
     curves::{control_points_to_spline, find_spline_max_t, flatten_control_points},
     gradient::color_function_gradient,
     hsv_key_value::HsvKeyValue,
-    ui_common::{color_button, response_copy_color_on_click},
+    ui_common::color_button,
 };
 
 fn ui_previewer_colors(
     ui: &mut Ui,
     size: Vec2,
     control_points: &[ControlPointType],
-    color_copy_format: ColorStringCopy,
+    _color_copy_format: ColorStringCopy,
 ) -> Response {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
@@ -58,7 +58,7 @@ fn ui_previewer_colors(
         };
 
         let size_weight: f32 = 1.0;
-        let response_button: Response = color_button(
+        color_button(
             &mut previewer_ui_control_points,
             Vec2 {
                 x: size_weight * size_per_color_x,
@@ -66,14 +66,6 @@ fn ui_previewer_colors(
             },
             color_at_point.into(),
             true,
-        );
-
-        response_copy_color_on_click(
-            ui,
-            &response_button,
-            color_at_point,
-            color_copy_format,
-            PointerButton::Middle,
         );
     }
 
@@ -85,7 +77,7 @@ fn ui_previewer_control_points_with_drag(
     size: Vec2,
     control_points: &[ControlPoint],
     previewer_data: &mut PreviewerData,
-    color_copy_format: ColorStringCopy,
+    _color_copy_format: ColorStringCopy,
 ) -> Response {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
@@ -132,14 +124,6 @@ fn ui_previewer_control_points_with_drag(
             },
             color_at_point.into(),
             true,
-        );
-
-        response_copy_color_on_click(
-            ui,
-            &response_button,
-            color_at_point,
-            color_copy_format,
-            PointerButton::Middle,
         );
 
         if response_button.dragged_by(PointerButton::Primary) {

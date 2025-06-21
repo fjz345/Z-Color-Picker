@@ -93,7 +93,7 @@ impl ZAppPane for ColorPickerPane {
     }
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
         let mut color_picker = self.ctx.borrow().z_color_picker.borrow().clone();
-        let mut mut_ctx = self.ctx.borrow_mut();
+        let mut_ctx = self.ctx.borrow_mut();
         let color_copy_format = mut_ctx.color_copy_format;
 
         // ui.painter().rect_filled(ui.max_rect(), 0.0, Color32::WHITE);
@@ -163,7 +163,7 @@ impl ZAppPane for PreviewerPane {
         self.title.clone().unwrap_or(format!("Pane"))
     }
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
-        let mut color_picker = self.ctx.borrow().z_color_picker.borrow().clone();
+        let color_picker = self.ctx.borrow().z_color_picker.borrow().clone();
         let mut mut_ctx = self.ctx.borrow_mut();
 
         let mut previewer = mut_ctx.previewer.clone();
@@ -200,5 +200,5 @@ impl ZAppPane for LogPane {
         return egui_tiles::UiResponse::None;
     }
 
-    fn update_ctx(&mut self, new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {}
+    fn update_ctx(&mut self, _new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {}
 }

@@ -2,18 +2,9 @@
 #![allow(dead_code)]
 #![allow(unreachable_patterns)]
 
-#[macro_use]
-extern crate log;
+use std::env;
 
-use std::{
-    env,
-    sync::{Arc, Mutex},
-};
-
-use eframe::{
-    egui::{self},
-    WindowBuilderHook,
-};
+use eframe::egui::{self};
 
 use crate::{app::ZApp, logger::LogCollector};
 

@@ -1,5 +1,5 @@
 use eframe::egui::{self, ScrollArea};
-use log::{Level, Metadata, Record, SetLoggerError};
+use log::{Metadata, Record, SetLoggerError};
 use std::sync::{Arc, Mutex, OnceLock};
 
 static GLOBAL_LOG_BUFFER: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
