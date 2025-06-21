@@ -32,6 +32,7 @@ mod hsv_key_value;
 mod image_processing;
 mod logger;
 mod math;
+mod panes;
 mod preset;
 mod previewer;
 mod ui_common;
