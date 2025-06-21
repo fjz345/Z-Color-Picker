@@ -476,6 +476,8 @@ impl ZColorPickerWrapper {
     }
 
     fn post_draw(&mut self, z_color_picker_response: &Response) {
+        self.apply_control_point_constraints();
+
         match self.control_point_right_clicked {
             Some(index) => {
                 self.remove_control_point(index);
