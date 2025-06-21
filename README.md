@@ -37,18 +37,15 @@ To create a new preset, click the preset combo box and select NEW
 
 # TODO:
 
-## TODO: Bugs
-
-- HermiteBezier, can not modify t's in previewer
-- HermiteBezier, preview gradient is black on right side
-
 ## TODO: Features
 
 # Currently being worked on
-
-- Bugs
-- t should be modifiable by user, normalized on display
-- Previewer should be in separate window
+- Control point ordering visuals on color picker
+- Control point Hue visuals
+- Size slider for color picker spline
+- T should be modifiable by user, potentially normalized on display
+- Spline mode interactivity
+- HermiteBezier, preview gradient is black on right side
 
 #
 
@@ -60,14 +57,11 @@ To create a new preset, click the preset combo box and select NEW
   - Saturation
   - Hue
 - View multiple presets at the same time
-- Import curves to photoshop????
+- Photoshop workflow, plugin integration?
 - Different color spaces
 - Better ui widget dynamic rezising
-- Preset save more data, lock/etc...
-- Size slider for color picker spline
-- Option to auto load last preset or not.
 - Polynomial spline mode
-- Random gradient button with "undo" to last randomized
+- Auto gradient button with "undo"
 - Add Interpolation::Bezier with just one tanget point
 - 3D visualization
 - Screen-mouse gradient picker
