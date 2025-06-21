@@ -711,23 +711,36 @@ pub fn main_color_picker(
         }
 
         if let Some(h) = delta_hue {
-            if let Some(index) = is_modifying_index {
-                if ctx.is_curve_locked {
-                    // Move all points
-                    for i in 0..num_control_points {
-                        let val_mut_ref = ctx.control_points[i].val_mut();
-                        let clamped_new_h = (val_mut_ref.h() - h).rem_euclid(1.0);
-                        val_mut_ref.val[2] = clamped_new_h;
-                    }
-                } else {
-                    const MOVE_EVEN_IF_NOT_DRAG: bool = false;
-                    if MOVE_EVEN_IF_NOT_DRAG {
-                        let val_mut_ref = ctx.control_points[index].val_mut();
-                        // Prevent wrapping from 1.0 -> 0.0, then wrap around [0,1.0]
-                        let clamped_new_h = (val_mut_ref.h() - h).clamp(0.0, 0.999).rem_euclid(1.0);
-                        val_mut_ref.val[2] = clamped_new_h;
-                    }
+            if let Some(_index) = is_modifying_index {
+                // Move all points
+                for i in 0..num_control_points {
+                    let val_mut_ref = ctx.control_points[i].val_mut();
+                    let clamped_new_h = (val_mut_ref.h() - h).rem_euclid(1.0);
+                    val_mut_ref.val[2] = clamped_new_h;
                 }
+                // if ctx.is_curve_locked {
+                //     // Move all points
+                //     for i in 0..num_control_points {
+                //         let val_mut_ref = ctx.control_points[i].val_mut();
+                //         let clamped_new_h = (val_mut_ref.h() - h).rem_euclid(1.0);
+                //         val_mut_ref.val[2] = clamped_new_h;
+                //     }
+                // } else {
+                //     const MOVE_EVEN_IF_NOT_DRAG: bool = false;
+                //     if MOVE_EVEN_IF_NOT_DRAG {
+                //         let val_mut_ref = ctx.control_points[index].val_mut();
+                //         // Prevent wrapping from 1.0 -> 0.0, then wrap around [0,1.0]
+                //         let clamped_new_h = (val_mut_ref.h() - h).clamp(0.0, 0.999).rem_euclid(1.0);
+                //         val_mut_ref.val[2] = clamped_new_h;
+                //     }
+                // }
+                // if ctx.is_curve_locked {
+                //     // Move all points
+                //     for i in 0..num_control_points {
+                //         let val_mut_ref = ctx.control_points[i].val_mut();
+                //         let clamped_new_h = (val_mut_ref.h() - h).rem_euclid(1.0);
+                //         val_mut_ref.val[2] = clamped_new_h;
+                //     }
             }
         }
 
