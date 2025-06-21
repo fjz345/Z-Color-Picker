@@ -75,7 +75,7 @@ pub fn ui_log_window(
     };
 
     // ScrollArea with vertical scrollbar and full size
-    ScrollArea::vertical()
+    let scroll_response = ScrollArea::vertical()
         .auto_shrink([false; 2]) // Don't shrink smaller than contents
         .stick_to_bottom(*scroll_to_bottom)
         .show(ui, |ui| {
@@ -87,13 +87,16 @@ pub fn ui_log_window(
             });
         });
 
-    // Logic: if scrollbar is at bottom, keep auto-scroll true, else false
-    let scroll_pos = ui.ctx().input(|input| input.raw_scroll_delta.y);
+    let has_scroll = scroll_response.content_size.y > scroll_response.inner_rect.size().y;
 
-    // Simple heuristic: if user scrolled up manually, disable auto-scroll
-    if scroll_pos > 0.0 {
-        *scroll_to_bottom = false;
-    } else if scroll_pos < 0.0 {
+    if has_scroll {
+        let scroll_pos = ui.ctx().input(|input| input.raw_scroll_delta.y);
+        if scroll_pos > 0.0 {
+            *scroll_to_bottom = false;
+        } else if scroll_pos < 0.0 {
+            *scroll_to_bottom = true;
+        }
+    } else {
         *scroll_to_bottom = true;
     }
 }
