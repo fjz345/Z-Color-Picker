@@ -60,6 +60,7 @@ pub struct ZColorPickerOptions {
     pub spline_mode: SplineMode,
     pub presets: Vec<Preset>,
     pub preset_selected_index: Option<usize>,
+    pub auto_save_presets: bool,
 }
 
 impl Default for ZColorPickerOptions {
@@ -72,6 +73,7 @@ impl Default for ZColorPickerOptions {
             spline_mode: SplineMode::HermiteBezier,
             presets: Vec::new(),
             preset_selected_index: None,
+            auto_save_presets: false,
         }
     }
 }
@@ -247,6 +249,17 @@ impl ZApp {
 
                 self.draw_ui_post(ctx, &mut ui);
             });
+
+            // auto-save-preset
+            {
+                let app_ctx = self.app_ctx.borrow_mut();
+                let color_picker = &mut app_ctx.z_color_picker.borrow_mut();
+                if color_picker.options.auto_save_presets {
+                    color_picker
+                        .save_selected_preset()
+                        .unwrap_or_else(|e| println!("{e}"));
+                }
+            }
 
             let middle_mouse_clicked = ctx.input(|i| i.pointer.middle_down());
             if middle_mouse_clicked {

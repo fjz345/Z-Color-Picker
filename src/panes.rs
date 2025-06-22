@@ -128,18 +128,22 @@ impl ZAppPane for ColorPickerOptionsPane {
         let mut options_window = mut_ctx.options_window.clone();
         options_window.update();
         let mut color_copy_format = color_copy_format;
+        let mut auto_save_preset = options.auto_save_presets;
 
         let options_draw_results = options_window.draw_content(
             ui,
             &mut options,
             &mut color_picker.control_points,
             &mut color_copy_format,
+            &mut auto_save_preset,
         );
         if let Some(preset_to_apply) = options_draw_results.preset_result.should_apply {
             color_picker
                 .apply_preset(&preset_to_apply)
                 .unwrap_or_else(|e| log::info!("{e}"))
         }
+
+        options.auto_save_presets = auto_save_preset;
         mut_ctx.color_copy_format = color_copy_format;
         mut_ctx.options_window = options_window;
         color_picker.options = options;

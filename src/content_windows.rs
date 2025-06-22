@@ -1,4 +1,7 @@
+use std::hash::Hash;
+
 use eframe::egui;
+use eframe::egui::TextEdit;
 
 use crate::app::ZColorPickerOptions;
 use crate::common::ColorStringCopy;
@@ -80,6 +83,7 @@ impl WindowZColorPickerOptions {
         options: &mut ZColorPickerOptions,
         control_points: &mut Vec<ControlPoint>,
         color_copy_format: &mut ColorStringCopy,
+        mut auto_save_preset: &mut bool,
     ) -> WindowZColorPickerOptionsDrawResult {
         let mut draw_result = WindowZColorPickerOptionsDrawResult::default();
 
@@ -204,6 +208,8 @@ impl WindowZColorPickerOptions {
                 }
             };
 
+            ui.checkbox(&mut auto_save_preset, "↻💾")
+                .on_hover_text("Auto save preset");
             if ui.button("Save").clicked_by(PointerButton::Primary) {
                 if let Some(s) = options.preset_selected_index {
                     options.presets[s].data.spline_mode = options.spline_mode;
@@ -219,6 +225,33 @@ impl WindowZColorPickerOptions {
                     options.preset_selected_index = None;
                 }
             }
+        });
+        ui.horizontal(|ui| {
+            let rename_button = ui.button("Rename");
+
+            let rename_text_field_id = egui::Id::new(819181);
+            let mut rename_text_field: String = ui.memory(|mem| {
+                mem.data
+                    .get_temp::<String>(rename_text_field_id)
+                    .unwrap_or_default()
+            });
+            let mut was_text_box_enter = false;
+            ui.push_id(rename_text_field_id, |ui| {
+                let text_widget = TextEdit::singleline(&mut rename_text_field).desired_width(200.0);
+                let text_response = ui.add(text_widget);
+                if text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    was_text_box_enter = true;
+                }
+            });
+
+            if was_text_box_enter || rename_button.clicked_by(egui::PointerButton::Primary) {
+                if let Some(s) = options.preset_selected_index {
+                    options.presets[s].name = rename_text_field.clone();
+                }
+            }
+            ui.memory_mut(|mem| {
+                *mem.data.get_temp_mut_or_default(rename_text_field_id) = rename_text_field
+            });
         });
 
         let mut create_preset_open = self.new_preset_is_open;
@@ -259,6 +292,7 @@ impl WindowZColorPickerOptions {
         options: &mut ZColorPickerOptions,
         control_points: &mut Vec<ControlPoint>,
         color_copy_format: &mut ColorStringCopy,
+        auto_save_preset: &mut bool,
     ) -> Option<InnerResponse<Option<WindowZColorPickerOptionsDrawResult>>> {
         let prev_visuals = ui.visuals_mut().clone();
 
@@ -269,7 +303,13 @@ impl WindowZColorPickerOptions {
             .open(&mut open)
             .auto_sized()
             .show(ui.ctx(), |ui: &mut Ui| {
-                self.draw_content(ui, options, control_points, color_copy_format)
+                self.draw_content(
+                    ui,
+                    options,
+                    control_points,
+                    color_copy_format,
+                    auto_save_preset,
+                )
             });
 
         if open {
