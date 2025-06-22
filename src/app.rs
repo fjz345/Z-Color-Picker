@@ -194,11 +194,11 @@ impl ZApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
     }
 
-    fn draw_ui_post(&mut self, _ctx: &egui::Context, ui: &mut Ui) {
+    fn draw_ui_post(&mut self, ctx: &egui::Context, ui: &mut Ui) {
         self.update_and_draw_debug_windows(ui);
         let copy_window = &mut self.app_ctx.borrow_mut().clipboard_copy_window;
         copy_window.update();
-        copy_window.draw_ui(ui);
+        copy_window.draw(ctx);
     }
 
     fn create_tree(
@@ -335,7 +335,7 @@ impl ZApp {
     fn handle_clipboardcopy_event(&mut self) -> bool {
         let app_ctx = &mut self.app_ctx.borrow_mut();
         if let Some(event) = app_ctx.clipboard_event.take() {
-            app_ctx.clipboard_copy_window.open(event.frame_rect.min);
+            let mut copied_to_clipboard = false;
 
             // Copy to clipboard
             if let Some(frame_pixels) = event.frame_pixels {
@@ -346,6 +346,7 @@ impl ZApp {
                         frame_pixels.data[0].val.2,
                     );
                     let _ = write_color_to_clipboard(color, app_ctx.color_copy_format);
+                    copied_to_clipboard = true;
                     log::debug!("Wrote {:?} to clipboard", color);
                 } else if frame_pixels.data.len() > 1 {
                     let a_padded = u8u8u8_to_u8u8u8u8(&frame_pixels.data[..]);
@@ -362,6 +363,7 @@ impl ZApp {
                         &data.width,
                         &data.height
                     );
+                    copied_to_clipboard = true;
                     let _ = write_pixels_to_clipboard(data);
                 } else {
                     log::info!("clipboard event could not be processed, colors len was 0");
@@ -370,7 +372,11 @@ impl ZApp {
                 log::info!("clipboard event could not be processed, did not have any colors set");
             }
 
-            return true;
+            if copied_to_clipboard {
+                app_ctx.clipboard_copy_window.open(event.frame_rect.min);
+            }
+
+            return copied_to_clipboard;
         }
 
         false

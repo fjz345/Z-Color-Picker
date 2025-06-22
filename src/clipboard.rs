@@ -2,7 +2,7 @@ use std::{fs::File, io::Write, ops::Rem, time::Instant};
 
 use arboard::{Clipboard, ImageData};
 use ecolor::Color32;
-use eframe::egui::{InnerResponse, Pos2, Rect, Ui, Window};
+use eframe::egui::{self, InnerResponse, Pos2, Rect, Ui, Window};
 
 use crate::{
     color_picker::format_color_as,
@@ -94,7 +94,7 @@ impl Default for ClipboardPopup {
             open: false,
             position: Pos2::ZERO, // assuming Pos2::ZERO exists, else use Pos2::new(0.0, 0.0)
             open_timestamp: Instant::now(),
-            open_duration: 0.0,
+            open_duration: 2.0,
         }
     }
 }
@@ -127,50 +127,28 @@ impl ClipboardPopup {
             self.close();
         }
     }
+    pub fn draw(&mut self, ctx: &egui::Context) {
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("clipboard_popup"),
+        ));
+        let rect = egui::Rect::from_min_size(self.position, egui::vec2(200.0, 40.0));
 
-    pub fn draw_ui(&mut self, ui: &mut Ui) -> Option<InnerResponse<Option<()>>> {
-        let time_since_open = Instant::now()
+        let time_since = Instant::now()
             .duration_since(self.open_timestamp)
             .as_secs_f32();
-        let alpha = (1.0 - (time_since_open / self.open_duration)).clamp(0.0, 1.0);
-        self.draw_ui_clipboard_copy(ui, alpha)
-    }
+        let alpha = (1.0 - (time_since / self.open_duration)).clamp(0.0, 1.0);
+        let color = egui::Color32::from_rgba_unmultiplied(0, 0, 0, (alpha * 200.0) as u8);
 
-    fn draw_ui_clipboard_copy(
-        &mut self,
-        ui: &mut Ui,
-        opacity: f32,
-    ) -> Option<InnerResponse<Option<()>>> {
-        let prev_visuals = ui.visuals_mut().clone();
+        painter.rect_filled(rect, 4.0, color);
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "Copied to clipboard",
+            egui::TextStyle::Heading.resolve(&ctx.style()),
+            egui::Color32::from_rgba_unmultiplied(255, 255, 255, (alpha * 255.0) as u8),
+        );
 
-        let alpha_u8 = (opacity * 255.0) as u8;
-        let mut color_bg = prev_visuals.window_fill;
-        color_bg[3] = alpha_u8;
-        let mut color_text = prev_visuals.text_color();
-        color_text[3] = alpha_u8;
-        ui.visuals_mut().window_fill = color_bg;
-        ui.visuals_mut().window_stroke.color = color_bg;
-        ui.visuals_mut().window_stroke.width = 0.0;
-        ui.visuals_mut().widgets.active.fg_stroke.color = color_text;
-        // ui.visuals_mut().window_shadow.extrusion = 0.0;
-        ui.ctx().set_visuals(ui.visuals().clone());
-
-        let mut should_open: bool = self.open;
-        let response = Window::new("")
-            .fixed_pos(&[self.position.x, self.position.y])
-            .resizable(false)
-            .title_bar(false)
-            .open(&mut should_open)
-            .auto_sized()
-            .show(ui.ctx(), |ui| {
-                ui.label("Copied to clipboard");
-
-                ui.ctx().request_repaint();
-            });
-        self.open = should_open;
-
-        ui.ctx().set_visuals(prev_visuals);
-
-        response
+        ctx.request_repaint(); // keep redrawing until it fades out
     }
 }
