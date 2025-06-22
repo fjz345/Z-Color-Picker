@@ -265,9 +265,14 @@ impl WindowZColorPickerOptions {
             egui::Window::new("Create Preset")
                 .open(&mut create_preset_open)
                 .show(ui.ctx(), |ui| {
-                    let _text_response = ui.text_edit_singleline(&mut self.new_preset_window_text);
+                    let text_response = ui.text_edit_singleline(&mut self.new_preset_window_text);
+                    let was_text_box_enter =
+                        text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    text_response.request_focus();
 
-                    if ui.button("Create").clicked() {
+                    if !self.new_preset_window_text.is_empty()
+                        && (was_text_box_enter || ui.button("Create").clicked())
+                    {
                         self.new_preset_is_open = false;
                         create_preset_create_clicked = true;
 
