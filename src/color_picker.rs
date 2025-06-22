@@ -6,7 +6,7 @@ use crate::{
         ControlPointType,
     },
     error::{Result, ZError},
-    preset::PRESETS_FOLDER_NAME,
+    preset::{get_presets_path, PRESETS_FOLDER_NAME},
 };
 use eframe::{
     egui::{
@@ -116,8 +116,67 @@ impl Default for ZColorPickerWrapper {
         Self::default()
     }
 }
-
+const LAZY_TANGENT_DELTA: f32 = 0.01;
 impl ZColorPickerWrapper {
+    const DEFAULT_STARTUP_CONTROL_POINTS: [ControlPoint; 4] = [
+        ControlPoint::ControlPointSimple(ControlPointStorage {
+            val: ControlPointType {
+                val: [0.25, 0.33, 0.0],
+            },
+            t: 0.0,
+            tangents: [
+                Some(ControlPointTangent {
+                    val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+                Some(ControlPointTangent {
+                    val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+            ],
+        }),
+        ControlPoint::ControlPointSimple(ControlPointStorage {
+            val: ControlPointType {
+                val: [0.44, 0.38, 0.1],
+            },
+            t: 1.0,
+            tangents: [
+                Some(ControlPointTangent {
+                    val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+                Some(ControlPointTangent {
+                    val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+            ],
+        }),
+        ControlPoint::ControlPointSimple(ControlPointStorage {
+            val: ControlPointType {
+                val: [0.8, 0.6, 0.1],
+            },
+            t: 2.0,
+            tangents: [
+                Some(ControlPointTangent {
+                    val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+                Some(ControlPointTangent {
+                    val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+            ],
+        }),
+        ControlPoint::ControlPointSimple(ControlPointStorage {
+            val: ControlPointType {
+                val: [0.9, 0.8, 0.2],
+            },
+            t: 3.0,
+            tangents: [
+                Some(ControlPointTangent {
+                    val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+                Some(ControlPointTangent {
+                    val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+            ],
+        }),
+    ];
+
     pub fn default() -> Self {
         let mut new_color_picker = Self {
             control_points: Vec::with_capacity(4),
@@ -127,92 +186,35 @@ impl ZColorPickerWrapper {
             options: ZColorPickerOptions::default(),
         };
 
-        const LAZY_TANGENT_DELTA: f32 = 0.01;
-        const DEFAULT_STARTUP_CONTROL_POINTS: [ControlPoint; 4] = [
-            ControlPoint::ControlPointSimple(ControlPointStorage {
-                val: ControlPointType {
-                    val: [0.25, 0.33, 0.0],
-                },
-                t: 0.0,
-                tangents: [
-                    Some(ControlPointTangent {
-                        val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
-                    }),
-                    Some(ControlPointTangent {
-                        val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
-                    }),
-                ],
-            }),
-            ControlPoint::ControlPointSimple(ControlPointStorage {
-                val: ControlPointType {
-                    val: [0.44, 0.38, 0.1],
-                },
-                t: 1.0,
-                tangents: [
-                    Some(ControlPointTangent {
-                        val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
-                    }),
-                    Some(ControlPointTangent {
-                        val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
-                    }),
-                ],
-            }),
-            ControlPoint::ControlPointSimple(ControlPointStorage {
-                val: ControlPointType {
-                    val: [0.8, 0.6, 0.1],
-                },
-                t: 2.0,
-                tangents: [
-                    Some(ControlPointTangent {
-                        val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
-                    }),
-                    Some(ControlPointTangent {
-                        val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
-                    }),
-                ],
-            }),
-            ControlPoint::ControlPointSimple(ControlPointStorage {
-                val: ControlPointType {
-                    val: [0.9, 0.8, 0.2],
-                },
-                t: 3.0,
-                tangents: [
-                    Some(ControlPointTangent {
-                        val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
-                    }),
-                    Some(ControlPointTangent {
-                        val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
-                    }),
-                ],
-            }),
-        ];
-
-        let cur_dir = std::env::current_dir().unwrap();
-        let presets_path_buf = cur_dir.join(PRESETS_FOLDER_NAME);
-        let presets_path = presets_path_buf.as_path();
-        log::info!("Loading presets from: {}", presets_path.to_str().unwrap());
-        let r = load_presets(presets_path, &mut new_color_picker.options.presets);
-        if let Err(e) = r {
-            dbg!(e);
-        }
-
-        // Use first as default if exists
-        if new_color_picker.options.presets.len() >= 1 {
-            new_color_picker.options.preset_selected_index = Some(0);
-            match new_color_picker.apply_selected_preset() {
-                Ok(_) => log::info!("Preset Applied!"),
-                Err(e) => log::info!("{e}"),
-            }
-        } else {
-            for control_point in &DEFAULT_STARTUP_CONTROL_POINTS {
-                new_color_picker.control_points.push(control_point.clone());
-            }
-        }
+        new_color_picker.load_presets();
 
         // new_color_picker.main_color_picker_window.open();
         // new_color_picker.options_window.open();
 
         new_color_picker
+    }
+
+    pub fn load_presets(&mut self) {
+        let path_buf = get_presets_path();
+        let presets_path = path_buf.as_path();
+        log::info!("Loading presets from: {}", presets_path.to_str().unwrap());
+        let r = load_presets(&presets_path, &mut self.options.presets);
+        if let Err(e) = r {
+            dbg!(e);
+        }
+
+        // Use first as default if exists
+        if self.options.presets.len() >= 1 {
+            self.options.preset_selected_index = Some(0);
+            match self.apply_selected_preset() {
+                Ok(_) => log::info!("Preset Applied!"),
+                Err(e) => log::info!("{e}"),
+            }
+        } else {
+            for control_point in &Self::DEFAULT_STARTUP_CONTROL_POINTS {
+                self.control_points.push(control_point.clone());
+            }
+        }
     }
 
     pub fn apply_preset(&mut self, preset: &Preset) -> Result<()> {
@@ -289,7 +291,7 @@ impl ZColorPickerWrapper {
     pub fn delete_selected_preset(&mut self) -> Result<()> {
         if let Some(s) = self.options.preset_selected_index {
             let preset_to_remove = self.options.presets.remove(s);
-            delete_preset_from_disk(&get_preset_save_path(&preset_to_remove))?;
+            delete_preset_from_disk(&preset_to_remove)?;
             self.options.preset_selected_index = None;
 
             return Ok(());

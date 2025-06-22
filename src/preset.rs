@@ -1,6 +1,6 @@
 use std::{
     fs::{self, remove_file, DirEntry},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use crate::{
@@ -34,6 +34,11 @@ impl Preset {
 pub struct PresetData {
     pub spline_mode: SplineMode,
     pub control_points: Vec<ControlPoint>,
+}
+
+pub fn get_presets_path() -> PathBuf {
+    let cur_dir = std::env::current_dir().unwrap();
+    cur_dir.join(PRESETS_FOLDER_NAME)
 }
 
 pub fn load_presets(path: &Path, presets: &mut Vec<Preset>) -> Result<()> {
@@ -105,8 +110,11 @@ pub fn save_preset_to_disk(preset: &Preset) -> Result<()> {
     Ok(())
 }
 
-pub fn delete_preset_from_disk(file_path: &str) -> Result<()> {
+pub fn delete_preset_from_disk(preset: &Preset) -> Result<()> {
+    let file_path = &get_preset_save_path(&preset);
+
     remove_file(file_path)?;
+    log::info!("DELETED {}", file_path);
     Ok(())
 }
 
@@ -115,4 +123,27 @@ pub fn get_preset_save_path(preset: &Preset) -> String {
     let presets_path = curr_dir.join(PRESETS_FOLDER_NAME);
     let file_path = presets_path.join(format!("{}.json", preset.name));
     file_path.to_path_buf().to_str().unwrap().to_string()
+}
+
+pub fn save_all_presets_to_disk(presets: &[Preset]) -> Result<()> {
+    for preset in presets.iter() {
+        save_preset_to_disk(preset)?;
+    }
+    Ok(())
+}
+
+pub fn delete_presets_from_disk(presets: &[Preset]) -> Result<()> {
+    for preset in presets.iter() {
+        delete_preset_from_disk(preset)?;
+    }
+    Ok(())
+}
+
+pub fn delete_all_presets_from_disk() -> Result<()> {
+    let mut presets: Vec<Preset> = Vec::new();
+    load_presets(get_presets_path().as_path(), &mut presets);
+    for preset in presets.iter() {
+        delete_preset_from_disk(preset)?;
+    }
+    Ok(())
 }

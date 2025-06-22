@@ -28,7 +28,7 @@ use crate::{
         ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
         ZAppPane,
     },
-    preset::Preset,
+    preset::{delete_all_presets_from_disk, load_presets, save_all_presets_to_disk, Preset},
     previewer::{PreviewerUiResponses, ZPreviewer},
     ui_common::ContentWindow,
 };
@@ -168,7 +168,23 @@ impl ZApp {
         }
     }
 
+    fn sync_persets_on_disk(&self) {
+        let app_ctx = self.app_ctx.borrow();
+        let color_picker = app_ctx.z_color_picker.borrow();
+        delete_all_presets_from_disk().unwrap_or_else(|e| println!("{e}"));
+        save_all_presets_to_disk(&color_picker.options.presets).unwrap_or_else(|e| println!("{e}"));
+    }
+
+    fn init(&mut self) {
+        self.app_ctx
+            .borrow_mut()
+            .z_color_picker
+            .borrow_mut()
+            .load_presets();
+    }
+
     fn startup(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.init();
         // Fix startup not having correct references
         {
             self.log_buffer = LogCollector::init().expect("Failed to init logger");
@@ -500,6 +516,7 @@ impl eframe::App for ZApp {
                 self.process_ctx_inputs(ctx, frame);
             }
             AppState::Exit => {
+                self.sync_persets_on_disk();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             _ => {
