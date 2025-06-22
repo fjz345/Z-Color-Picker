@@ -86,6 +86,7 @@ pub struct ClipboardPopup {
     pub position: Pos2,
     pub open_timestamp: Instant,
     pub open_duration: f32,
+    pub text: String,
 }
 
 impl Default for ClipboardPopup {
@@ -95,6 +96,7 @@ impl Default for ClipboardPopup {
             position: Pos2::ZERO, // assuming Pos2::ZERO exists, else use Pos2::new(0.0, 0.0)
             open_timestamp: Instant::now(),
             open_duration: 2.0,
+            text: "Copied to clipboard".to_string(),
         }
     }
 }
@@ -106,6 +108,7 @@ impl ClipboardPopup {
             position,
             open_timestamp,
             open_duration,
+            ..Default::default()
         }
     }
 
@@ -127,6 +130,9 @@ impl ClipboardPopup {
             self.close();
         }
     }
+    pub fn set_text(&mut self, new_text: &String) {
+        self.text = new_text.clone();
+    }
     pub fn draw(&mut self, ctx: &egui::Context) {
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
@@ -144,7 +150,7 @@ impl ClipboardPopup {
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "Copied to clipboard",
+            &self.text,
             egui::TextStyle::Heading.resolve(&ctx.style()),
             egui::Color32::from_rgba_unmultiplied(255, 255, 255, (alpha * 255.0) as u8),
         );

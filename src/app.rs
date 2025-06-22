@@ -247,6 +247,15 @@ impl ZApp {
                 let mut behavior = TreeBehavior {};
                 self.tree.ui(&mut behavior, ui);
 
+                // Copy to clipboard
+                let middle_mouse_clicked = ctx.input(|i| i.pointer.middle_down());
+                if middle_mouse_clicked {
+                    let interact_pos = ctx.input(|i| i.pointer.interact_pos());
+                    if let Some(pos) = interact_pos {
+                        self.handle_middleclick_event(pos, ui, ctx, frame);
+                    }
+                }
+
                 self.draw_ui_post(ctx, &mut ui);
             });
 
@@ -258,14 +267,6 @@ impl ZApp {
                     color_picker
                         .save_selected_preset()
                         .unwrap_or_else(|e| println!("{e}"));
-                }
-            }
-
-            let middle_mouse_clicked = ctx.input(|i| i.pointer.middle_down());
-            if middle_mouse_clicked {
-                let interact_pos = ctx.input(|i| i.pointer.interact_pos());
-                if let Some(pos) = interact_pos {
-                    self.handle_middleclick_event(pos, ui, ctx, frame);
                 }
             }
         });
@@ -346,6 +347,9 @@ impl ZApp {
                         frame_pixels.data[0].val.2,
                     );
                     let _ = write_color_to_clipboard(color, app_ctx.color_copy_format);
+                    app_ctx
+                        .clipboard_copy_window
+                        .set_text(&format!("{:?}", color).to_string());
                     copied_to_clipboard = true;
                     log::debug!("Wrote {:?} to clipboard", color);
                 } else if frame_pixels.data.len() > 1 {
@@ -363,6 +367,9 @@ impl ZApp {
                         &data.width,
                         &data.height
                     );
+                    app_ctx
+                        .clipboard_copy_window
+                        .set_text(&"Copied img to clipboard".to_string());
                     copied_to_clipboard = true;
                     let _ = write_pixels_to_clipboard(data);
                 } else {
