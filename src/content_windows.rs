@@ -244,7 +244,9 @@ impl WindowZColorPickerOptions {
                 }
             });
 
-            if was_text_box_enter || rename_button.clicked_by(egui::PointerButton::Primary) {
+            if !rename_text_field.is_empty()
+                && (was_text_box_enter || rename_button.clicked_by(egui::PointerButton::Primary))
+            {
                 if let Some(s) = options.preset_selected_index {
                     options.presets[s].name = rename_text_field.clone();
                     rename_text_field = "".to_string();
