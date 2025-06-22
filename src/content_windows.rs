@@ -216,13 +216,15 @@ impl WindowZColorPickerOptions {
                     options.presets[s].data.control_points = control_points.to_vec();
                     log::info!("Saved preset [{}]", options.presets[s].name);
                 } else {
-                    log::info!("Could not save, no preset selected");
+                    log::info!("Could not save preset, None selected");
                 }
             }
             if ui.button("Delete").clicked_by(PointerButton::Primary) {
                 if let Some(s) = options.preset_selected_index {
                     options.presets.remove(s);
                     options.preset_selected_index = None;
+                } else {
+                    log::error!("Could not delete preset, None selected");
                 }
             }
         });
