@@ -2,7 +2,7 @@ use std::{fs::File, io::Write, ops::Rem, time::Instant};
 
 use arboard::{Clipboard, ImageData};
 use ecolor::Color32;
-use eframe::egui::{self, InnerResponse, Pos2, Rect, Ui, Window};
+use eframe::egui::{self, Pos2, Rect};
 
 use crate::{
     color_picker::format_color_as,

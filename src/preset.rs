@@ -141,7 +141,7 @@ pub fn delete_presets_from_disk(presets: &[Preset]) -> Result<()> {
 
 pub fn delete_all_presets_from_disk() -> Result<()> {
     let mut presets: Vec<Preset> = Vec::new();
-    load_presets(get_presets_path().as_path(), &mut presets);
+    load_presets(get_presets_path().as_path(), &mut presets)?;
     for preset in presets.iter() {
         delete_preset_from_disk(preset)?;
     }

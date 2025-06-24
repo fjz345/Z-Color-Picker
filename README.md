@@ -40,7 +40,6 @@ To create a new preset, click the preset combo box and select NEW
 ## TODO: Features
 
 # Currently being worked on
-- Save presets having issue with persistant storage
 - Control point ordering visuals on color picker
 - Control point Hue visuals
 - Size slider for color picker spline

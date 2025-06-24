@@ -28,7 +28,7 @@ use crate::{
         ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
         ZAppPane,
     },
-    preset::{delete_all_presets_from_disk, load_presets, save_all_presets_to_disk, Preset},
+    preset::{delete_all_presets_from_disk, save_all_presets_to_disk, Preset},
     previewer::{PreviewerUiResponses, ZPreviewer},
     ui_common::ContentWindow,
 };
