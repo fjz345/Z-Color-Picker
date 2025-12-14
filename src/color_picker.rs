@@ -5,6 +5,7 @@ use crate::{
         create_tangent_for_control_point, ControlPoint, ControlPointStorage, ControlPointTangent,
         ControlPointType,
     },
+    curves::ControlPointUiResult,
     error::{Result, ZError},
     preset::get_presets_path,
 };
@@ -742,20 +743,22 @@ pub fn main_color_picker(
         let _spline_gradient_repsonse =
             ui_ordered_spline_gradient(ui, ctx.control_points, ctx.spline_mode, &slider_2d_reponse);
 
-        let (
-            dragged_points_response,
-            selected_index,
-            hovering_control_point,
-            selected_tangent_index,
-            dragged_tangent_response,
-        ) = ui_ordered_control_points(
+        let control_point_ui_result = ui_ordered_control_points(
             ui,
             ctx.control_points,
-            &is_modifying_index,
+            is_modifying_index,
             ctx.is_hue_middle_interpolated,
             &slider_2d_reponse,
             ctx.spline_mode == SplineMode::Bezier,
         );
+
+        let ControlPointUiResult {
+            selected_index,
+            hovering_control_point,
+            dragged_point,
+            selected_tangent,
+            dragged_tangent,
+        } = control_point_ui_result;
 
         *ctx.control_point_right_clicked = match hovering_control_point {
             Some(a) => {
@@ -768,7 +771,7 @@ pub fn main_color_picker(
             _ => None,
         };
 
-        if dragged_points_response.is_none() {
+        if dragged_point.is_none() {
             *ctx.dragging_index = None;
         }
 
@@ -777,7 +780,7 @@ pub fn main_color_picker(
             _ => {}
         }
 
-        match dragged_points_response {
+        match dragged_point {
             Some(r) => {
                 if r.dragged_by(PointerButton::Primary) {
                     *ctx.dragging_index = selected_index;
@@ -817,13 +820,13 @@ pub fn main_color_picker(
             _ => {}
         }
 
-        match dragged_tangent_response {
+        match dragged_tangent {
             Some(r) => {
                 if r.dragged_by(PointerButton::Primary) {
                     match *ctx.last_modifying_point_index {
                         Some(index) => {
                             if let Some(tang) = &mut ctx.control_points[index].tangents_mut()
-                                [selected_tangent_index.unwrap()]
+                                [selected_tangent.unwrap()]
                             {
                                 {
                                     let point_x_ref = &mut tang[0];
