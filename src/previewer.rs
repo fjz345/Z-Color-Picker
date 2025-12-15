@@ -10,10 +10,10 @@ use splines::Spline;
 use crate::error::Result;
 use crate::{
     common::{ColorStringCopy, SplineMode},
-    control_point::{ControlPoint, ControlPointType},
     curves::{control_points_to_spline, find_spline_max_t, flatten_control_points},
+    datatypes::control_point::{ControlPoint, ControlPointType},
+    datatypes::hsv_key_value::HsvKeyValue,
     gradient::color_function_gradient,
-    hsv_key_value::HsvKeyValue,
     ui_common::color_button,
 };
 
@@ -195,32 +195,33 @@ fn ui_previewer_curve(
     let flatten_control_points = flatten_control_points(control_points);
     let mut spline = control_points_to_spline(&flatten_control_points[..], spline_mode);
 
-    match spline_mode {
-        SplineMode::HermiteBezier => {}
-        _ => spline = modify_spline_t_to_preview_sizes(spline, spline_mode, previewer_data),
-    };
+    // forgot what this does
+    // match spline_mode {
+    //     SplineMode::HermiteBezier => {}
+    //     _ => spline = modify_spline_t_to_preview_sizes(spline, spline_mode, previewer_data),
+    // };
 
     let max_t = find_spline_max_t(&spline);
 
     let response = color_function_gradient(&mut previewer_ui_curve, rect.size(), |x| {
-        if flatten_control_points.len() <= 0 {
-            return HsvaGamma {
-                h: 0.0,
-                s: 0.0,
-                v: 0.0,
-                a: 0.0,
-            }
-            .into();
-        } else if flatten_control_points.len() <= 1 {
+        if flatten_control_points.is_empty() {
+            return HsvaGamma::default().into();
+        } else if flatten_control_points.len() == 1 {
             return flatten_control_points[0].val().color();
         }
 
         let sample_x = match spline_mode {
-            SplineMode::HermiteBezier => 1.0 + x * (max_t - 2.0) as f32,
+            SplineMode::HermiteBezier => {
+                let n_segments = flatten_control_points.len().saturating_sub(1) as f32;
+                1.0 + x * n_segments // map [0,1] to [1, len]
+            }
             _ => x * max_t,
-        };
+        }
+        .max(1.0); // clamp lower bound only
 
-        let sample: HsvKeyValue = spline.clamped_sample(sample_x).unwrap_or_default();
+        let sample: HsvKeyValue = spline.clamped_sample(sample_x).unwrap_or(HsvKeyValue {
+            val: [1.0, 1.0, 1.0],
+        });
         sample.color()
     });
 

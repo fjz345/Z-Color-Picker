@@ -1,7 +1,7 @@
 //https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
 
 use crate::common::SplineMode;
-use crate::control_point::{ControlPoint, ControlPointType};
+use crate::datatypes::control_point::{ControlPoint, ControlPointType};
 #[allow(unused_imports)]
 use crate::error::Result;
 use ecolor::{Color32, HsvaGamma};
@@ -284,36 +284,31 @@ pub fn ui_ordered_control_points(
 }
 
 pub fn flatten_control_points(control_points: &[ControlPoint]) -> Vec<ControlPoint> {
-    let mut control_points_flattened: Vec<ControlPoint> = Vec::new();
-
-    let inc_all_prev_hue_values = |vec: &mut Vec<ControlPoint>, val: f32| {
-        for a in &mut vec.iter_mut() {
-            a.val_mut()[2] += val;
-        }
-    };
+    let mut flattened: Vec<ControlPoint> = Vec::with_capacity(control_points.len());
 
     for (i, cp) in control_points.iter().enumerate() {
         if i == 0 {
-            control_points_flattened.push(cp.clone());
+            flattened.push(cp.clone());
             continue;
         }
 
-        let prev = &mut control_points_flattened[i - 1];
-        let hue_diff = cp.val().h() - prev.val().h();
-        if hue_diff.abs() <= 0.5 {
-            control_points_flattened.push(cp.clone());
-        } else {
-            if hue_diff > 0.0 {
-                inc_all_prev_hue_values(&mut control_points_flattened, 1.0);
-                control_points_flattened.push(cp.clone());
-            } else {
-                inc_all_prev_hue_values(&mut control_points_flattened, -1.0);
-                control_points_flattened.push(cp.clone());
+        let prev_hue = flattened[i - 1].val()[2];
+        let hue_diff = cp.val()[2] - prev_hue;
+
+        let cp_clone = cp.clone();
+
+        if hue_diff.abs() > 0.5 {
+            // Adjust all previous hues by ±1 to smooth wraparound
+            let adjustment = if hue_diff > 0.0 { 1.0 } else { -1.0 };
+            for prev_cp in &mut flattened {
+                prev_cp.val_mut()[2] += adjustment;
             }
         }
+
+        flattened.push(cp_clone);
     }
 
-    control_points_flattened
+    flattened
 }
 
 pub fn find_spline_max_t(spline: &Spline<f32, ControlPointType>) -> f32 {
@@ -518,7 +513,6 @@ pub fn control_points_to_spline(
             if control_points.len() >= 1 {
                 catmul_rom_spline_vec.insert(0, control_points.first().unwrap().clone());
             }
-
             if control_points.len() >= 1 {
                 catmul_rom_spline_vec.push(control_points.last().unwrap().clone());
             }

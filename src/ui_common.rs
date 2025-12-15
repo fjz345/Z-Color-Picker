@@ -1,5 +1,5 @@
 use crate::common::ColorStringCopy;
-use crate::control_point::ControlPoint;
+use crate::datatypes::control_point::ControlPoint;
 use crate::egui::PointerButton;
 use crate::egui::TextStyle;
 use eframe::egui::InnerResponse;

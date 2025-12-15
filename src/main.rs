@@ -13,13 +13,12 @@ mod clipboard;
 mod color_picker;
 mod common;
 mod content_windows;
-mod control_point;
 mod curves;
+mod datatypes;
 mod debug_windows;
 mod error;
 mod fs;
 mod gradient;
-mod hsv_key_value;
 mod image_processing;
 mod logger;
 mod math;
@@ -29,7 +28,7 @@ mod previewer;
 mod ui_common;
 
 fn main() -> eframe::Result {
-    env::set_var("RUST_LOG", "debug"); // or "info" or "debug"
+    unsafe { env::set_var("RUST_LOG", "debug") }; // or "info" or "debug"
 
     let log_buffer = LogCollector::init().expect("Failed to init logger");
 

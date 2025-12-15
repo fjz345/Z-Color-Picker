@@ -1,11 +1,11 @@
 use crate::{
     app::ZColorPickerOptions,
     common::{ColorStringCopy, SplineMode},
-    control_point::{
+    curves::ControlPointUiResult,
+    datatypes::control_point::{
         create_tangent_for_control_point, ControlPoint, ControlPointStorage, ControlPointTangent,
         ControlPointType,
     },
-    curves::ControlPointUiResult,
     error::{Result, ZError},
     preset::get_presets_path,
 };

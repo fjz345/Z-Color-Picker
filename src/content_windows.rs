@@ -4,7 +4,7 @@ use eframe::egui::TextEdit;
 use crate::app::ZColorPickerOptions;
 use crate::common::ColorStringCopy;
 use crate::common::SplineMode;
-use crate::control_point::ControlPoint;
+use crate::datatypes::control_point::ControlPoint;
 use crate::egui::InnerResponse;
 use crate::egui::PointerButton;
 use crate::egui::Ui;

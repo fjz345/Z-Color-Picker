@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     common::SplineMode,
-    control_point::ControlPoint,
+    datatypes::control_point::ControlPoint,
     error::{Result, ZError},
 };
 use serde::{Deserialize, Serialize};
