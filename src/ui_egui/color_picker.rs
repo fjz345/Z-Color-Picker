@@ -646,8 +646,8 @@ pub fn main_color_picker(
         if let Some(t) = delta_t {
             if let Some(_index) = is_modifying_index {
                 for cp in ctx.control_points.iter_mut() {
-                    let val_mut_ref = cp.t_mut();
-                    *val_mut_ref = (*val_mut_ref - t).rem_euclid(1.0);
+                    *cp.t_mut() += t;
+                    *cp.t_mut() = cp.t().clamp(0.0, 1.0);
                 }
             }
         }
@@ -754,44 +754,6 @@ fn handle_hue_slider(
     }
 
     delta_hue
-}
-
-fn handle_t_slider(
-    ui: &mut Ui,
-    t_to_show: &mut f32,
-    slider_size: Vec2,
-    ctx: &mut MainColorPickerCtx,
-    is_modifying_index: &mut Option<usize>,
-) -> Option<f32> {
-    let mut t_hue = None;
-    let mut pick_hue_unused = 0.0;
-    let pick_hue = Some(&mut pick_hue_unused);
-
-    let t_response = color_slider_1d(ui, slider_size, pick_hue, |t| {
-        HsvaGamma {
-            h: 0.0,
-            s: 0.0,
-            v: t,
-            a: 1.0,
-        }
-        .into()
-    })
-    .on_hover_text("T");
-
-    if t_response.clicked_by(PointerButton::Primary)
-        || t_response.dragged_by(PointerButton::Primary)
-    {
-        t_hue = Some(*t_to_show - pick_hue_unused);
-    }
-
-    let (_t_response_cp, t_selected_index) =
-        ui_t_control_points_overlay(ui, &t_response, ctx.control_points, *is_modifying_index);
-
-    if let Some(new_index) = t_selected_index {
-        *is_modifying_index = Some(new_index);
-    }
-
-    t_hue
 }
 
 fn apply_drag_delta(point: &mut [f32; 2], delta: Vec2, rect_size: Vec2) {
@@ -1001,16 +963,80 @@ pub fn ui_hue_control_points_overlay(
     (container_response, selected_key_frame)
 }
 
+fn handle_t_slider(
+    ui: &mut Ui,
+    t_to_show: &mut f32,
+    slider_size: Vec2,
+    ctx: &mut MainColorPickerCtx,
+    is_modifying_index: &mut Option<usize>,
+) -> Option<f32> {
+    let mut pick_t = 0.0;
+    let mut pick_x = 0.0;
+
+    let t_response = color_slider_2d(ui, slider_size, &mut pick_x, &mut pick_t, |x, _t| {
+        HsvaGamma {
+            h: 0.0,
+            s: 0.0,
+            v: x,
+            a: 1.0,
+        }
+        .into()
+    })
+    .on_hover_text("T");
+
+    let (_t_response_cp, t_selected_index) =
+        ui_t_control_points_overlay(ui, &t_response, ctx.control_points);
+
+    if let Some(new_index) = t_selected_index {
+        *is_modifying_index = Some(new_index);
+    }
+
+    draw_t_slider_curve(ui, t_response.rect, ctx.control_points);
+
+    if t_response.clicked_by(PointerButton::Primary)
+        || t_response.dragged_by(PointerButton::Primary)
+    {
+        let t_res = (*t_to_show - pick_t).clamp(0.0, 1.0);
+        return Some(t_res);
+    } else {
+        None
+    }
+}
+
+/// Draw a line representing the t values of control points across the slider
+fn draw_t_slider_curve(
+    ui: &mut egui::Ui,
+    slider_rect: egui::Rect,
+    control_points: &[ControlPoint],
+) {
+    if control_points.is_empty() {
+        return;
+    }
+
+    let mut points = Vec::with_capacity(control_points.len());
+    for (i, cp) in control_points.iter().enumerate() {
+        let x = lerp(
+            slider_rect.left()..=slider_rect.right(),
+            i as f32 / (control_points.len() - 1) as f32,
+        );
+        let y = lerp(slider_rect.bottom()..=slider_rect.top(), *cp.t());
+
+        points.push(pos2(x, y));
+    }
+
+    ui.painter().add(egui::Shape::line(
+        points,
+        egui::Stroke::new(2.0, egui::Color32::WHITE),
+    ));
+}
+
 pub fn ui_t_control_points_overlay(
     ui: &mut Ui,
     parent_response: &Response,
     control_points: &mut [ControlPoint],
-    modifying_control_point_index: Option<usize>,
 ) -> (Response, Option<usize>) {
     let container_response =
         ui.allocate_rect(parent_response.rect, Sense::focusable_noninteractive());
-    const Y_OFFSET: f32 = 5.0;
-    const Y_OFFSET_SELECTED: f32 = -14.0;
     ui.add_space(8.0);
     let visuals = ui.style().interact(&parent_response);
 
@@ -1020,55 +1046,29 @@ pub fn ui_t_control_points_overlay(
     for i in 0..control_points.len() {
         let val = *control_points[i].t();
         let picked_color = control_points[i].val().color();
-        // Show where the slider is at:
-        let x = lerp(
+        // Show where the slider is at
+        let x: f32 = lerp(
             container_response.rect.left()..=container_response.rect.right(),
+            i as f32 / (control_points.len() - 1) as f32,
+        );
+        let y = lerp(
+            container_response.rect.bottom()..=container_response.rect.top(),
             val,
         );
 
-        let y_offset_to_use = if let Some(index) = modifying_control_point_index {
-            if i == index {
-                Y_OFFSET_SELECTED
-            } else {
-                Y_OFFSET
-            }
-        } else {
-            Y_OFFSET
-        };
-
         let gizmo_rect: Vec<Pos2> = if i == 0 {
             // First
-            vec![
-                pos2(
-                    x + r,
-                    y_offset_to_use + container_response.rect.center().y + r,
-                ),
-                pos2(
-                    x - r,
-                    y_offset_to_use + container_response.rect.bottom() - r * 2.0,
-                ),
-                pos2(x - r, y_offset_to_use + container_response.rect.bottom()),
-            ]
+            vec![pos2(x - r, y), pos2(x + r, y + r), pos2(x + r, y - r)]
         } else if i == (control_points.len() - 1) {
             // Last
-            vec![
-                pos2(
-                    x - r,
-                    y_offset_to_use + container_response.rect.center().y + r,
-                ),
-                pos2(
-                    x + r,
-                    y_offset_to_use + container_response.rect.bottom() - r * 2.0,
-                ),
-                pos2(x + r, y_offset_to_use + container_response.rect.bottom()),
-            ]
+            vec![pos2(x + r, y), pos2(x - r, y + r), pos2(x - r, y - r)]
         } else {
             // Other
             vec![
-                pos2(x + r, y_offset_to_use + container_response.rect.center().y),
-                pos2(x + r, y_offset_to_use + container_response.rect.bottom()), // right bottom
-                pos2(x - r, y_offset_to_use + container_response.rect.bottom()), // left bottom
-                pos2(x - r, y_offset_to_use + container_response.rect.center().y),
+                pos2(x + r, y + r),
+                pos2(x + r, y - r),
+                pos2(x - r, y - r),
+                pos2(x - r, y + r),
             ]
         };
 
@@ -1080,7 +1080,9 @@ pub fn ui_t_control_points_overlay(
 
         if response.dragged_by(PointerButton::Primary) {
             selected_key_frame = Some(i);
-            *control_points[i].t_mut() += response.drag_delta().x / container_response.rect.width();
+            *control_points[i].t_mut() -=
+                response.drag_delta().y / container_response.rect.height();
+            *control_points[i].t_mut() = control_points[i].t().clamp(0.0, 1.0);
         }
 
         ui.painter().add(Shape::convex_polygon(
