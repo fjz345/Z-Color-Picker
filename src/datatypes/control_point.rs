@@ -30,17 +30,6 @@ impl ControlPointStorage {
     }
 }
 
-#[allow(unused_macros)]
-macro_rules! offset_of {
-    ($type:ty, $field:tt) => {{
-        let dummy = ::core::mem::MaybeUninit::<$type>::uninit();
-
-        let dummy_ptr = dummy.as_ptr();
-        let member_ptr = ::core::ptr::addr_of!((*dummy_ptr).$field);
-        member_ptr as usize - dummy_ptr as usize
-    }};
-}
-
 #[repr(C)]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum ControlPoint {
