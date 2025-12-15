@@ -9,13 +9,15 @@ use crate::{
     ui_egui::{
         app::ZColorPickerOptions,
         control_points::{ui_ordered_control_points, ControlPointUiResult},
+        ui_common::contrast_color,
     },
 };
 use eframe::{
     egui::{
         self,
         color_picker::{show_color, Alpha},
-        Layout, NumExt, PointerButton, Pos2, Response, Sense, TextStyle, Ui, Widget, WidgetInfo,
+        lerp, pos2, Layout, NumExt, PointerButton, Pos2, Rect, Response, Sense, Shape, Stroke,
+        TextStyle, Ui, Widget, WidgetInfo,
     },
     epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
@@ -25,9 +27,7 @@ use crate::{
     math::hue_lerp,
     preset::{delete_preset_from_disk, load_presets, save_preset_to_disk, Preset, PresetData},
     ui_egui::curves::ui_ordered_spline_gradient,
-    ui_egui::ui_common::{
-        color_slider_1d, color_slider_2d, color_text_ui, ui_hue_control_points_overlay,
-    },
+    ui_egui::ui_common::{color_slider_1d, color_slider_2d, color_text_ui},
 };
 
 pub struct MainColorPickerCtx<'a> {
@@ -628,6 +628,30 @@ pub fn main_color_picker(
             }
         }
 
+        let t_to_show = {
+            if let Some(cp) = is_modifying_index.and_then(|i| ctx.control_points.get(i)) {
+                *cp.t()
+            } else {
+                0.0
+            }
+        };
+        let mut t_to_show = t_to_show;
+        let delta_t = handle_t_slider(
+            ui,
+            &mut t_to_show,
+            slider_2d_rect_size,
+            ctx,
+            &mut is_modifying_index,
+        );
+        if let Some(t) = delta_t {
+            if let Some(_index) = is_modifying_index {
+                for cp in ctx.control_points.iter_mut() {
+                    let val_mut_ref = cp.t_mut();
+                    *val_mut_ref = (*val_mut_ref - t).rem_euclid(1.0);
+                }
+            }
+        }
+
         let slider_2d_response = color_slider_2d(
             ui,
             desired_size_slider_2d,
@@ -692,7 +716,7 @@ fn handle_alpha_slider(
 fn handle_hue_slider(
     ui: &mut Ui,
     color: &mut HsvaGamma,
-    hue_slider_size: Vec2,
+    slider_size: Vec2,
     ctx: &mut MainColorPickerCtx,
     is_modifying_index: &mut Option<usize>,
 ) -> Option<f32> {
@@ -700,7 +724,7 @@ fn handle_hue_slider(
     let mut pick_hue_unused = 0.0;
     let pick_hue = Some(&mut pick_hue_unused);
 
-    let hue_response = color_slider_1d(ui, hue_slider_size, pick_hue, |h| {
+    let hue_response = color_slider_1d(ui, slider_size, pick_hue, |h| {
         HsvaGamma {
             h,
             s: 1.0,
@@ -730,6 +754,44 @@ fn handle_hue_slider(
     }
 
     delta_hue
+}
+
+fn handle_t_slider(
+    ui: &mut Ui,
+    t_to_show: &mut f32,
+    slider_size: Vec2,
+    ctx: &mut MainColorPickerCtx,
+    is_modifying_index: &mut Option<usize>,
+) -> Option<f32> {
+    let mut t_hue = None;
+    let mut pick_hue_unused = 0.0;
+    let pick_hue = Some(&mut pick_hue_unused);
+
+    let t_response = color_slider_1d(ui, slider_size, pick_hue, |t| {
+        HsvaGamma {
+            h: 0.0,
+            s: 0.0,
+            v: t,
+            a: 1.0,
+        }
+        .into()
+    })
+    .on_hover_text("T");
+
+    if t_response.clicked_by(PointerButton::Primary)
+        || t_response.dragged_by(PointerButton::Primary)
+    {
+        t_hue = Some(*t_to_show - pick_hue_unused);
+    }
+
+    let (_t_response_cp, t_selected_index) =
+        ui_t_control_points_overlay(ui, &t_response, ctx.control_points, *is_modifying_index);
+
+    if let Some(new_index) = t_selected_index {
+        *is_modifying_index = Some(new_index);
+    }
+
+    t_hue
 }
 
 fn apply_drag_delta(point: &mut [f32; 2], delta: Vec2, rect_size: Vec2) {
@@ -837,4 +899,196 @@ fn main_color_picker_color_at_function(hue: f32, alpha: f32) -> impl Fn(f32, f32
     };
 
     return move |s, v| HsvaGamma { s, v, ..color }.into();
+}
+
+pub fn ui_hue_control_points_overlay(
+    ui: &mut Ui,
+    parent_response: &Response,
+    control_points: &mut [ControlPoint],
+    modifying_control_point_index: Option<usize>,
+    is_hue_middle_interpolated: bool,
+) -> (Response, Option<usize>) {
+    let container_response =
+        ui.allocate_rect(parent_response.rect, Sense::focusable_noninteractive());
+    const Y_OFFSET: f32 = 5.0;
+    const Y_OFFSET_SELECTED: f32 = -14.0;
+    ui.add_space(8.0);
+    let visuals = ui.style().interact(&parent_response);
+
+    let r = container_response.rect.height() / 4.0;
+
+    let mut selected_key_frame = None;
+    for i in 0..control_points.len() {
+        if is_hue_middle_interpolated {
+            if i != 0 && i != control_points.len() - 1 {
+                continue;
+            }
+        }
+
+        let val = control_points[i].val().h();
+        let picked_color = control_points[i].val().color();
+        // Show where the slider is at:
+        let x = lerp(
+            container_response.rect.left()..=container_response.rect.right(),
+            val,
+        );
+
+        let y_offset_to_use = if let Some(index) = modifying_control_point_index {
+            if i == index {
+                Y_OFFSET_SELECTED
+            } else {
+                Y_OFFSET
+            }
+        } else {
+            Y_OFFSET
+        };
+
+        let gizmo_rect: Vec<Pos2> = if i == 0 {
+            // First
+            vec![
+                pos2(
+                    x + r,
+                    y_offset_to_use + container_response.rect.center().y + r,
+                ),
+                pos2(
+                    x - r,
+                    y_offset_to_use + container_response.rect.bottom() - r * 2.0,
+                ),
+                pos2(x - r, y_offset_to_use + container_response.rect.bottom()),
+            ]
+        } else if i == (control_points.len() - 1) {
+            // Last
+            vec![
+                pos2(
+                    x - r,
+                    y_offset_to_use + container_response.rect.center().y + r,
+                ),
+                pos2(
+                    x + r,
+                    y_offset_to_use + container_response.rect.bottom() - r * 2.0,
+                ),
+                pos2(x + r, y_offset_to_use + container_response.rect.bottom()),
+            ]
+        } else {
+            // Other
+            vec![
+                pos2(x + r, y_offset_to_use + container_response.rect.center().y),
+                pos2(x + r, y_offset_to_use + container_response.rect.bottom()), // right bottom
+                pos2(x - r, y_offset_to_use + container_response.rect.bottom()), // left bottom
+                pos2(x - r, y_offset_to_use + container_response.rect.center().y),
+            ]
+        };
+
+        let response = ui.interact(
+            Rect::from_points(&gizmo_rect),
+            container_response.id.with(i),
+            Sense::click_and_drag(),
+        );
+
+        if response.dragged_by(PointerButton::Primary) {
+            selected_key_frame = Some(i);
+            control_points[i].val_mut()[2] +=
+                response.drag_delta().x / container_response.rect.width();
+        }
+
+        ui.painter().add(Shape::convex_polygon(
+            gizmo_rect,
+            picked_color,
+            Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
+        ));
+    }
+
+    (container_response, selected_key_frame)
+}
+
+pub fn ui_t_control_points_overlay(
+    ui: &mut Ui,
+    parent_response: &Response,
+    control_points: &mut [ControlPoint],
+    modifying_control_point_index: Option<usize>,
+) -> (Response, Option<usize>) {
+    let container_response =
+        ui.allocate_rect(parent_response.rect, Sense::focusable_noninteractive());
+    const Y_OFFSET: f32 = 5.0;
+    const Y_OFFSET_SELECTED: f32 = -14.0;
+    ui.add_space(8.0);
+    let visuals = ui.style().interact(&parent_response);
+
+    let r = container_response.rect.height() / 4.0;
+
+    let mut selected_key_frame = None;
+    for i in 0..control_points.len() {
+        let val = *control_points[i].t();
+        let picked_color = control_points[i].val().color();
+        // Show where the slider is at:
+        let x = lerp(
+            container_response.rect.left()..=container_response.rect.right(),
+            val,
+        );
+
+        let y_offset_to_use = if let Some(index) = modifying_control_point_index {
+            if i == index {
+                Y_OFFSET_SELECTED
+            } else {
+                Y_OFFSET
+            }
+        } else {
+            Y_OFFSET
+        };
+
+        let gizmo_rect: Vec<Pos2> = if i == 0 {
+            // First
+            vec![
+                pos2(
+                    x + r,
+                    y_offset_to_use + container_response.rect.center().y + r,
+                ),
+                pos2(
+                    x - r,
+                    y_offset_to_use + container_response.rect.bottom() - r * 2.0,
+                ),
+                pos2(x - r, y_offset_to_use + container_response.rect.bottom()),
+            ]
+        } else if i == (control_points.len() - 1) {
+            // Last
+            vec![
+                pos2(
+                    x - r,
+                    y_offset_to_use + container_response.rect.center().y + r,
+                ),
+                pos2(
+                    x + r,
+                    y_offset_to_use + container_response.rect.bottom() - r * 2.0,
+                ),
+                pos2(x + r, y_offset_to_use + container_response.rect.bottom()),
+            ]
+        } else {
+            // Other
+            vec![
+                pos2(x + r, y_offset_to_use + container_response.rect.center().y),
+                pos2(x + r, y_offset_to_use + container_response.rect.bottom()), // right bottom
+                pos2(x - r, y_offset_to_use + container_response.rect.bottom()), // left bottom
+                pos2(x - r, y_offset_to_use + container_response.rect.center().y),
+            ]
+        };
+
+        let response = ui.interact(
+            Rect::from_points(&gizmo_rect),
+            container_response.id.with(i),
+            Sense::click_and_drag(),
+        );
+
+        if response.dragged_by(PointerButton::Primary) {
+            selected_key_frame = Some(i);
+            *control_points[i].t_mut() += response.drag_delta().x / container_response.rect.width();
+        }
+
+        ui.painter().add(Shape::convex_polygon(
+            gizmo_rect,
+            picked_color,
+            Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
+        ));
+    }
+
+    (container_response, selected_key_frame)
 }
