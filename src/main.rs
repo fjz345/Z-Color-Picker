@@ -1,6 +1,6 @@
 // #![windows_subsystem = "windows"]
-#![allow(dead_code)]
-#![allow(unreachable_patterns)]
+// #![allow(dead_code)]
+// #![allow(unreachable_patterns)]
 
 use std::env;
 
