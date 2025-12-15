@@ -10,11 +10,15 @@ use splines::Spline;
 use crate::error::Result;
 use crate::{
     common::{ColorStringCopy, SplineMode},
-    datatypes::control_point::{ControlPoint, ControlPointType},
-    datatypes::hsv_key_value::HsvKeyValue,
-    ui_egui::curves::{control_points_to_spline, find_spline_max_t, flatten_control_points},
-    ui_egui::gradient::color_function_gradient,
-    ui_egui::ui_common::color_button,
+    datatypes::{
+        control_point::{ControlPoint, ControlPointType},
+        hsv_key_value::HsvKeyValue,
+    },
+    ui_egui::{
+        control_points::{control_points_to_spline, find_spline_max_t, flatten_control_points},
+        gradient::color_function_gradient,
+        ui_common::color_button,
+    },
 };
 
 fn ui_previewer_colors(

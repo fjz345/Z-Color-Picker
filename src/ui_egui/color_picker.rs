@@ -6,8 +6,10 @@ use crate::{
     },
     error::{Result, ZError},
     preset::get_presets_path,
-    ui_egui::app::ZColorPickerOptions,
-    ui_egui::curves::ControlPointUiResult,
+    ui_egui::{
+        app::ZColorPickerOptions,
+        control_points::{ui_ordered_control_points, ControlPointUiResult},
+    },
 };
 use eframe::{
     egui::{
@@ -22,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     math::hue_lerp,
     preset::{delete_preset_from_disk, load_presets, save_preset_to_disk, Preset, PresetData},
-    ui_egui::curves::{ui_ordered_control_points, ui_ordered_spline_gradient},
+    ui_egui::curves::ui_ordered_spline_gradient,
     ui_egui::ui_common::{
         color_slider_1d, color_slider_2d, color_text_ui, ui_hue_control_points_overlay,
     },
