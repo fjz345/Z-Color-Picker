@@ -6,26 +6,17 @@ use std::env;
 
 use eframe::egui::{self};
 
-use crate::{app::ZApp, logger::LogCollector};
+use crate::{logger::LogCollector, ui_egui::app::ZApp};
 
-mod app;
-mod clipboard;
-mod color_picker;
 mod common;
-mod content_windows;
-mod curves;
 mod datatypes;
-mod debug_windows;
 mod error;
 mod fs;
-mod gradient;
 mod image_processing;
 mod logger;
 mod math;
-mod panes;
 mod preset;
-mod previewer;
-mod ui_common;
+mod ui_egui;
 
 fn main() -> eframe::Result {
     unsafe { env::set_var("RUST_LOG", "debug") }; // or "info" or "debug"

@@ -1,5 +1,5 @@
 use crate::egui::Pos2;
-use crate::ui_common::ContentWindow;
+use crate::ui_egui::ui_common::ContentWindow;
 use crate::{datatypes::control_point::ControlPoint, math::color_lerp_ex};
 use ecolor::HsvaGamma;
 use eframe::egui::color_picker::show_color;

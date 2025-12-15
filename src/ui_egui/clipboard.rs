@@ -5,10 +5,10 @@ use ecolor::Color32;
 use eframe::egui::{self, Pos2, Rect};
 
 use crate::{
-    color_picker::format_color_as,
     common::ColorStringCopy,
     error::Result,
     image_processing::{FramePixelRead, Rgb},
+    ui_egui::color_picker::format_color_as,
 };
 
 pub fn write_string_to_clipboard(text: String) -> Result<()> {

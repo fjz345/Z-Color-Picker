@@ -1,7 +1,7 @@
 use eframe::egui;
 use eframe::egui::TextEdit;
 
-use crate::app::ZColorPickerOptions;
+use crate::ui_egui::app::ZColorPickerOptions;
 use crate::common::ColorStringCopy;
 use crate::common::SplineMode;
 use crate::datatypes::control_point::ControlPoint;
@@ -11,7 +11,7 @@ use crate::egui::Ui;
 use crate::egui::Window;
 use crate::preset::Preset;
 use crate::preset::PresetData;
-use crate::{egui::Pos2, ui_common::ContentWindow};
+use crate::{egui::Pos2, ui_egui::ui_common::ContentWindow};
 
 pub struct WindowZColorPickerOptionsDrawResult {
     pub preset_result: PresetDrawResult,

@@ -15,22 +15,22 @@ use std::{
 use winapi::shared::winerror::ERROR_INCOMPATIBLE_SERVICE_SID_TYPE;
 
 use crate::{
-    clipboard::{
-        write_color_to_clipboard, write_pixels_to_clipboard, ClipboardCopyEvent, ClipboardPopup,
-    },
-    color_picker::ZColorPickerWrapper,
     common::{ColorStringCopy, SplineMode},
-    content_windows::WindowZColorPickerOptions,
-    debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead, Rgb},
     logger::LogCollector,
-    panes::{
+    preset::{delete_all_presets_from_disk, save_all_presets_to_disk, Preset},
+    ui_egui::clipboard::{
+        write_color_to_clipboard, write_pixels_to_clipboard, ClipboardCopyEvent, ClipboardPopup,
+    },
+    ui_egui::color_picker::ZColorPickerWrapper,
+    ui_egui::content_windows::WindowZColorPickerOptions,
+    ui_egui::debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
+    ui_egui::panes::{
         ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
         ZAppPane,
     },
-    preset::{delete_all_presets_from_disk, save_all_presets_to_disk, Preset},
-    previewer::{PreviewerUiResponses, ZPreviewer},
-    ui_common::ContentWindow,
+    ui_egui::previewer::{PreviewerUiResponses, ZPreviewer},
+    ui_egui::ui_common::ContentWindow,
 };
 use eframe::{
     epaint::{Pos2, Vec2},
