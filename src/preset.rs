@@ -105,7 +105,7 @@ pub fn save_preset_to_disk(preset: &Preset) -> Result<()> {
     let file_path = &get_preset_save_path(&preset);
 
     write_string_to_file(&preset_data_string, file_path)?;
-    log::info!("SAVED TO PATH {}", file_path);
+    log::debug!("SAVED TO PATH {}", file_path);
 
     Ok(())
 }
