@@ -7,12 +7,10 @@ use crate::error::Result;
 use crate::ui_egui::control_points::{
     control_points_to_spline, find_spline_max_t, flatten_control_points,
 };
-use ecolor::{Color32, HsvaGamma};
 use eframe::egui::{self, lerp, Sense, Ui};
-use eframe::emath::{self, RectTransform};
-use eframe::epaint::{Pos2, Rect, Shape, Stroke, Vec2};
+use eframe::emath;
+use eframe::epaint::{Pos2, Rect, Stroke, Vec2};
 use egui::epaint::PathShape;
-use splines::{Interpolation, Key, Spline};
 
 use crate::math::{add_array_array, mul_array};
 

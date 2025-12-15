@@ -185,7 +185,6 @@ fn ui_previewer_curve(
     size: Vec2,
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
-    previewer_data: &PreviewerData,
 ) -> Response {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
     ui.allocate_rect(rect, Sense::click_and_drag());
@@ -197,6 +196,7 @@ fn ui_previewer_curve(
     previewer_ui_curve.spacing_mut().item_spacing = Vec2::ZERO;
 
     let flatten_control_points = flatten_control_points(control_points);
+    #[allow(unused_mut)]
     let mut spline = control_points_to_spline(&flatten_control_points[..], spline_mode);
 
     // forgot what this does
@@ -311,7 +311,6 @@ pub fn ui_previewer(
             previewer_rect.size() * Vec2::new(1.0, 0.25),
             control_points,
             spline_mode,
-            previewer_data,
         );
         let response_curve_quantized = ui_previewer_curve_quantized(
             ui,
