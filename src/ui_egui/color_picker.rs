@@ -2,7 +2,7 @@ use crate::{
     common::{ColorStringCopy, SplineMode},
     datatypes::control_point::{
         create_tangent_for_control_point, ControlPoint, ControlPointStorage, ControlPointTangent,
-        ControlPointType,
+        ControlPointValue,
     },
     error::{Result, ZError},
     preset::get_presets_path,
@@ -122,7 +122,7 @@ const LAZY_TANGENT_DELTA: f32 = 0.01;
 impl ZColorPickerWrapper {
     const DEFAULT_STARTUP_CONTROL_POINTS: [ControlPoint; 4] = [
         ControlPoint::ControlPointSimple(ControlPointStorage {
-            val: ControlPointType {
+            val: ControlPointValue {
                 val: [0.25, 0.33, 0.0],
             },
             t: 0.0,
@@ -136,7 +136,7 @@ impl ZColorPickerWrapper {
             ],
         }),
         ControlPoint::ControlPointSimple(ControlPointStorage {
-            val: ControlPointType {
+            val: ControlPointValue {
                 val: [0.44, 0.38, 0.1],
             },
             t: 1.0,
@@ -150,7 +150,7 @@ impl ZColorPickerWrapper {
             ],
         }),
         ControlPoint::ControlPointSimple(ControlPointStorage {
-            val: ControlPointType {
+            val: ControlPointValue {
                 val: [0.8, 0.6, 0.1],
             },
             t: 2.0,
@@ -164,7 +164,7 @@ impl ZColorPickerWrapper {
             ],
         }),
         ControlPoint::ControlPointSimple(ControlPointStorage {
-            val: ControlPointType {
+            val: ControlPointValue {
                 val: [0.9, 0.8, 0.2],
             },
             t: 3.0,

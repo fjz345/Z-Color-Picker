@@ -8,7 +8,7 @@ use splines::{Interpolation, Key, Spline};
 
 use crate::{
     common::SplineMode,
-    datatypes::control_point::{ControlPoint, ControlPointType},
+    datatypes::control_point::{ControlPoint, ControlPointValue},
     ui_egui::tangents::ui_control_point_tangents,
 };
 
@@ -220,7 +220,7 @@ pub fn flatten_control_points(control_points: &[ControlPoint]) -> Vec<ControlPoi
     flattened
 }
 
-pub fn find_spline_max_t(spline: &Spline<f32, ControlPointType>) -> f32 {
+pub fn find_spline_max_t(spline: &Spline<f32, ControlPointValue>) -> f32 {
     let vec_of_t_values: Vec<f32> = spline.into_iter().map(|k| k.t).collect();
     let max_t = vec_of_t_values
         .into_iter()
@@ -232,7 +232,7 @@ pub fn find_spline_max_t(spline: &Spline<f32, ControlPointType>) -> f32 {
 pub fn control_points_to_spline(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
-) -> Spline<f32, ControlPointType> {
+) -> Spline<f32, ControlPointValue> {
     match spline_mode {
         SplineMode::Linear => Spline::from_vec(
             control_points

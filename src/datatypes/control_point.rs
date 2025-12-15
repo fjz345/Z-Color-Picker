@@ -3,19 +3,19 @@ use serde::{Deserialize, Serialize};
 use super::hsv_key_value::HsvKeyValue;
 
 pub fn create_tangent_for_control_point() -> ControlPointTangent {
-    let hsv = ControlPointType::new(0.0, 0.0, 0.0);
+    let hsv = ControlPointValue::new(0.0, 0.0, 0.0);
     ControlPointTangent { val: hsv.val }
 }
 
-pub type ControlPointType = HsvKeyValue;
-pub type ControlPointTangent = ControlPointType;
+pub type ControlPointValue = HsvKeyValue;
+pub type ControlPointTangent = ControlPointValue;
 pub type ControlPointTangents = [Option<ControlPointTangent>; 2];
 pub type ControlPointT = f32;
 
 #[repr(C)]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ControlPointStorage {
-    pub val: ControlPointType,
+    pub val: ControlPointValue,
     pub t: ControlPointT,
     pub tangents: ControlPointTangents,
 }
@@ -23,7 +23,7 @@ pub struct ControlPointStorage {
 impl ControlPointStorage {
     pub fn default() -> Self {
         Self {
-            val: ControlPointType::default(),
+            val: ControlPointValue::default(),
             t: 0.0,
             tangents: [None; 2],
         }
@@ -53,14 +53,14 @@ impl ControlPoint {
         Self::ControlPointSimple(ControlPointStorage::default())
     }
 
-    pub fn new_simple(val: ControlPointType, t: ControlPointT) -> Self {
+    pub fn new_simple(val: ControlPointValue, t: ControlPointT) -> Self {
         let mut default = ControlPointStorage::default();
         default.val = val;
         default.t = t;
         Self::ControlPointSimple(default)
     }
 
-    pub fn new(val: ControlPointType, t: ControlPointT, tangents: ControlPointTangents) -> Self {
+    pub fn new(val: ControlPointValue, t: ControlPointT, tangents: ControlPointTangents) -> Self {
         let mut default = ControlPointStorage::default();
         default.val = val;
         default.t = t;
@@ -83,10 +83,10 @@ impl ControlPoint {
         }
     }
 
-    pub fn val(&self) -> &ControlPointType {
+    pub fn val(&self) -> &ControlPointValue {
         &self.storage().val
     }
-    pub fn val_mut(&mut self) -> &mut ControlPointType {
+    pub fn val_mut(&mut self) -> &mut ControlPointValue {
         &mut self.storage_mut().val
     }
 

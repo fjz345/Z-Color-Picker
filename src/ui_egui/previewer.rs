@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::{
     common::{ColorStringCopy, SplineMode},
     datatypes::{
-        control_point::{ControlPoint, ControlPointType},
+        control_point::{ControlPoint, ControlPointValue},
         hsv_key_value::HsvKeyValue,
     },
     ui_egui::{
@@ -24,7 +24,7 @@ use crate::{
 fn ui_previewer_colors(
     ui: &mut Ui,
     size: Vec2,
-    control_points: &[ControlPointType],
+    control_points: &[ControlPointValue],
     _color_copy_format: ColorStringCopy,
 ) -> Response {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
@@ -151,10 +151,10 @@ fn ui_previewer_control_points_with_drag(
 }
 
 fn modify_spline_t_to_preview_sizes(
-    spline: Spline<f32, ControlPointType>,
+    spline: Spline<f32, ControlPointValue>,
     spline_mode: SplineMode,
     previewer_data: &PreviewerData,
-) -> Spline<f32, ControlPointType> {
+) -> Spline<f32, ControlPointValue> {
     let preview_sizes = &previewer_data.points_preview_sizes;
 
     let _hermite_index_offset = match spline_mode {

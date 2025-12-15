@@ -1,7 +1,7 @@
 //https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
 
 use crate::common::SplineMode;
-use crate::datatypes::control_point::{ControlPoint, ControlPointType};
+use crate::datatypes::control_point::{ControlPoint, ControlPointValue};
 #[allow(unused_imports)]
 use crate::error::Result;
 use crate::ui_egui::control_points::{
@@ -18,7 +18,7 @@ pub fn generate_spline_points_with_distance(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
     t_distance: f32,
-) -> Vec<ControlPointType> {
+) -> Vec<ControlPointValue> {
     let mut spline_samples = Vec::new();
 
     if control_points.len() <= 1 {
@@ -68,7 +68,7 @@ pub fn sub_divide_control_points(
             distance_to_end -= distance_per_point;
 
             let mut new_cp = ControlPoint::default();
-            *new_cp.val_mut() = ControlPointType::new(new.x, new.y, hue_to_use);
+            *new_cp.val_mut() = ControlPointValue::new(new.x, new.y, hue_to_use);
             *new_cp.t_mut() = lerp(*control_points[i - 1].t()..=*control_points[i].t(), 0.5);
 
             sub_divided.push(new_cp);
@@ -77,7 +77,7 @@ pub fn sub_divide_control_points(
         let last_new = sub_div_start + distance_to_end.max(0.0) * dir;
 
         let mut new_cp = ControlPoint::default();
-        *new_cp.val_mut() = ControlPointType::new(last_new.x, last_new.y, hue_to_use);
+        *new_cp.val_mut() = ControlPointValue::new(last_new.x, last_new.y, hue_to_use);
         *new_cp.t_mut() = *control_points[i].t();
 
         let last_cp = new_cp;
