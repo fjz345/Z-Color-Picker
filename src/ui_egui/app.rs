@@ -105,8 +105,10 @@ pub struct ZColorPickerAppContext {
 
 impl ZColorPickerAppContext {
     pub fn default() -> Self {
+        let mut z_color_picker_wrapper = ZColorPickerWrapper::default();
+        z_color_picker_wrapper.load_presets();
         Self {
-            z_color_picker: Rc::new(RefCell::new(ZColorPickerWrapper::default())),
+            z_color_picker: Rc::new(RefCell::new(z_color_picker_wrapper)),
             previewer: ZPreviewer::default(),
             color_copy_format: ColorStringCopy::default(),
             debug_window_control_points: DebugWindowControlPoints::new(Pos2 { x: 200.0, y: 200.0 }),

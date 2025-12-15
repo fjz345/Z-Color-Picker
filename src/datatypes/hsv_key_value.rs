@@ -88,16 +88,6 @@ impl std::ops::IndexMut<usize> for HsvKeyValue {
     }
 }
 
-// impl std::ops::IndexMut<&'_ usize> for HsvKeyValue {
-//     fn index_mut(&mut self, s: &str) -> &mut i32 {
-//         match s {
-//             "x" => &mut self.x,
-//             "y" => &mut self.y,
-//             _ => panic!("unknown field: {}", s),
-//         }
-//     }
-// }
-
 impl std::ops::Add<f32> for HsvKeyValue {
     type Output = Self;
 

@@ -70,9 +70,9 @@ impl ControlPoint {
 
     pub fn storage(&self) -> &ControlPointStorage {
         match self {
-            ControlPoint::ControlPointSimple(c)
-            | ControlPoint::ControlPointLeftRightTangent(c)
-            | ControlPoint::ControlPointSimple(c) => &c,
+            ControlPoint::ControlPointSimple(c) | ControlPoint::ControlPointLeftRightTangent(c) => {
+                &c
+            }
         }
     }
     pub fn storage_mut(&mut self) -> &mut ControlPointStorage {

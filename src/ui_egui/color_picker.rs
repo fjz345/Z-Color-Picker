@@ -115,7 +115,15 @@ pub struct ZColorPickerWrapper {
 
 impl Default for ZColorPickerWrapper {
     fn default() -> Self {
-        Self::default()
+        let new_color_picker = Self {
+            control_points: Self::DEFAULT_STARTUP_CONTROL_POINTS.to_vec(),
+            last_modifying_point_index: None,
+            dragging_index: None,
+            control_point_right_clicked: None,
+            options: ZColorPickerOptions::default(),
+        };
+
+        new_color_picker
     }
 }
 const LAZY_TANGENT_DELTA: f32 = 0.01;
@@ -179,23 +187,6 @@ impl ZColorPickerWrapper {
         }),
     ];
 
-    pub fn default() -> Self {
-        let mut new_color_picker = Self {
-            control_points: Vec::with_capacity(4),
-            last_modifying_point_index: None,
-            dragging_index: None,
-            control_point_right_clicked: None,
-            options: ZColorPickerOptions::default(),
-        };
-
-        new_color_picker.load_presets();
-
-        // new_color_picker.main_color_picker_window.open();
-        // new_color_picker.options_window.open();
-
-        new_color_picker
-    }
-
     pub fn load_presets(&mut self) {
         let path_buf = get_presets_path();
         let presets_path = path_buf.as_path();
@@ -211,10 +202,6 @@ impl ZColorPickerWrapper {
             match self.apply_selected_preset() {
                 Ok(_) => log::info!("Preset Applied!"),
                 Err(e) => log::info!("{e}"),
-            }
-        } else {
-            for control_point in &Self::DEFAULT_STARTUP_CONTROL_POINTS {
-                self.control_points.push(control_point.clone());
             }
         }
     }
@@ -308,8 +295,7 @@ impl ZColorPickerWrapper {
         if self.options.spline_mode == SplineMode::Bezier {
             // Force init tangents
             for control_point in &mut self.control_points {
-                let _clone = control_point.clone();
-                for tang in &mut control_point.tangents_mut().iter_mut() {
+                for tang in control_point.tangents_mut().iter_mut() {
                     if tang.is_none() {
                         *tang = Some(create_tangent_for_control_point());
                     }
@@ -370,28 +356,22 @@ impl ZColorPickerWrapper {
     }
 
     pub fn spawn_control_point(&mut self, cp: ControlPoint) {
-        let control_point_pivot = self.last_modifying_point_index;
-
-        let new_index = match control_point_pivot {
-            Some(index) => {
+        let new_index = self.last_modifying_point_index.map_or_else(
+            || {
                 if self.options.is_insert_right {
-                    index + 1
+                    self.control_points.len()
                 } else {
-                    index
-                }
-            }
-            None => {
-                if self.control_points.len() <= 0 {
                     0
-                } else {
-                    if self.options.is_insert_right {
-                        self.control_points.len()
-                    } else {
-                        0
-                    }
                 }
-            }
-        };
+            },
+            |idx| {
+                if self.options.is_insert_right {
+                    idx + 1
+                } else {
+                    idx
+                }
+            },
+        );
 
         self.dragging_index = None;
 
@@ -435,42 +415,47 @@ impl ZColorPickerWrapper {
         match closest_dist {
             Some(closest_dist_2d) => {
                 let dist = closest_dist_2d;
-                log::info!("Closest Dist: {}", dist);
+                log::debug!("Closest Dist: {}", dist);
                 Some((closest_cp.unwrap(), dist))
             }
             None => {
-                log::info!("Did not find closest dist");
+                log::debug!("Did not find closest dist");
                 None
             }
         }
     }
 
-    pub fn apply_control_point_constraints(&mut self) {
-        if self.options.is_hue_middle_interpolated {
-            let num_points = self.control_points.len();
-            if num_points >= 2 {
-                let points = &mut self.control_points[..];
+    fn interpolate_hue_middle(&mut self) {
+        let num_points = self.control_points.len();
+        if num_points >= 2 {
+            let points = &mut self.control_points[..];
 
-                let first_index = 0;
-                let last_index = points.len() - 1;
-                let first_hue = points[first_index].val()[2];
-                let last_hue: f32 = points[last_index].val()[2];
+            let first_index = 0;
+            let last_index = points.len() - 1;
+            let first_hue = points[first_index].val()[2];
+            let last_hue: f32 = points[last_index].val()[2];
 
-                for i in 1..last_index {
-                    let t = (i as f32) / (points.len() - 1) as f32;
-                    let hue = hue_lerp(first_hue, last_hue, t);
-                    points[i].val_mut()[2] = hue;
-                }
+            for i in 1..last_index {
+                let t = (i as f32) / (points.len() - 1) as f32;
+                let hue = hue_lerp(first_hue, last_hue, t);
+                points[i].val_mut()[2] = hue;
             }
         }
+    }
+    fn clamp_control_points(&mut self) {
+        for cp in self.control_points.iter_mut() {
+            cp.val_mut()[0] = cp.val()[0].clamp(0.0, 1.0);
+            cp.val_mut()[1] = cp.val()[1].clamp(0.0, 1.0);
+            cp.val_mut()[2] = cp.val()[2].clamp(0.0, 1.0);
+        }
+    }
 
+    pub fn apply_control_point_constraints(&mut self) {
+        if self.options.is_hue_middle_interpolated {
+            self.interpolate_hue_middle();
+        }
         if self.options.is_window_lock {
-            for i in 0..self.control_points.len() {
-                let cp = &mut self.control_points[i];
-                cp.val_mut()[0] = cp.val()[0].clamp(0.0, 1.0);
-                cp.val_mut()[1] = cp.val()[1].clamp(0.0, 1.0);
-                cp.val_mut()[2] = cp.val()[2].clamp(0.0, 1.0);
-            }
+            self.clamp_control_points();
         }
     }
 
@@ -526,6 +511,8 @@ impl ZColorPickerWrapper {
                 }
                 _ => {}
             }
+
+            return true;
         }
 
         false
@@ -710,29 +697,6 @@ pub fn main_color_picker(
                     let clamped_new_h = (val_mut_ref.h() - h).rem_euclid(1.0);
                     val_mut_ref.val[2] = clamped_new_h;
                 }
-                // if ctx.is_curve_locked {
-                //     // Move all points
-                //     for i in 0..num_control_points {
-                //         let val_mut_ref = ctx.control_points[i].val_mut();
-                //         let clamped_new_h = (val_mut_ref.h() - h).rem_euclid(1.0);
-                //         val_mut_ref.val[2] = clamped_new_h;
-                //     }
-                // } else {
-                //     const MOVE_EVEN_IF_NOT_DRAG: bool = false;
-                //     if MOVE_EVEN_IF_NOT_DRAG {
-                //         let val_mut_ref = ctx.control_points[index].val_mut();
-                //         // Prevent wrapping from 1.0 -> 0.0, then wrap around [0,1.0]
-                //         let clamped_new_h = (val_mut_ref.h() - h).clamp(0.0, 0.999).rem_euclid(1.0);
-                //         val_mut_ref.val[2] = clamped_new_h;
-                //     }
-                // }
-                // if ctx.is_curve_locked {
-                //     // Move all points
-                //     for i in 0..num_control_points {
-                //         let val_mut_ref = ctx.control_points[i].val_mut();
-                //         let clamped_new_h = (val_mut_ref.h() - h).rem_euclid(1.0);
-                //         val_mut_ref.val[2] = clamped_new_h;
-                //     }
             }
         }
 

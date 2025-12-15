@@ -90,6 +90,18 @@ pub fn hue_lerp(hue0: f32, hue1: f32, t: f32) -> f32 {
     hue.rem_euclid(1.0)
 }
 
+pub fn unwrap_hue(a: f32, b: f32) -> (f32, f32) {
+    let mut b = b;
+    if hue_abs_distance(a, b) > 0.5 {
+        if b > a {
+            b -= 1.0;
+        } else {
+            b += 1.0;
+        }
+    }
+    (a, b)
+}
+
 pub fn color_lerp(color_src: Color32, color_trg: Color32, t: f32) -> Color32 {
     const C: f32 = 0.7;
     const ALPHA: f32 = 0.1;
