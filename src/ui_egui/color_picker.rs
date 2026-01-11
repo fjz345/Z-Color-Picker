@@ -117,7 +117,7 @@ pub struct ZColorPickerWrapper {
     pub control_points: Vec<ControlPoint>,
     pub last_modifying_point_index: Option<usize>,
     pub dragging_index: Option<usize>,
-    pub control_point_right_clicked: Option<usize>,
+    pub right_clicked_on_index: Option<usize>,
     pub options: ZColorPickerOptions,
 }
 
@@ -127,7 +127,7 @@ impl Default for ZColorPickerWrapper {
             control_points: Self::DEFAULT_STARTUP_CONTROL_POINTS.to_vec(),
             last_modifying_point_index: None,
             dragging_index: None,
-            control_point_right_clicked: None,
+            right_clicked_on_index: None,
             options: ZColorPickerOptions::default(),
         };
 
@@ -322,7 +322,7 @@ impl ZColorPickerWrapper {
                 color_copy_format: *color_copy_format,
                 last_modifying_point_index: &mut self.last_modifying_point_index,
                 dragging_index: &mut self.dragging_index,
-                control_point_right_clicked: &mut self.control_point_right_clicked,
+                control_point_right_clicked: &mut self.right_clicked_on_index,
                 is_hue_middle_interpolated: self.options.is_hue_middle_interpolated,
                 is_curve_locked: self.options.is_curve_locked,
             };
@@ -469,7 +469,7 @@ impl ZColorPickerWrapper {
     fn post_draw(&mut self, z_color_picker_response: &Response) {
         self.apply_control_point_constraints();
 
-        match self.control_point_right_clicked {
+        match self.right_clicked_on_index {
             Some(index) => {
                 self.remove_control_point(index);
             }
