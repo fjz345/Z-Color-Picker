@@ -16,21 +16,26 @@ use winapi::shared::winerror::ERROR_INCOMPATIBLE_SERVICE_SID_TYPE;
 
 use crate::{
     common::{ColorStringCopy, SplineMode},
+    datatypes::control_point::{
+        ControlPoint, ControlPointStorage, ControlPointTangent, ControlPointValue,
+    },
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead, Rgb},
     logger::LogCollector,
-    preset::{delete_all_presets_from_disk, save_all_presets_to_disk, Preset},
-    ui_egui::clipboard::{
-        write_color_to_clipboard, write_pixels_to_clipboard, ClipboardCopyEvent, ClipboardPopup,
+    preset::{delete_all_presets_from_disk, save_all_presets_to_disk, PresetEntity},
+    ui_egui::{
+        clipboard::{
+            write_color_to_clipboard, write_pixels_to_clipboard, ClipboardCopyEvent, ClipboardPopup,
+        },
+        color_picker::ZColorPickerWrapper,
+        content_windows::WindowZColorPickerOptions,
+        debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
+        panes::{
+            ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
+            ZAppPane,
+        },
+        previewer::{PreviewerUiResponses, ZPreviewer},
+        ui_common::ContentWindow,
     },
-    ui_egui::color_picker::ZColorPickerWrapper,
-    ui_egui::content_windows::WindowZColorPickerOptions,
-    ui_egui::debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
-    ui_egui::panes::{
-        ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
-        ZAppPane,
-    },
-    ui_egui::previewer::{PreviewerUiResponses, ZPreviewer},
-    ui_egui::ui_common::ContentWindow,
 };
 use eframe::{
     epaint::{Pos2, Vec2},
@@ -57,10 +62,6 @@ pub struct ZColorPickerOptions {
     pub is_hue_middle_interpolated: bool,
     pub is_insert_right: bool,
     pub is_window_lock: bool,
-    pub spline_mode: SplineMode,
-    pub presets: Vec<Preset>,
-    pub preset_selected_index: Option<usize>,
-    pub auto_save_presets: bool,
 }
 
 impl Default for ZColorPickerOptions {
@@ -70,16 +71,15 @@ impl Default for ZColorPickerOptions {
             is_hue_middle_interpolated: true,
             is_insert_right: true,
             is_window_lock: true,
-            spline_mode: SplineMode::HermiteBezier,
-            presets: Vec::new(),
-            preset_selected_index: None,
-            auto_save_presets: false,
         }
     }
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ZColorPickerAppContext {
+    pub control_points: Vec<ControlPoint>,
+    pub spline_mode: SplineMode,
+
     pub z_color_picker: Rc<RefCell<ZColorPickerWrapper>>,
     pub previewer: ZPreviewer,
     pub color_copy_format: ColorStringCopy,
@@ -103,11 +103,74 @@ pub struct ZColorPickerAppContext {
     pub options_window: WindowZColorPickerOptions,
 }
 
+const LAZY_TANGENT_DELTA: f32 = 0.01;
 impl ZColorPickerAppContext {
+    const DEFAULT_STARTUP_CONTROL_POINTS: [ControlPoint; 4] = [
+        ControlPoint::ControlPointSimple(ControlPointStorage {
+            val: ControlPointValue {
+                val: [0.25, 0.33, 0.0],
+            },
+            t: 0.0,
+            tangents: [
+                Some(ControlPointTangent {
+                    val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+                Some(ControlPointTangent {
+                    val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+            ],
+        }),
+        ControlPoint::ControlPointSimple(ControlPointStorage {
+            val: ControlPointValue {
+                val: [0.44, 0.38, 0.1],
+            },
+            t: 1.0,
+            tangents: [
+                Some(ControlPointTangent {
+                    val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+                Some(ControlPointTangent {
+                    val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+            ],
+        }),
+        ControlPoint::ControlPointSimple(ControlPointStorage {
+            val: ControlPointValue {
+                val: [0.8, 0.6, 0.1],
+            },
+            t: 2.0,
+            tangents: [
+                Some(ControlPointTangent {
+                    val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+                Some(ControlPointTangent {
+                    val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+            ],
+        }),
+        ControlPoint::ControlPointSimple(ControlPointStorage {
+            val: ControlPointValue {
+                val: [0.9, 0.8, 0.2],
+            },
+            t: 3.0,
+            tangents: [
+                Some(ControlPointTangent {
+                    val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+                Some(ControlPointTangent {
+                    val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
+                }),
+            ],
+        }),
+    ];
+
     pub fn default() -> Self {
         let mut z_color_picker_wrapper = ZColorPickerWrapper::default();
         z_color_picker_wrapper.load_presets();
         Self {
+            control_points: Self::DEFAULT_STARTUP_CONTROL_POINTS.to_vec(),
+            spline_mode: SplineMode::HermiteBezier,
+
             z_color_picker: Rc::new(RefCell::new(z_color_picker_wrapper)),
             previewer: ZPreviewer::default(),
             color_copy_format: ColorStringCopy::default(),

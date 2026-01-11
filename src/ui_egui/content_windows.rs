@@ -9,7 +9,7 @@ use crate::egui::InnerResponse;
 use crate::egui::PointerButton;
 use crate::egui::Ui;
 use crate::egui::Window;
-use crate::preset::Preset;
+use crate::preset::PresetEntity;
 use crate::preset::PresetData;
 use crate::{egui::Pos2, ui_egui::ui_common::ContentWindow};
 
@@ -44,7 +44,7 @@ impl ContentWindow for WindowZColorPickerOptions {
 }
 
 pub struct PresetDrawResult {
-    pub should_apply: Option<Preset>,
+    pub should_apply: Option<PresetEntity>,
 }
 
 impl Default for PresetDrawResult {
@@ -276,7 +276,7 @@ impl WindowZColorPickerOptions {
                         self.new_preset_is_open = false;
                         create_preset_create_clicked = true;
 
-                        let new_preset: Preset = Preset {
+                        let new_preset: PresetEntity = PresetEntity {
                             name: self.new_preset_window_text.clone(),
                             data: PresetData {
                                 spline_mode: options.spline_mode,

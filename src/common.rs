@@ -16,10 +16,11 @@ pub enum ColorStringCopy {
     SRGBA,
 }
 
-#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize, Default)]
 pub enum SplineMode {
     Linear,
     Bezier,
+    #[default]
     HermiteBezier,
     Polynomial,
 }

@@ -25,7 +25,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     math::hue_lerp,
-    preset::{delete_preset_from_disk, load_presets, save_preset_to_disk, Preset, PresetData},
+    preset::{
+        delete_preset_from_disk, load_presets, save_preset_to_disk, PresetData, PresetEntity,
+    },
     ui_egui::curves::ui_ordered_spline_gradient,
     ui_egui::ui_common::{color_slider_1d, color_slider_2d, color_text_ui},
 };
@@ -114,7 +116,6 @@ impl<'a> ZColorPicker<'a> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZColorPickerWrapper {
-    pub control_points: Vec<ControlPoint>,
     pub last_modifying_point_index: Option<usize>,
     pub dragging_index: Option<usize>,
     pub right_clicked_on_index: Option<usize>,
@@ -124,7 +125,6 @@ pub struct ZColorPickerWrapper {
 impl Default for ZColorPickerWrapper {
     fn default() -> Self {
         let new_color_picker = Self {
-            control_points: Self::DEFAULT_STARTUP_CONTROL_POINTS.to_vec(),
             last_modifying_point_index: None,
             dragging_index: None,
             right_clicked_on_index: None,
@@ -134,171 +134,8 @@ impl Default for ZColorPickerWrapper {
         new_color_picker
     }
 }
-const LAZY_TANGENT_DELTA: f32 = 0.01;
+
 impl ZColorPickerWrapper {
-    const DEFAULT_STARTUP_CONTROL_POINTS: [ControlPoint; 4] = [
-        ControlPoint::ControlPointSimple(ControlPointStorage {
-            val: ControlPointValue {
-                val: [0.25, 0.33, 0.0],
-            },
-            t: 0.0,
-            tangents: [
-                Some(ControlPointTangent {
-                    val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
-                }),
-                Some(ControlPointTangent {
-                    val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
-                }),
-            ],
-        }),
-        ControlPoint::ControlPointSimple(ControlPointStorage {
-            val: ControlPointValue {
-                val: [0.44, 0.38, 0.1],
-            },
-            t: 1.0,
-            tangents: [
-                Some(ControlPointTangent {
-                    val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
-                }),
-                Some(ControlPointTangent {
-                    val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
-                }),
-            ],
-        }),
-        ControlPoint::ControlPointSimple(ControlPointStorage {
-            val: ControlPointValue {
-                val: [0.8, 0.6, 0.1],
-            },
-            t: 2.0,
-            tangents: [
-                Some(ControlPointTangent {
-                    val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
-                }),
-                Some(ControlPointTangent {
-                    val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
-                }),
-            ],
-        }),
-        ControlPoint::ControlPointSimple(ControlPointStorage {
-            val: ControlPointValue {
-                val: [0.9, 0.8, 0.2],
-            },
-            t: 3.0,
-            tangents: [
-                Some(ControlPointTangent {
-                    val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
-                }),
-                Some(ControlPointTangent {
-                    val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
-                }),
-            ],
-        }),
-    ];
-
-    pub fn load_presets(&mut self) {
-        let path_buf = get_presets_path();
-        let presets_path = path_buf.as_path();
-        log::info!("Loading presets from: {}", presets_path.to_str().unwrap());
-        let r = load_presets(&presets_path, &mut self.options.presets);
-        if let Err(e) = r {
-            dbg!(e);
-        }
-
-        // Use first as default if exists
-        if self.options.presets.len() >= 1 {
-            self.options.preset_selected_index = Some(0);
-            match self.apply_selected_preset() {
-                Ok(_) => log::info!("Preset Applied!"),
-                Err(e) => log::info!("{e}"),
-            }
-        }
-    }
-
-    pub fn apply_preset(&mut self, preset: &Preset) -> Result<()> {
-        self.control_points.clear();
-        for preset_control_point in &preset.data.control_points {
-            self.control_points.push(preset_control_point.clone());
-        }
-        self.options.spline_mode = preset.data.spline_mode;
-        Ok(())
-    }
-
-    pub fn apply_selected_preset(&mut self) -> Result<Preset> {
-        if let Some(s) = self.options.preset_selected_index {
-            if s < self.options.presets.len() {
-                let preset_to_apply = self.options.presets[s].clone();
-                match self.apply_preset(&preset_to_apply) {
-                    Ok(_) => return Ok(preset_to_apply),
-                    Err(_) => {
-                        return Err(ZError::Message(
-                            "Apply preset failed. Could not apply preset".to_string(),
-                        ))
-                    }
-                }
-            }
-        }
-        Err(ZError::Message(
-            "Apply preset failed. Could not find preset".to_string(),
-        ))
-    }
-
-    pub fn save_selected_preset(&mut self) -> Result<()> {
-        if let Some(s) = self.options.preset_selected_index {
-            let preset = &mut self.options.presets[s];
-            preset.data = PresetData {
-                spline_mode: self.options.spline_mode,
-                control_points: self.control_points.clone(),
-            };
-            save_preset_to_disk(&preset.clone())?;
-
-            return Ok(());
-        }
-
-        Err(ZError::Message(
-            "Preset Save failed, No preset selected".to_string(),
-        ))
-    }
-
-    pub fn preset_data_from_current_state(&self) -> PresetData {
-        PresetData {
-            spline_mode: self.options.spline_mode,
-            control_points: self.control_points.clone(),
-        }
-    }
-
-    pub fn create_preset(&mut self, name: &String) -> Result<()> {
-        for i in self.options.presets.iter() {
-            if &i.name == name {
-                return Err(ZError::Message(
-                    "Preset already exists with that name".to_string(),
-                ));
-            }
-        }
-
-        let preset = Preset::new(name, self.preset_data_from_current_state());
-        let index = self.options.presets.len();
-        self.options.presets.push(preset);
-
-        self.options.preset_selected_index = Some(index);
-        self.save_selected_preset()?;
-
-        Ok(())
-    }
-
-    pub fn delete_selected_preset(&mut self) -> Result<()> {
-        if let Some(s) = self.options.preset_selected_index {
-            let preset_to_remove = self.options.presets.remove(s);
-            delete_preset_from_disk(&preset_to_remove)?;
-            self.options.preset_selected_index = None;
-
-            return Ok(());
-        }
-
-        Err(ZError::Message(
-            "Selected Preset Delete failed, No preset selected".to_string(),
-        ))
-    }
-
     pub fn pre_draw_update(&mut self) {
         if self.options.spline_mode == SplineMode::Bezier {
             // Force init tangents
