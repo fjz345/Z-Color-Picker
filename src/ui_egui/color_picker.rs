@@ -1,11 +1,6 @@
 use crate::{
     common::{ColorStringCopy, SplineMode},
-    datatypes::control_point::{
-        create_tangent_for_control_point, ControlPoint, ControlPointStorage, ControlPointTangent,
-        ControlPointValue,
-    },
-    error::{Result, ZError},
-    preset::get_presets_path,
+    datatypes::control_point::{create_tangent_for_control_point, ControlPoint},
     ui_egui::{
         app::ZColorPickerOptions,
         control_points::{ui_ordered_control_points, ControlPointUiResult},
@@ -25,9 +20,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     math::hue_lerp,
-    preset::{
-        delete_preset_from_disk, load_presets, save_preset_to_disk, PresetData, PresetEntity,
-    },
     ui_egui::curves::ui_ordered_spline_gradient,
     ui_egui::ui_common::{color_slider_1d, color_slider_2d, color_text_ui},
 };

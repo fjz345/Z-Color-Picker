@@ -7,11 +7,7 @@ use std::{
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    common::ColorStringCopy,
-    logger::ui_log_window,
-    ui_egui::{app::ZColorPickerAppContext, control_points},
-};
+use crate::{common::ColorStringCopy, logger::ui_log_window, ui_egui::app::ZColorPickerAppContext};
 pub struct TreeBehavior {}
 
 impl egui_tiles::Behavior<Pane> for TreeBehavior {

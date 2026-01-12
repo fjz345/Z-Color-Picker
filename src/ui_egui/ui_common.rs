@@ -1,9 +1,6 @@
 use crate::common::ColorStringCopy;
-use crate::datatypes::control_point::ControlPoint;
-use crate::egui::PointerButton;
 use crate::egui::TextStyle;
 use eframe::egui::InnerResponse;
-use eframe::egui::Pos2;
 use eframe::egui::Window;
 use eframe::{
     egui::{color_picker::Alpha, Painter, Response, Sense, Ui, WidgetInfo, WidgetType},

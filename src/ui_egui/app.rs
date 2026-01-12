@@ -57,6 +57,12 @@ struct MouseClickEvent {
     mouse_pos: Pos2,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppDataCtx {
+    pub spline_mode: SplineMode,
+    pub control_points: Vec<ControlPoint>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZColorPickerOptions {
     pub is_curve_locked: bool,

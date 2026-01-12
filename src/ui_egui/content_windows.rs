@@ -8,9 +8,9 @@ use crate::egui::InnerResponse;
 use crate::egui::PointerButton;
 use crate::egui::Ui;
 use crate::egui::Window;
-use crate::preset::PresetData;
 use crate::preset::PresetEntity;
 use crate::preset::PresetHandler;
+use crate::ui_egui::app::AppDataCtx;
 use crate::ui_egui::app::ZColorPickerOptions;
 use crate::{egui::Pos2, ui_egui::ui_common::ContentWindow};
 
@@ -378,7 +378,7 @@ impl WindowPreset {
 
                         let new_preset: PresetEntity = PresetEntity {
                             name: self.new_preset_window_text.clone(),
-                            data: PresetData {
+                            data: AppDataCtx {
                                 spline_mode: *spline_mode,
                                 control_points: control_points.to_vec(),
                             },

@@ -7,25 +7,22 @@ use crate::{
     common::SplineMode,
     datatypes::control_point::ControlPoint,
     error::{Result, ZError},
-    preset,
+    ui_egui::app::AppDataCtx,
 };
-use eframe::egui::load;
 use serde::{Deserialize, Serialize};
-use splines::Spline;
 
 use crate::fs::write_string_to_file;
 
 pub const PRESETS_FOLDER_NAME: &str = "presets";
-pub const SAVED_FOLDER_NAME: &str = "saved";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PresetEntity {
     pub name: String,
-    pub data: PresetData,
+    pub data: AppDataCtx,
 }
 
 impl PresetEntity {
-    pub fn new(name: &str, data: PresetData) -> Self {
+    pub fn new(name: &str, data: AppDataCtx) -> Self {
         Self {
             name: name.to_string(),
             data,
@@ -43,28 +40,22 @@ impl PresetEntity {
     pub fn make_preset_data(
         control_points: &Vec<ControlPoint>,
         spline_mode: &SplineMode,
-    ) -> PresetData {
-        PresetData {
+    ) -> AppDataCtx {
+        AppDataCtx {
             spline_mode: *spline_mode,
             control_points: control_points.clone(),
         }
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PresetData {
-    pub spline_mode: SplineMode,
-    pub control_points: Vec<ControlPoint>,
-}
-
-impl PresetData {
+impl AppDataCtx {
     pub fn apply(self, control_points: &mut Vec<ControlPoint>, spline_mode: &mut SplineMode) {
         *control_points = self.control_points;
         *spline_mode = self.spline_mode;
     }
 }
 
-impl From<(Vec<ControlPoint>, SplineMode)> for PresetData {
+impl From<(Vec<ControlPoint>, SplineMode)> for AppDataCtx {
     fn from(value: (Vec<ControlPoint>, SplineMode)) -> Self {
         Self {
             control_points: value.0,
