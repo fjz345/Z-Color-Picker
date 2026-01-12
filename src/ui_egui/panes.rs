@@ -7,7 +7,11 @@ use std::{
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
-use crate::{common::ColorStringCopy, logger::ui_log_window, ui_egui::app::ZColorPickerAppContext};
+use crate::{
+    common::ColorStringCopy,
+    logger::ui_log_window,
+    ui_egui::{app::ZColorPickerAppContext, control_points},
+};
 pub struct TreeBehavior {}
 
 impl egui_tiles::Behavior<Pane> for TreeBehavior {
@@ -92,16 +96,22 @@ impl ZAppPane for ColorPickerPane {
         self.title.clone().unwrap_or(format!("Pane"))
     }
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
+        // TODO: Fix this borrowing stuff
         let mut color_picker = self.ctx.borrow().z_color_picker.borrow().clone();
-        let mut_ctx = self.ctx.borrow_mut();
+        let mut mut_ctx = self.ctx.borrow_mut();
         let color_copy_format = mut_ctx.color_copy_format;
+        let mut control_points = mut_ctx.control_points.clone();
+        let spline_mode = mut_ctx.spline_mode;
 
         // ui.painter().rect_filled(ui.max_rect(), 0.0, Color32::WHITE);
         ui.allocate_ui(ui.max_rect().size(), |ui| {
-            let color_picker_response = color_picker.draw_ui(ui, &color_copy_format);
+            let color_picker_response =
+                color_picker.draw_ui(ui, &mut control_points, spline_mode, &color_copy_format);
             *mut_ctx.z_color_picker.borrow_mut() = color_picker;
             color_picker_response
         });
+
+        mut_ctx.control_points = control_points;
 
         return egui_tiles::UiResponse::None;
     }
@@ -164,7 +174,8 @@ impl ZAppPane for PreviewerPane {
         self.title.clone().unwrap_or(format!("Pane"))
     }
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
-        let control_points = &self.ctx.borrow().control_points;
+        // TODO: FIX this borrowing
+        let control_points = self.ctx.borrow().control_points.clone();
         let spline_mode = self.ctx.borrow().spline_mode;
         let mut mut_ctx = self.ctx.borrow_mut();
 

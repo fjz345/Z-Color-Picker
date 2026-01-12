@@ -136,10 +136,14 @@ impl Default for ZColorPickerWrapper {
 }
 
 impl ZColorPickerWrapper {
-    pub fn pre_draw_update(&mut self) {
-        if self.options.spline_mode == SplineMode::Bezier {
+    pub fn pre_draw_update(
+        &mut self,
+        control_points: &mut Vec<ControlPoint>,
+        spline_mode: SplineMode,
+    ) {
+        if spline_mode == SplineMode::Bezier {
             // Force init tangents
-            for control_point in &mut self.control_points {
+            for control_point in control_points {
                 for tang in control_point.tangents_mut().iter_mut() {
                     if tang.is_none() {
                         *tang = Some(create_tangent_for_control_point());
@@ -149,13 +153,19 @@ impl ZColorPickerWrapper {
         }
     }
 
-    pub fn draw_ui(&mut self, ui: &mut Ui, color_copy_format: &ColorStringCopy) -> Response {
+    pub fn draw_ui(
+        &mut self,
+        ui: &mut Ui,
+        control_points: &mut Vec<ControlPoint>,
+        spline_mode: SplineMode,
+        color_copy_format: &ColorStringCopy,
+    ) -> Response {
         let inner_response = ui.vertical(|ui| {
-            self.pre_draw_update();
+            self.pre_draw_update(control_points, spline_mode);
 
             let mut ctx = MainColorPickerCtx {
-                control_points: &mut self.control_points,
-                spline_mode: self.options.spline_mode,
+                control_points: control_points,
+                spline_mode: spline_mode,
                 color_copy_format: *color_copy_format,
                 last_modifying_point_index: &mut self.last_modifying_point_index,
                 dragging_index: &mut self.dragging_index,
@@ -167,7 +177,7 @@ impl ZColorPickerWrapper {
             let color_picker_widget: ZColorPicker<'_> = ZColorPicker::new(&mut ctx);
             let main_color_picker_response = ui.add(color_picker_widget);
 
-            self.post_draw(&main_color_picker_response);
+            self.post_draw(control_points, &main_color_picker_response);
 
             main_color_picker_response
         });
@@ -175,14 +185,11 @@ impl ZColorPickerWrapper {
         inner_response.inner
     }
 
-    pub fn remove_control_point(&mut self, index: usize) {
-        self.control_points.remove(index);
-        log::info!(
-            "CP {} removed, new len {}",
-            index,
-            self.control_points.len()
-        );
-        if self.control_points.len() > 1 {
+    // TODO: SHOULD MOVE THIS REMOVE LOGIC OUT SIDE OF THE COLOR PICKER
+    pub fn remove_control_point(&mut self, control_points: &mut Vec<ControlPoint>, index: usize) {
+        control_points.remove(index);
+        log::info!("CP {} removed, new len {}", index, control_points.len());
+        if control_points.len() > 1 {
             self.last_modifying_point_index = Some(index.max(1) - 1);
             self.dragging_index = Some(index.max(1) - 1);
         } else {
@@ -191,19 +198,25 @@ impl ZColorPickerWrapper {
         }
     }
 
-    fn remove_all_control_points(&mut self) {
-        for i in (0..self.control_points.len()).rev() {
-            self.remove_control_point(i);
+    // THIS ASWELL
+    fn remove_all_control_points(&mut self, control_points: &mut Vec<ControlPoint>) {
+        for i in (0..control_points.len()).rev() {
+            self.remove_control_point(control_points, i);
         }
         self.last_modifying_point_index = None;
         self.dragging_index = None;
     }
 
-    pub fn spawn_control_point(&mut self, cp: ControlPoint) {
+    // TODO: THIS TOO
+    pub fn spawn_control_point(
+        &mut self,
+        control_points: &mut Vec<ControlPoint>,
+        cp: ControlPoint,
+    ) {
         let new_index = self.last_modifying_point_index.map_or_else(
             || {
                 if self.options.is_insert_right {
-                    self.control_points.len()
+                    control_points.len()
                 } else {
                     0
                 }
@@ -221,21 +234,25 @@ impl ZColorPickerWrapper {
 
         log::info!(
             "ControlPoint#{} spawned @[{}]{},{},{}",
-            self.control_points.len(),
+            control_points.len(),
             cp.t(),
             cp.val()[0],
             cp.val()[1],
             cp.val()[2],
         );
-        self.control_points.insert(new_index, cp);
+        control_points.insert(new_index, cp);
         // Adding keys messes with the indicies
         self.last_modifying_point_index = Some(new_index);
     }
 
-    pub fn get_control_points_sdf_2d(&self, xy: Pos2) -> Option<(&ControlPoint, f32)> {
+    pub fn get_control_points_sdf_2d<'a>(
+        &self,
+        control_points: &'a Vec<ControlPoint>,
+        xy: Pos2,
+    ) -> Option<(&'a ControlPoint, f32)> {
         let mut closest_dist: Option<f32> = None;
         let mut closest_cp: Option<&ControlPoint> = None;
-        for cp in self.control_points.iter() {
+        for cp in control_points.iter() {
             let pos_2d = Pos2::new(
                 cp.val()[0].clamp(0.0, 1.0),
                 1.0 - cp.val()[1].clamp(0.0, 1.0),
@@ -269,10 +286,10 @@ impl ZColorPickerWrapper {
         }
     }
 
-    fn interpolate_hue_middle(&mut self) {
-        let num_points = self.control_points.len();
+    fn apply_interpolate_hue_middle(&mut self, control_points: &mut Vec<ControlPoint>) {
+        let num_points = control_points.len();
         if num_points >= 2 {
-            let points = &mut self.control_points[..];
+            let points = &mut control_points[..];
 
             let first_index = 0;
             let last_index = points.len() - 1;
@@ -286,36 +303,44 @@ impl ZColorPickerWrapper {
             }
         }
     }
-    fn clamp_control_points(&mut self) {
-        for cp in self.control_points.iter_mut() {
+    fn clamp_control_points(&mut self, control_points: &mut Vec<ControlPoint>) {
+        for cp in control_points.iter_mut() {
             cp.val_mut()[0] = cp.val()[0].clamp(0.0, 1.0);
             cp.val_mut()[1] = cp.val()[1].clamp(0.0, 1.0);
             cp.val_mut()[2] = cp.val()[2].clamp(0.0, 1.0);
         }
     }
 
-    pub fn apply_control_point_constraints(&mut self) {
+    pub fn apply_control_point_constraints(&mut self, control_points: &mut Vec<ControlPoint>) {
         if self.options.is_hue_middle_interpolated {
-            self.interpolate_hue_middle();
+            self.apply_interpolate_hue_middle(control_points);
         }
         if self.options.is_window_lock {
-            self.clamp_control_points();
+            self.clamp_control_points(control_points);
         }
     }
 
-    fn post_draw(&mut self, z_color_picker_response: &Response) {
-        self.apply_control_point_constraints();
+    fn post_draw(
+        &mut self,
+        control_points: &mut Vec<ControlPoint>,
+        z_color_picker_response: &Response,
+    ) {
+        self.apply_control_point_constraints(control_points);
 
         match self.right_clicked_on_index {
             Some(index) => {
-                self.remove_control_point(index);
+                self.remove_control_point(control_points, index);
             }
             _ => {}
         }
-        self.handle_doubleclick_event(z_color_picker_response);
+        self.handle_doubleclick_event(control_points, z_color_picker_response);
     }
 
-    pub fn handle_doubleclick_event(&mut self, z_color_picker_response: &Response) -> bool {
+    pub fn handle_doubleclick_event(
+        &mut self,
+        control_points: &mut Vec<ControlPoint>,
+        z_color_picker_response: &Response,
+    ) -> bool {
         if z_color_picker_response.double_clicked_by(PointerButton::Primary) {
             match z_color_picker_response.interact_pointer_pos() {
                 Some(pos) => {
@@ -324,7 +349,8 @@ impl ZColorPickerWrapper {
                         let normalized_xy =
                             z_color_picker_response_xy / z_color_picker_response.rect.size();
 
-                        let closest = self.get_control_points_sdf_2d(normalized_xy.to_pos2());
+                        let closest =
+                            self.get_control_points_sdf_2d(control_points, normalized_xy.to_pos2());
                         const MIN_DIST: f32 = 0.1;
 
                         let color_xy = Pos2::new(
@@ -341,16 +367,16 @@ impl ZColorPickerWrapper {
                                     let color: [f32; 3] = [color_xy[0], color_xy[1], color_hue];
                                     let new_cp: ControlPoint =
                                         ControlPoint::new_simple(color.into(), *cp.t());
-                                    self.spawn_control_point(new_cp);
+                                    self.spawn_control_point(control_points, new_cp);
                                 }
                             }
                             _ => {
                                 let color: [f32; 3] = [color_xy[0], color_xy[1], 0.0];
                                 let new_cp = ControlPoint::new_simple(color.into(), 0.0);
-                                self.spawn_control_point(new_cp);
+                                self.spawn_control_point(control_points, new_cp);
                             }
                         };
-                        self.apply_control_point_constraints();
+                        self.apply_control_point_constraints(control_points);
                     }
                 }
                 _ => {}
