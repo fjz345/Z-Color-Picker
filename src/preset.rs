@@ -9,6 +9,7 @@ use crate::{
     error::{Result, ZError},
     preset,
 };
+use eframe::egui::load;
 use serde::{Deserialize, Serialize};
 use splines::Spline;
 
@@ -183,7 +184,7 @@ pub fn delete_all_presets_from_disk() -> Result<()> {
     Ok(())
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct PresetHandler {
     pub presets: Vec<PresetEntity>,
     pub preset_selected_index: Option<usize>,
@@ -206,6 +207,13 @@ impl Default for PresetHandler {
 }
 
 impl PresetHandler {
+    pub fn presets(&self) -> &Vec<PresetEntity> {
+        &self.presets
+    }
+    pub fn presets_mut(&mut self) -> &mut Vec<PresetEntity> {
+        &mut self.presets
+    }
+
     pub fn apply_selected_preset(
         &mut self,
         control_points: &mut Vec<ControlPoint>,
@@ -219,6 +227,12 @@ impl PresetHandler {
         } else {
             log::info!("No preset selected");
         }
+    }
+
+    pub fn init_presets(&mut self) -> Result<()> {
+        let loaded_presets = load_presets(&get_presets_path())?;
+        self.presets = loaded_presets;
+        Ok(())
     }
 
     pub fn save_selected_preset(&mut self) -> Result<()> {

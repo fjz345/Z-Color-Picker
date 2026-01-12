@@ -122,31 +122,28 @@ impl ZAppPane for ColorPickerOptionsPane {
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
         let mut color_picker = self.ctx.borrow().z_color_picker.borrow().clone();
         let mut mut_ctx = self.ctx.borrow_mut();
+        let mut control_points = mut_ctx.control_points.clone();
+        let mut spline_mode = mut_ctx.spline_mode;
         let color_copy_format = mut_ctx.color_copy_format;
 
         let mut options = color_picker.options.clone();
         let mut options_window = mut_ctx.options_window.clone();
         options_window.update();
         let mut color_copy_format = color_copy_format;
-        let mut auto_save_preset = options.auto_save_presets;
 
-        let options_draw_results = options_window.draw_content(
+        options_window.draw_content(
             ui,
             &mut options,
-            &mut color_picker.control_points,
+            &mut control_points,
+            &mut spline_mode,
             &mut color_copy_format,
-            &mut auto_save_preset,
         );
         color_picker.options = options;
-        if let Some(preset_to_apply) = options_draw_results.preset_result.should_apply {
-            color_picker
-                .apply_preset(&preset_to_apply)
-                .unwrap_or_else(|e| log::info!("{e}"))
-        }
 
         mut_ctx.color_copy_format = color_copy_format;
         mut_ctx.options_window = options_window;
-        color_picker.options.auto_save_presets = auto_save_preset;
+        mut_ctx.control_points = control_points;
+        mut_ctx.spline_mode = spline_mode;
 
         *mut_ctx.z_color_picker.borrow_mut() = color_picker;
 
@@ -167,15 +164,13 @@ impl ZAppPane for PreviewerPane {
         self.title.clone().unwrap_or(format!("Pane"))
     }
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
-        let color_picker = self.ctx.borrow().z_color_picker.borrow().clone();
+        let control_points = &self.ctx.borrow().control_points;
+        let spline_mode = self.ctx.borrow().spline_mode;
         let mut mut_ctx = self.ctx.borrow_mut();
 
         let mut previewer = mut_ctx.previewer.clone();
 
-        previewer.update(
-            &color_picker.control_points,
-            color_picker.options.spline_mode,
-        );
+        previewer.update(&control_points, spline_mode);
         let response = previewer.draw_ui(ui, ColorStringCopy::HEXNOA);
 
         mut_ctx.stored_ui_responses = response;

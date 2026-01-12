@@ -21,13 +21,14 @@ use crate::{
     },
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead, Rgb},
     logger::LogCollector,
-    preset::{delete_all_presets_from_disk, save_all_presets_to_disk, PresetEntity},
+    preset::{delete_all_presets_from_disk, save_all_presets_to_disk, PresetEntity, PresetHandler},
     ui_egui::{
         clipboard::{
             write_color_to_clipboard, write_pixels_to_clipboard, ClipboardCopyEvent, ClipboardPopup,
         },
         color_picker::ZColorPickerWrapper,
         content_windows::WindowZColorPickerOptions,
+        control_points,
         debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
         panes::{
             ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
@@ -79,6 +80,8 @@ impl Default for ZColorPickerOptions {
 pub struct ZColorPickerAppContext {
     pub control_points: Vec<ControlPoint>,
     pub spline_mode: SplineMode,
+
+    pub preset_handler: PresetHandler,
 
     pub z_color_picker: Rc<RefCell<ZColorPickerWrapper>>,
     pub previewer: ZPreviewer,
@@ -165,11 +168,14 @@ impl ZColorPickerAppContext {
     ];
 
     pub fn default() -> Self {
-        let mut z_color_picker_wrapper = ZColorPickerWrapper::default();
-        z_color_picker_wrapper.load_presets();
+        let z_color_picker_wrapper = ZColorPickerWrapper::default();
+        let mut preset_handler = PresetHandler::default();
+        preset_handler.init_presets();
         Self {
             control_points: Self::DEFAULT_STARTUP_CONTROL_POINTS.to_vec(),
             spline_mode: SplineMode::HermiteBezier,
+
+            preset_handler,
 
             z_color_picker: Rc::new(RefCell::new(z_color_picker_wrapper)),
             previewer: ZPreviewer::default(),
@@ -235,17 +241,13 @@ impl ZApp {
 
     fn sync_persets_on_disk(&self) {
         let app_ctx = self.app_ctx.borrow();
-        let color_picker = app_ctx.z_color_picker.borrow();
         delete_all_presets_from_disk().unwrap_or_else(|e| println!("{e}"));
-        save_all_presets_to_disk(&color_picker.options.presets).unwrap_or_else(|e| println!("{e}"));
+        save_all_presets_to_disk(app_ctx.preset_handler.presets())
+            .unwrap_or_else(|e| println!("{e}"));
     }
 
     fn init(&mut self) {
-        self.app_ctx
-            .borrow_mut()
-            .z_color_picker
-            .borrow_mut()
-            .load_presets();
+        self.app_ctx.borrow_mut().preset_handler.init_presets();
     }
 
     fn startup(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -342,10 +344,10 @@ impl ZApp {
 
             // auto-save-preset
             {
-                let app_ctx = self.app_ctx.borrow_mut();
-                let color_picker = &mut app_ctx.z_color_picker.borrow_mut();
-                if color_picker.options.auto_save_presets {
-                    color_picker
+                let mut app_ctx = self.app_ctx.borrow_mut();
+                if app_ctx.preset_handler.auto_save_presets {
+                    app_ctx
+                        .preset_handler
                         .save_selected_preset()
                         .unwrap_or_else(|e| println!("{e}"));
                 }
@@ -475,25 +477,18 @@ impl ZApp {
     }
 
     fn update_and_draw_debug_windows(&mut self, ui: &mut Ui) {
+        // TODO: Should clean up this logic for borrowing
         let mut app_ctx = self.app_ctx.borrow_mut();
-        let color_picker_clone = if let Ok(a) = app_ctx.z_color_picker.try_borrow_mut() {
-            Some(a.clone())
-        } else {
-            None
-        };
+        let control_points = app_ctx.control_points.clone();
 
-        if let Some(color_picker) = color_picker_clone {
-            app_ctx
-                .debug_window_control_points
-                .update(&color_picker.control_points);
-            app_ctx.debug_window_control_points.draw_ui(ui);
+        app_ctx.debug_window_control_points.update(&control_points);
+        app_ctx.debug_window_control_points.draw_ui(ui);
 
-            if color_picker.control_points.len() >= 2 {
-                let src_color = color_picker.control_points.first().unwrap().val().hsv();
-                let trg_color = color_picker.control_points.last().unwrap().val().hsv();
+        if control_points.len() >= 2 {
+            let src_color = control_points.first().unwrap().val().hsv();
+            let trg_color = control_points.last().unwrap().val().hsv();
 
-                app_ctx.debug_window_test.update(src_color, trg_color);
-            }
+            app_ctx.debug_window_test.update(src_color, trg_color);
         }
 
         app_ctx.debug_window_test.draw_ui(ui);
