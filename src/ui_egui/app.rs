@@ -21,14 +21,13 @@ use crate::{
     },
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead, Rgb},
     logger::LogCollector,
-    preset::{delete_all_presets_from_disk, save_all_presets_to_disk, PresetEntity, PresetHandler},
+    preset::{delete_all_presets_from_disk, save_all_presets_to_disk, PresetHandler},
     ui_egui::{
         clipboard::{
             write_color_to_clipboard, write_pixels_to_clipboard, ClipboardCopyEvent, ClipboardPopup,
         },
         color_picker::ZColorPickerWrapper,
         content_windows::WindowZColorPickerOptions,
-        control_points,
         debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
         panes::{
             ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
@@ -133,7 +132,7 @@ impl ZColorPickerAppContext {
             val: ControlPointValue {
                 val: [0.44, 0.38, 0.1],
             },
-            t: 1.0,
+            t: 0.25,
             tangents: [
                 Some(ControlPointTangent {
                     val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
@@ -147,7 +146,7 @@ impl ZColorPickerAppContext {
             val: ControlPointValue {
                 val: [0.8, 0.6, 0.1],
             },
-            t: 2.0,
+            t: 0.75,
             tangents: [
                 Some(ControlPointTangent {
                     val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
@@ -161,7 +160,7 @@ impl ZColorPickerAppContext {
             val: ControlPointValue {
                 val: [0.9, 0.8, 0.2],
             },
-            t: 3.0,
+            t: 1.0,
             tangents: [
                 Some(ControlPointTangent {
                     val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
