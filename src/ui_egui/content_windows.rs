@@ -64,12 +64,14 @@ impl ContentWindow for WindowPreset {
 
 pub struct PresetDrawResult {
     pub should_apply: Option<PresetEntity>,
+    pub open_create_preset_window: bool,
 }
 
 impl Default for PresetDrawResult {
     fn default() -> Self {
         Self {
             should_apply: Default::default(),
+            open_create_preset_window: false,
         }
     }
 }
@@ -241,8 +243,6 @@ impl WindowPreset {
         preset_handler: &mut PresetHandler,
         control_points: &mut Vec<ControlPoint>,
         spline_mode: &mut SplineMode,
-        color_copy_format: &mut ColorStringCopy,
-        mut auto_save_preset: &mut bool,
     ) -> WindowPresetDrawResult {
         let mut draw_result = WindowPresetDrawResult::default();
 
@@ -301,11 +301,12 @@ impl WindowPreset {
                         draw_result.preset_result.should_apply =
                             Some(preset_handler.presets[s].clone());
                         log::info!("Selected Preset {:?}", combobox_selected_index - 1);
+                        preset_handler.apply_selected_preset(control_points, spline_mode);
                     }
                 }
             };
 
-            ui.checkbox(&mut auto_save_preset, "↻💾")
+            ui.checkbox(&mut preset_handler.auto_save_presets, "↻💾")
                 .on_hover_text("Auto save preset");
             if ui.button("Save").clicked_by(PointerButton::Primary) {
                 if let Some(s) = preset_handler.preset_selected_index {
@@ -359,41 +360,6 @@ impl WindowPreset {
             });
         });
 
-        let mut create_preset_open = self.new_preset_is_open;
-        let mut create_preset_create_clicked = false;
-        if self.new_preset_is_open {
-            egui::Window::new("Create Preset")
-                .open(&mut create_preset_open)
-                .show(ui.ctx(), |ui| {
-                    let text_response = ui.text_edit_singleline(&mut self.new_preset_window_text);
-                    let was_text_box_enter =
-                        text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    text_response.request_focus();
-
-                    if !self.new_preset_window_text.is_empty()
-                        && (was_text_box_enter || ui.button("Create").clicked())
-                    {
-                        self.new_preset_is_open = false;
-                        create_preset_create_clicked = true;
-
-                        let new_preset: PresetEntity = PresetEntity {
-                            name: self.new_preset_window_text.clone(),
-                            data: AppDataCtx {
-                                spline_mode: *spline_mode,
-                                control_points: control_points.to_vec(),
-                            },
-                        };
-                        preset_handler.presets.push(new_preset);
-                        preset_handler.preset_selected_index =
-                            Some(preset_handler.presets.len() - 1);
-                    }
-                });
-
-            if create_preset_create_clicked {
-                create_preset_open = false;
-            }
-            self.new_preset_is_open = create_preset_open;
-        }
         draw_result
     }
 
@@ -403,8 +369,6 @@ impl WindowPreset {
         preset_handler: &mut PresetHandler,
         control_points: &mut Vec<ControlPoint>,
         spline_mode: &mut SplineMode,
-        color_copy_format: &mut ColorStringCopy,
-        auto_save_preset: &mut bool,
     ) -> Option<InnerResponse<Option<WindowPresetDrawResult>>> {
         let prev_visuals = ui.visuals_mut().clone();
 
@@ -415,14 +379,7 @@ impl WindowPreset {
             .open(&mut open)
             .auto_sized()
             .show(ui.ctx(), |ui: &mut Ui| {
-                self.draw_content(
-                    ui,
-                    preset_handler,
-                    control_points,
-                    spline_mode,
-                    color_copy_format,
-                    auto_save_preset,
-                )
+                self.draw_content(ui, preset_handler, control_points, spline_mode)
             });
 
         if open {

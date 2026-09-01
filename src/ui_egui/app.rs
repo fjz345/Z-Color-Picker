@@ -21,13 +21,14 @@ use crate::{
     },
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead, Rgb},
     logger::LogCollector,
-    preset::{delete_all_presets_from_disk, save_all_presets_to_disk, PresetHandler},
+    preset::{delete_all_presets_from_disk, save_all_presets_to_disk, PresetEntity, PresetHandler},
     ui_egui::{
         clipboard::{
             write_color_to_clipboard, write_pixels_to_clipboard, ClipboardCopyEvent, ClipboardPopup,
         },
         color_picker::ZColorPickerWrapper,
-        content_windows::WindowZColorPickerOptions,
+        content_windows::{WindowPreset, WindowZColorPickerOptions},
+        control_points,
         debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
         panes::{
             ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
@@ -109,6 +110,8 @@ pub struct ZColorPickerAppContext {
 
     #[serde(skip)]
     pub options_window: WindowZColorPickerOptions,
+    #[serde(skip)]
+    pub presets_window: WindowPreset,
 }
 
 const LAZY_TANGENT_DELTA: f32 = 0.01;
@@ -132,7 +135,7 @@ impl ZColorPickerAppContext {
             val: ControlPointValue {
                 val: [0.44, 0.38, 0.1],
             },
-            t: 0.25,
+            t: 0.33,
             tangents: [
                 Some(ControlPointTangent {
                     val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
@@ -146,7 +149,7 @@ impl ZColorPickerAppContext {
             val: ControlPointValue {
                 val: [0.8, 0.6, 0.1],
             },
-            t: 0.75,
+            t: 0.66,
             tangents: [
                 Some(ControlPointTangent {
                     val: [-LAZY_TANGENT_DELTA, 0.0, 0.0],
@@ -175,7 +178,9 @@ impl ZColorPickerAppContext {
     pub fn default() -> Self {
         let z_color_picker_wrapper = ZColorPickerWrapper::default();
         let mut preset_handler = PresetHandler::default();
-        preset_handler.init_presets();
+        if let Err(e) = preset_handler.init_presets() {
+            log::error!("{e}");
+        }
         Self {
             control_points: Self::DEFAULT_STARTUP_CONTROL_POINTS.to_vec(),
             spline_mode: SplineMode::HermiteBezier,
@@ -199,6 +204,7 @@ impl ZColorPickerAppContext {
             stored_ui_responses: PreviewerUiResponses::default(),
             open_tabs: HashSet::default(),
             options_window: WindowZColorPickerOptions::new(Pos2::new(200.0, 200.0)),
+            presets_window: WindowPreset::new(Pos2::new(200.0, 200.0)),
         }
     }
 }
@@ -329,8 +335,75 @@ impl ZApp {
         egui_tiles::Tree::new("my_tree", root, tiles)
     }
 
+    fn show_create_preset_window(&mut self, ctx: &egui::Context) {
+        let (mut is_open, mut text, spline_mode, control_points) = {
+            let ctx_ref = self.app_ctx.borrow();
+            (
+                ctx_ref.presets_window.new_preset_is_open,
+                ctx_ref.presets_window.new_preset_window_text.clone(),
+                ctx_ref.spline_mode.clone(),
+                ctx_ref.control_points.clone(),
+            )
+        };
+
+        if !is_open {
+            return;
+        }
+
+        let mut should_create = false;
+        egui::Window::new("Create Preset")
+            .open(&mut is_open)
+            .show(ctx, |ui| {
+                let text_response = ui.text_edit_singleline(&mut text);
+                text_response.request_focus();
+
+                let was_enter =
+                    text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                if !text.is_empty() && (was_enter || ui.button("Create").clicked()) {
+                    should_create = true;
+                }
+            });
+
+        // 3. Re-borrow mutably only at the very end to apply changes
+        let mut ctx_write = self.app_ctx.borrow_mut();
+        ctx_write.presets_window.new_preset_is_open = is_open;
+        ctx_write.presets_window.new_preset_window_text = text;
+
+        if should_create {
+            let new_preset = PresetEntity {
+                name: ctx_write.presets_window.new_preset_window_text.clone(),
+                data: AppDataCtx {
+                    spline_mode,
+                    control_points,
+                },
+            };
+            ctx_write.preset_handler.presets.push(new_preset);
+            ctx_write.preset_handler.preset_selected_index =
+                Some(ctx_write.preset_handler.presets.len() - 1);
+
+            // Reset state
+            ctx_write.presets_window.new_preset_is_open = false;
+            ctx_write.presets_window.new_preset_window_text.clear();
+        }
+    }
+
     fn draw_ui_tree(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Windows needs to be drawn before the tree
+        // self.show_create_preset_window(ctx);
+
+        let mut control_points = self.app_ctx.borrow().control_points.clone();
+        let mut spline_mode = self.app_ctx.borrow().spline_mode.clone();
+        let mut preset_handler = self.app_ctx.borrow().preset_handler.clone();
+
         egui::CentralPanel::default().show(ctx, |ui| {
+            self.app_ctx.borrow_mut().presets_window.draw_content(
+                ui,
+                &mut preset_handler,
+                &mut control_points,
+                &mut spline_mode,
+            );
+
             ui.with_layout(Layout::left_to_right(egui::Align::Min), |mut ui| {
                 let mut behavior = TreeBehavior {};
                 self.tree.ui(&mut behavior, ui);

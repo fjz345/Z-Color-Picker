@@ -4,6 +4,7 @@ use crate::{
     ui_egui::{
         app::ZColorPickerOptions,
         control_points::{ui_ordered_control_points, ControlPointUiResult},
+        curvature::draw_curvature_comb,
         ui_common::contrast_color,
     },
 };
@@ -514,6 +515,11 @@ pub fn main_color_picker(
             &mut color_to_show.v,
             main_color_picker_color_at_function(color_to_show.h, 1.0),
         );
+
+        // TODO: Fix for hermite bezier
+        if ctx.spline_mode == SplineMode::Bezier {
+            draw_curvature_comb(ui, slider_2d_response.rect, ctx.control_points);
+        }
 
         let _ = ui_ordered_spline_gradient(
             ui,

@@ -126,7 +126,9 @@ impl ZAppPane for ColorPickerOptionsPane {
         self.title.clone().unwrap_or(format!("Pane"))
     }
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
+        // TODO: FIX BORROWING HERE
         let mut color_picker = self.ctx.borrow().z_color_picker.borrow().clone();
+        let mut preset_handler = self.ctx.borrow().preset_handler.clone();
         let mut mut_ctx = self.ctx.borrow_mut();
         let mut control_points = mut_ctx.control_points.clone();
         let mut spline_mode = mut_ctx.spline_mode;
@@ -134,7 +136,9 @@ impl ZAppPane for ColorPickerOptionsPane {
 
         let mut options = color_picker.options.clone();
         let mut options_window = mut_ctx.options_window.clone();
+        let mut presets_window = mut_ctx.presets_window.clone();
         options_window.update();
+        presets_window.update();
         let mut color_copy_format = color_copy_format;
 
         options_window.draw_content(
@@ -144,12 +148,19 @@ impl ZAppPane for ColorPickerOptionsPane {
             &mut spline_mode,
             &mut color_copy_format,
         );
-        color_picker.options = options;
+        presets_window.draw_content(
+            ui,
+            &mut preset_handler,
+            &mut control_points,
+            &mut spline_mode,
+        );
 
+        color_picker.options = options;
         mut_ctx.color_copy_format = color_copy_format;
         mut_ctx.options_window = options_window;
         mut_ctx.control_points = control_points;
         mut_ctx.spline_mode = spline_mode;
+        mut_ctx.preset_handler = preset_handler;
 
         *mut_ctx.z_color_picker.borrow_mut() = color_picker;
 

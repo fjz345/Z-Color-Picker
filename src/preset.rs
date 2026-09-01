@@ -175,9 +175,10 @@ pub fn delete_all_presets_from_disk() -> Result<()> {
     Ok(())
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PresetHandler {
     pub presets: Vec<PresetEntity>,
+    #[serde(skip)]
     pub preset_selected_index: Option<usize>,
     pub auto_save_presets: bool,
 }

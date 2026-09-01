@@ -37,6 +37,9 @@ To create a new preset, click the preset combo box and select NEW
 
 # TODO:
 
+## References
+### https://acko.net/blog/curvature-beziers/
+
 ## TODO: Features
 
 # Currently being worked on

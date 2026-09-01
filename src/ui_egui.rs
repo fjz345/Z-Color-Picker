@@ -3,6 +3,7 @@ pub mod clipboard;
 pub mod color_picker;
 pub mod content_windows;
 pub mod control_points;
+pub mod curvature;
 pub mod curves;
 pub mod debug_windows;
 pub mod gradient;
