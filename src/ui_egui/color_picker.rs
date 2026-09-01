@@ -34,6 +34,7 @@ pub struct MainColorPickerCtx<'a> {
     pub control_point_right_clicked: &'a mut Option<usize>,
     pub is_hue_middle_interpolated: bool,
     pub is_curve_locked: bool,
+    pub is_show_curvature_comb: bool,
 }
 
 pub struct ZColorPicker<'a> {
@@ -165,6 +166,7 @@ impl ZColorPickerWrapper {
                 control_point_right_clicked: &mut self.right_clicked_on_index,
                 is_hue_middle_interpolated: self.options.is_hue_middle_interpolated,
                 is_curve_locked: self.options.is_curve_locked,
+                is_show_curvature_comb: self.options.is_show_curvature_comb,
             };
 
             let color_picker_widget: ZColorPicker<'_> = ZColorPicker::new(&mut ctx);
@@ -517,8 +519,10 @@ pub fn main_color_picker(
         );
 
         // TODO: Fix for hermite bezier
-        if ctx.spline_mode == SplineMode::Bezier {
-            draw_curvature_comb(ui, slider_2d_response.rect, ctx.control_points);
+        if ctx.is_show_curvature_comb {
+            if ctx.spline_mode == SplineMode::Bezier {
+                draw_curvature_comb(ui, slider_2d_response.rect, ctx.control_points);
+            }
         }
 
         let _ = ui_ordered_spline_gradient(

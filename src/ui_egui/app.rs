@@ -69,6 +69,8 @@ pub struct ZColorPickerOptions {
     pub is_hue_middle_interpolated: bool,
     pub is_insert_right: bool,
     pub is_window_lock: bool,
+    pub is_show_curvature_comb: bool,
+    pub is_curvature_friendly: bool,
 }
 
 impl Default for ZColorPickerOptions {
@@ -78,6 +80,8 @@ impl Default for ZColorPickerOptions {
             is_hue_middle_interpolated: true,
             is_insert_right: true,
             is_window_lock: true,
+            is_show_curvature_comb: true,
+            is_curvature_friendly: true,
         }
     }
 }

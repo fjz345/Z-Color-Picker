@@ -119,6 +119,10 @@ impl WindowZColorPickerOptions {
                 ));
             ui.checkbox(&mut options.is_window_lock, "🆘")
                 .on_hover_text("Clamps the control points so they are contained");
+            ui.checkbox(&mut options.is_show_curvature_comb, "➰")
+                .on_hover_text("Show curvature comb");
+            ui.checkbox(&mut options.is_curvature_friendly, "📐")
+                .on_hover_text("Control points auto-adjust for consistent curvature");
         });
 
         ui.horizontal(|ui| {
