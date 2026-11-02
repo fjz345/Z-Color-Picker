@@ -207,5 +207,5 @@ pub fn draw_curvature_comb(ui: &mut Ui, rect: egui::Rect, control_points: &[Cont
         }
     }
 
-    ui.painter().extend(shapes);
+    ui.painter().with_clip_rect(rect).extend(shapes);
 }

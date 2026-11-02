@@ -7,8 +7,7 @@ use crate::ui_egui::control_points::{
 };
 use eframe::egui::{self, Sense, Ui};
 use eframe::emath;
-use eframe::epaint::{Pos2, Rect, Stroke, Vec2};
-use egui::epaint::PathShape;
+use eframe::epaint::{Pos2, Rect, Shape, Stroke, Vec2};
 
 pub fn generate_spline_points_with_distance(
     control_points: &[ControlPoint],
@@ -66,35 +65,28 @@ pub fn ui_ordered_spline_gradient(
         response.rect,
     );
 
-    // let sub_divided_control_points = sub_divide_control_points(control_points, 0.01);
     let flattened_points = flatten_control_points(control_points);
     let spline_points =
         generate_spline_points_with_distance(&flattened_points[..], spline_mode, 0.01);
 
-    for i in 1..spline_points.len() {
-        let first = spline_points[i - 1];
-        let next = spline_points[i];
-
-        // let spline = control_points_to_spline(&sub_divided_control_points, spline_mode);
-        let segment_color = first.color();
-
-        let control_point_radius = 8.0;
+    let control_point_radius = 8.0;
+    let mut shapes = Vec::with_capacity(spline_points.len());
+    for pair in spline_points.windows(2) {
+        let first = pair[0];
+        let next = pair[1];
 
         let point_first = first.pos2();
         let point_next = next.pos2();
-        let mut points_in_screen: Vec<Pos2> = Vec::with_capacity(2);
         let point_in_screen_first = to_screen * Pos2::new(point_first.x, 1.0 - point_first.y);
         let point_in_screen_next = to_screen * Pos2::new(point_next.x, 1.0 - point_next.y);
-        points_in_screen.push(point_in_screen_first);
-        points_in_screen.push(point_in_screen_next);
 
-        let shape = PathShape::line(
-            points_in_screen,
-            Stroke::new(control_point_radius * 1.6, segment_color),
-        );
-
-        ui.painter().add(shape);
+        shapes.push(Shape::line_segment(
+            [point_in_screen_first, point_in_screen_next],
+            Stroke::new(control_point_radius * 1.6, first.color()),
+        ));
     }
+
+    ui.painter().with_clip_rect(response.rect).extend(shapes);
 
     Some(response)
 }
