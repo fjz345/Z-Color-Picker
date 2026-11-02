@@ -289,11 +289,33 @@ fn apply_preset(
     preset_handler.presets[index].clone()
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum PendingSwitchAction {
     SaveAndSwitch,
     Discard,
     Cancel,
+}
+
+fn pending_switch_buttons(
+    has_selection: bool,
+    target_is_selected: bool,
+) -> &'static [(&'static str, PendingSwitchAction)] {
+    match (has_selection, target_is_selected) {
+        (true, true) => &[
+            ("Save", PendingSwitchAction::SaveAndSwitch),
+            ("Revert to saved", PendingSwitchAction::Discard),
+            ("Cancel", PendingSwitchAction::Cancel),
+        ],
+        (true, false) => &[
+            ("Save and switch", PendingSwitchAction::SaveAndSwitch),
+            ("Discard", PendingSwitchAction::Discard),
+            ("Cancel", PendingSwitchAction::Cancel),
+        ],
+        (false, _) => &[
+            ("Discard", PendingSwitchAction::Discard),
+            ("Cancel", PendingSwitchAction::Cancel),
+        ],
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -602,26 +624,21 @@ impl WindowPreset {
         spline_mode: &mut SplineMode,
     ) -> Option<PresetEntity> {
         let name = selected_preset(preset_handler).map(|preset| preset.name.clone());
+        let buttons = pending_switch_buttons(
+            name.is_some(),
+            self.pending_switch == preset_handler.preset_selected_index,
+        );
 
         let modal = egui::Modal::new(egui::Id::new("unsaved_preset_modal")).show(ui.ctx(), |ui| {
-            let buttons: &[(&str, PendingSwitchAction)] = match &name {
+            match &name {
                 Some(name) => {
                     ui.label(format!("\"{name}\" has unsaved changes."));
-                    &[
-                        ("Save and switch", PendingSwitchAction::SaveAndSwitch),
-                        ("Discard", PendingSwitchAction::Discard),
-                        ("Cancel", PendingSwitchAction::Cancel),
-                    ]
                 }
                 None => {
                     ui.label("The current points are not saved in any preset.");
                     ui.weak("Use <NEW> first to keep them.");
-                    &[
-                        ("Discard", PendingSwitchAction::Discard),
-                        ("Cancel", PendingSwitchAction::Cancel),
-                    ]
                 }
-            };
+            }
             if let Some(error) = &self.save_error {
                 ui.colored_label(ui.visuals().error_fg_color, error);
             }
@@ -1419,5 +1436,72 @@ mod tests {
         assert_eq!(saved.spline_mode, SplineMode::Bezier);
         assert!(!window.new_preset_is_open);
         assert_eq!(window.save_error, None);
+    }
+
+    fn button_actions(buttons: &[(&str, PendingSwitchAction)]) -> Vec<PendingSwitchAction> {
+        buttons.iter().map(|&(_, action)| action).collect()
+    }
+
+    #[test]
+    fn re_picking_the_selected_preset_offers_save_and_revert() {
+        let buttons = pending_switch_buttons(true, true);
+
+        assert_eq!(
+            button_actions(buttons),
+            [
+                PendingSwitchAction::SaveAndSwitch,
+                PendingSwitchAction::Discard,
+                PendingSwitchAction::Cancel
+            ]
+        );
+        assert!(buttons.iter().any(|(label, _)| label.contains("Revert")));
+        assert!(buttons
+            .iter()
+            .all(|(label, _)| !label.to_lowercase().contains("switch")));
+    }
+
+    #[test]
+    fn picking_another_preset_offers_save_and_switch() {
+        let buttons = pending_switch_buttons(true, false);
+
+        assert!(buttons
+            .iter()
+            .any(|(label, _)| label.contains("Save and switch")));
+    }
+
+    #[test]
+    fn pending_switch_without_selection_offers_discard_and_cancel() {
+        assert_eq!(
+            button_actions(pending_switch_buttons(false, false)),
+            [PendingSwitchAction::Discard, PendingSwitchAction::Cancel]
+        );
+    }
+
+    #[test]
+    fn re_picking_the_dirty_selected_preset_then_discard_reverts_to_saved() {
+        let tmp = TempDir::new().unwrap();
+        let (mut handler, mut points) = handler_with_edited_a_and_distinct_b(&tmp);
+        let saved = handler.presets[0].data.clone();
+        let mut window = WindowPreset::new();
+        let mut mode = SplineMode::Linear;
+        assert!(has_unsaved_changes(&handler, &points, mode));
+
+        assert!(window
+            .choose_preset(0, &mut handler, &mut points, &mut mode)
+            .is_none());
+        assert_eq!(window.pending_switch, Some(0));
+
+        let applied = window.resolve_pending_switch(
+            PendingSwitchAction::Discard,
+            &mut handler,
+            &mut points,
+            &mut mode,
+        );
+
+        assert_eq!(applied.map(|p| p.name), Some("A".to_string()));
+        assert_eq!(points, saved.control_points);
+        assert_eq!(mode, saved.spline_mode);
+        assert_eq!(handler.preset_selected_index, Some(0));
+        assert!(!has_unsaved_changes(&handler, &points, mode));
     }
 }
