@@ -1,6 +1,6 @@
-use ecolor::{Color32, HsvaGamma};
+use ecolor::Color32;
 use eframe::{
-    egui::{self, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2},
+    egui::{self, CursorIcon, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2},
     emath::RectTransform,
     epaint::PathShape,
 };
@@ -10,7 +10,7 @@ use crate::{
     common::SplineMode,
     datatypes::control_point::{ControlPoint, ControlPointValue},
     math::shortest_hue_delta,
-    ui_egui::tangents::ui_control_point_tangents,
+    ui_egui::{tangents::ui_control_point_tangents, ui_common::contrast_color},
 };
 
 const CONTROL_POINT_RADIUS: f32 = 8.0;
@@ -39,6 +39,18 @@ fn to_screen_pos(to_screen: &RectTransform, cp: &ControlPoint) -> Pos2 {
     to_screen.transform_pos(control_point_pos(cp))
 }
 
+fn control_point_outline(fill: Color32, emphasized: bool) -> Stroke {
+    let width = if emphasized { 2.5 } else { 1.5 };
+    Stroke::new(width, contrast_color(fill))
+}
+
+fn control_point_hint(index: usize, count: usize) -> String {
+    format!(
+        "Point {} of {count}. Drag: move. Right-click: remove",
+        index + 1
+    )
+}
+
 pub fn ui_ordered_control_points(
     ui: &mut Ui,
     control_points: &[ControlPoint],
@@ -63,9 +75,6 @@ pub fn ui_ordered_control_points(
     let control_point_radius = CONTROL_POINT_RADIUS;
     let control_point_draw_size = Vec2::splat(2.0 * control_point_radius);
 
-    let inactive_stroke = ui.style().noninteractive().fg_stroke;
-    let active_stroke = ui.style().interact(parent_response).fg_stroke;
-
     let mut selected_index = marked_control_point_index;
     let mut tangent_selected_index = None;
     let mut hovering_control_point = None;
@@ -88,7 +97,6 @@ pub fn ui_ordered_control_points(
                 parent_response,
                 control_point_draw_size,
                 control_point_radius,
-                inactive_stroke,
                 &mut tangent_shapes,
                 &mut tangent_paths,
             );
@@ -112,7 +120,13 @@ pub fn ui_ordered_control_points(
             let point_in_screen = to_screen_pos(&to_screen, cp);
 
             let rect = Rect::from_center_size(point_in_screen, control_point_draw_size);
-            let response = ui.interact(rect, parent_response.id.with(i), Sense::click_and_drag());
+            let response = ui
+                .interact(rect, parent_response.id.with(i), Sense::click_and_drag())
+                .on_hover_and_drag_cursor(CursorIcon::Grab)
+                .on_hover_text(control_point_hint(i, control_points.len()));
+            if response.dragged_by(Primary) {
+                ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+            }
 
             if dragged_point_response.is_none()
                 && (response.dragged_by(Primary) || response.clicked_by(Primary))
@@ -125,36 +139,32 @@ pub fn ui_ordered_control_points(
                 hovering_control_point = Some((response, i));
             }
 
-            let color = HsvaGamma {
-                h: cp.val()[2],
-                s: cp.val()[0],
-                v: cp.val()[1],
-                a: 1.0,
-            };
-
             Shape::circle_filled(
                 point_in_screen,
                 FILL_RADIUS_SCALE * control_point_radius,
-                color,
+                cp.val().color(),
             )
         })
         .collect();
 
+    let hovered_index = hovering_control_point.as_ref().map(|(_, i)| *i);
     let control_point_shapes: Vec<Shape> = control_points
         .iter()
         .enumerate()
         .map(|(i, cp)| {
             let point = to_screen_pos(&to_screen, cp);
+            let emphasized = hovered_index == Some(i) || marked_control_point_index == Some(i);
+            let outline = control_point_outline(cp.val().color(), emphasized);
 
             if i == 0 || i == control_points.len() - 1 {
                 Shape::rect_stroke(
                     Rect::from_center_size(point, Vec2::splat(control_point_radius)),
                     0.0,
-                    active_stroke,
+                    outline,
                     egui::StrokeKind::Middle,
                 )
             } else {
-                Shape::circle_stroke(point, control_point_radius, active_stroke)
+                Shape::circle_stroke(point, control_point_radius, outline)
             }
         })
         .collect();
@@ -173,16 +183,17 @@ pub fn ui_ordered_control_points(
 
     ui.painter().extend(control_point_shapes_fill);
     ui.painter().extend(control_point_shapes);
-    ui.painter().extend(tangent_shapes);
     ui.painter()
         .extend(tangent_paths.into_iter().map(Into::into));
+    ui.painter().extend(tangent_shapes);
 
     if let Some(marked) = marked_control_point_index {
-        let point = to_screen_pos(&to_screen, &control_points[marked]);
+        let marked_point = &control_points[marked];
+        let point = to_screen_pos(&to_screen, marked_point);
         ui.painter().add(Shape::rect_stroke(
             Rect::from_center_size(point, Vec2::splat(control_point_radius * 0.5)),
             0.0,
-            active_stroke,
+            control_point_outline(marked_point.val().color(), true),
             egui::StrokeKind::Middle,
         ));
     }
@@ -546,23 +557,30 @@ mod tests {
     }
 
     fn run_frames(frames: Vec<Vec<egui::Event>>) -> ControlPointUiResult {
+        run_frames_with_output(frames).0
+    }
+
+    fn run_frames_with_output(
+        frames: Vec<Vec<egui::Event>>,
+    ) -> (ControlPointUiResult, egui::FullOutput) {
         let ctx = egui::Context::default();
         let points = three_points_with_zero_middle_tangents();
         let mut result = ControlPointUiResult::default();
+        let mut output = egui::FullOutput::default();
         for events in std::iter::once(Vec::new()).chain(frames) {
             let input = egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0))),
                 events,
                 ..Default::default()
             };
-            let _ = ctx.run(input, |ctx| {
+            output = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let parent = ui.allocate_rect(PICKER_RECT, Sense::click_and_drag());
                     result = ui_ordered_control_points(ui, &points, Some(1), false, &parent, true);
                 });
             });
         }
-        result
+        (result, output)
     }
 
     fn button(pos: Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
@@ -676,5 +694,37 @@ mod tests {
                 "at {x}: {sample:?}"
             );
         }
+    }
+
+    #[test]
+    fn control_point_outline_is_white_on_dark_fill() {
+        let outline = control_point_outline(Color32::from_rgb(20, 20, 60), false);
+        assert_eq!(outline.color, Color32::WHITE);
+    }
+
+    #[test]
+    fn control_point_outline_is_black_on_bright_fill() {
+        let outline = control_point_outline(Color32::from_rgb(240, 240, 200), false);
+        assert_eq!(outline.color, Color32::BLACK);
+    }
+
+    #[test]
+    fn emphasized_control_point_outline_is_wider() {
+        let fill = Color32::from_rgb(20, 20, 60);
+        assert!(control_point_outline(fill, true).width > control_point_outline(fill, false).width);
+    }
+
+    #[test]
+    fn control_point_hint_is_one_based_and_mentions_right_click() {
+        let hint = control_point_hint(1, 4);
+        assert!(hint.contains("2 of 4"), "{hint}");
+        assert!(hint.to_lowercase().contains("right-click"), "{hint}");
+    }
+
+    #[test]
+    fn hovering_a_point_sets_grab_cursor() {
+        let (_, output) =
+            run_frames_with_output(vec![vec![egui::Event::PointerMoved(MIDDLE_CENTER)]]);
+        assert_eq!(output.platform_output.cursor_icon, egui::CursorIcon::Grab);
     }
 }
