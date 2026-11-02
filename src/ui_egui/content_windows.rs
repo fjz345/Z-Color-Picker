@@ -91,32 +91,28 @@ impl WindowZColorPickerOptions {
         spline_mode: &mut SplineMode,
         color_copy_format: &mut ColorStringCopy,
     ) {
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut options.is_curve_locked, "🔒")
-                .on_hover_text("Apply changes to all control points");
-            ui.checkbox(&mut options.is_hue_middle_interpolated, "🎨")
-                .on_hover_text("Only modify first/last control points");
-            const INSERT_RIGHT_UNICODE: &str = "👉";
-            const INSERT_LEFT_UNICODE: &str = "👈";
-            let insert_mode_unicode = if options.is_insert_right {
-                INSERT_RIGHT_UNICODE
+        ui.horizontal_wrapped(|ui| {
+            ui.checkbox(&mut options.is_curve_locked, "Lock")
+                .on_hover_text("Move all control points together");
+            ui.checkbox(&mut options.is_hue_middle_interpolated, "Auto hue")
+                .on_hover_text(
+                    "Only the first and last hue are editable; middle hues are interpolated",
+                );
+            let insert_label = if options.is_insert_right {
+                "Insert right"
             } else {
-                INSERT_LEFT_UNICODE
+                "Insert left"
             };
-            ui.checkbox(&mut options.is_insert_right, insert_mode_unicode)
-                .on_hover_text(format!(
-                    "Insert new points in {} direction",
-                    insert_mode_unicode
-                ));
-            ui.checkbox(&mut options.is_window_lock, "🆘")
+            ui.checkbox(&mut options.is_insert_right, insert_label)
+                .on_hover_text("Direction new points are inserted");
+            ui.checkbox(&mut options.is_window_lock, "Clamp")
                 .on_hover_text("Clamps the control points so they are contained");
-            ui.checkbox(&mut options.is_show_curvature_comb, "➰")
-                .on_hover_text("Show curvature comb");
-            ui.checkbox(&mut options.is_curvature_friendly, "📐")
-                .on_hover_text("Control points auto-adjust for consistent curvature");
+            ui.checkbox(&mut options.is_show_curvature_comb, "Comb")
+                .on_hover_text("Show curvature comb (Bezier mode)");
         });
 
         ui.horizontal(|ui| {
+            ui.label("Copy as");
             egui::ComboBox::new(12312312, "")
                 .selected_text(format!("{:?}", *color_copy_format))
                 .show_ui(ui, |ui| {
@@ -140,19 +136,18 @@ impl WindowZColorPickerOptions {
                 .response
                 .on_hover_text("Color Copy Format");
 
+            ui.label("Spline");
             egui::ComboBox::new(12312313, "")
-                .selected_text(format!("{:?}", &spline_mode))
+                .selected_text(spline_mode_label(*spline_mode))
                 .show_ui(ui, |ui| {
                     ui.set_min_width(60.0);
-                    let mut temp_spline_mode = spline_mode.clone();
-                    ui.selectable_value(&mut temp_spline_mode, SplineMode::Linear, "Linear");
-                    ui.selectable_value(&mut temp_spline_mode, SplineMode::Bezier, "Bezier");
-                    ui.selectable_value(
-                        &mut temp_spline_mode,
+                    for mode in [
+                        SplineMode::Linear,
+                        SplineMode::Bezier,
                         SplineMode::HermiteBezier,
-                        "Hermite",
-                    );
-                    *spline_mode = temp_spline_mode;
+                    ] {
+                        ui.selectable_value(spline_mode, mode, spline_mode_label(mode));
+                    }
                 })
                 .response
                 .on_hover_text("Spline Mode");
@@ -178,7 +173,22 @@ pub struct WindowPreset {
     pub delete_error: Option<String>,
     pub create_error: Option<String>,
     pub rename_error: Option<String>,
+    pub save_error: Option<String>,
     last_selection: Option<usize>,
+}
+
+fn spline_mode_label(mode: SplineMode) -> &'static str {
+    match mode {
+        SplineMode::Linear => "Linear",
+        SplineMode::Bezier => "Bezier",
+        SplineMode::HermiteBezier => "Hermite",
+    }
+}
+
+fn selected_preset(preset_handler: &PresetHandler) -> Option<&PresetEntity> {
+    preset_handler
+        .preset_selected_index
+        .and_then(|i| preset_handler.presets.get(i))
 }
 
 impl WindowPreset {
@@ -191,11 +201,40 @@ impl WindowPreset {
             delete_error: None,
             create_error: None,
             rename_error: None,
+            save_error: None,
             last_selection: None,
         }
     }
 
     pub fn update(&mut self) {}
+
+    fn save_selected(
+        &mut self,
+        preset_handler: &mut PresetHandler,
+        control_points: &[ControlPoint],
+        spline_mode: SplineMode,
+    ) {
+        let Some(preset) = preset_handler
+            .preset_selected_index
+            .and_then(|s| preset_handler.presets.get_mut(s))
+        else {
+            self.save_error = Some("No preset selected".to_string());
+            return;
+        };
+        preset.data.spline_mode = spline_mode;
+        preset.data.control_points = control_points.to_vec();
+        let name = preset.name.clone();
+        match preset_handler.save_selected_preset() {
+            Ok(()) => {
+                log::info!("Saved preset [{name}]");
+                self.save_error = None;
+            }
+            Err(e) => {
+                log::error!("{e}");
+                self.save_error = Some(e.to_string());
+            }
+        }
+    }
 
     pub fn draw_content(
         &mut self,
@@ -207,12 +246,8 @@ impl WindowPreset {
         let mut draw_result = WindowPresetDrawResult::default();
 
         ui.horizontal(|ui| {
-            let combobox_selected_text_to_show = match preset_handler.preset_selected_index {
-                Some(i) => preset_handler.presets[i.clamp(0, preset_handler.presets.len() - 1)]
-                    .name
-                    .to_string(),
-                None => "".to_string(),
-            };
+            let combobox_selected_text_to_show =
+                selected_preset(preset_handler).map_or("<None>", |p| p.name.as_str());
 
             let mut combobox_selected_index = 0;
             let mut combobox_has_selected = false;
@@ -267,27 +302,25 @@ impl WindowPreset {
                 }
             };
 
-            ui.checkbox(&mut preset_handler.auto_save_presets, "↻💾")
+            ui.checkbox(&mut preset_handler.auto_save_presets, "Auto-save")
                 .on_hover_text("Auto save preset");
-            if ui.button("Save").clicked_by(PointerButton::Primary) {
-                if let Some(s) = preset_handler.preset_selected_index {
-                    preset_handler.presets[s].data.spline_mode = *spline_mode;
-                    preset_handler.presets[s].data.control_points = control_points.to_vec();
-                    match preset_handler.save_selected_preset() {
-                        Ok(()) => log::info!("Saved preset [{}]", preset_handler.presets[s].name),
-                        Err(e) => log::error!("{e}"),
-                    }
-                } else {
-                    log::info!("Could not save preset, None selected");
-                }
+            let has_selection = selected_preset(preset_handler).is_some();
+            if ui
+                .add_enabled(has_selection, egui::Button::new("Save"))
+                .on_hover_text("Overwrite the selected preset with the current points")
+                .on_disabled_hover_text("Select a preset first")
+                .clicked_by(PointerButton::Primary)
+            {
+                self.save_selected(preset_handler, control_points, *spline_mode);
             }
-            if ui.button("Delete").clicked_by(PointerButton::Primary) {
-                if preset_handler.preset_selected_index.is_some() {
-                    self.delete_confirm_open = true;
-                    self.delete_error = None;
-                } else if let Err(e) = preset_handler.delete_selected_preset() {
-                    log::error!("{e}");
-                }
+            if ui
+                .add_enabled(has_selection, egui::Button::new("Delete"))
+                .on_hover_text("Delete the selected preset from disk")
+                .on_disabled_hover_text("Select a preset first")
+                .clicked_by(PointerButton::Primary)
+            {
+                self.delete_confirm_open = true;
+                self.delete_error = None;
             }
         });
 
@@ -300,7 +333,11 @@ impl WindowPreset {
         let selected = preset_handler.preset_selected_index;
         if selected != self.last_selection {
             self.rename_error = None;
+            self.save_error = None;
             self.last_selection = selected;
+        }
+        if let Some(error) = &self.save_error {
+            ui.colored_label(ui.visuals().error_fg_color, error);
         }
         let rename_check = selected.map(|s| preset_handler.check_name(&rename_text_field, Some(s)));
         let rename_reason = match rename_check {
@@ -316,7 +353,9 @@ impl WindowPreset {
 
             let mut was_text_box_enter = false;
             ui.push_id(rename_text_field_id, |ui| {
-                let text_widget = TextEdit::singleline(&mut rename_text_field).desired_width(200.0);
+                let text_widget = TextEdit::singleline(&mut rename_text_field)
+                    .hint_text("New name")
+                    .desired_width(200.0);
                 let text_response = ui.add(text_widget);
                 if text_response.changed() {
                     self.rename_error = None;
@@ -442,5 +481,90 @@ mod tests {
         handler.preset_selected_index = Some(1);
         draw_frame(&ctx, &mut window, &mut handler);
         assert_eq!(window.rename_error, None);
+    }
+
+    #[test]
+    fn spline_mode_label_names_every_mode() {
+        assert_eq!(spline_mode_label(SplineMode::Linear), "Linear");
+        assert_eq!(spline_mode_label(SplineMode::Bezier), "Bezier");
+        assert_eq!(spline_mode_label(SplineMode::HermiteBezier), "Hermite");
+    }
+
+    #[test]
+    fn save_selected_failure_sets_save_error_and_keeps_preset() {
+        let tmp = TempDir::new().unwrap();
+        let not_a_dir = tmp.path().join("presets");
+        std::fs::write(&not_a_dir, "").unwrap();
+        let mut handler = PresetHandler::new(not_a_dir);
+        handler.presets.push(PresetEntity::new(
+            "A",
+            AppDataCtx {
+                spline_mode: SplineMode::Linear,
+                control_points: Vec::new(),
+            },
+        ));
+        handler.preset_selected_index = Some(0);
+        let mut window = WindowPreset::new();
+
+        window.save_selected(&mut handler, &[], SplineMode::Bezier);
+
+        assert!(window.save_error.is_some());
+        assert_eq!(handler.presets.len(), 1);
+        assert_eq!(handler.presets[0].name, "A");
+    }
+
+    #[test]
+    fn save_selected_success_clears_save_error() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = handler_with_presets(&tmp, &["A"]);
+        handler.preset_selected_index = Some(0);
+        let mut window = WindowPreset::new();
+        window.save_error = Some("old".to_string());
+
+        window.save_selected(&mut handler, &[], SplineMode::Bezier);
+
+        assert_eq!(window.save_error, None);
+        assert!(tmp.path().join("A.json").is_file());
+    }
+
+    #[test]
+    fn save_selected_with_stale_index_sets_save_error() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = handler_with_presets(&tmp, &[]);
+        handler.preset_selected_index = Some(0);
+        let mut window = WindowPreset::new();
+
+        window.save_selected(&mut handler, &[], SplineMode::Bezier);
+
+        assert!(window.save_error.is_some());
+    }
+
+    #[test]
+    fn save_error_cleared_when_selection_changes() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = handler_with_presets(&tmp, &["A", "C"]);
+        let mut window = WindowPreset::new();
+        let ctx = egui::Context::default();
+
+        handler.preset_selected_index = Some(0);
+        draw_frame(&ctx, &mut window, &mut handler);
+        window.save_error = Some("disk full".to_string());
+        draw_frame(&ctx, &mut window, &mut handler);
+        assert!(window.save_error.is_some());
+
+        handler.preset_selected_index = Some(1);
+        draw_frame(&ctx, &mut window, &mut handler);
+        assert_eq!(window.save_error, None);
+    }
+
+    #[test]
+    fn stale_selection_with_no_presets_does_not_panic() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = handler_with_presets(&tmp, &[]);
+        handler.preset_selected_index = Some(0);
+        let mut window = WindowPreset::new();
+        let ctx = egui::Context::default();
+
+        draw_frame(&ctx, &mut window, &mut handler);
     }
 }
