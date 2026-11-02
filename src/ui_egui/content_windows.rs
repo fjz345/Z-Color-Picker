@@ -8,6 +8,7 @@ use crate::egui::InnerResponse;
 use crate::egui::PointerButton;
 use crate::egui::Ui;
 use crate::egui::Window;
+use crate::preset::delete_preset_from_disk;
 use crate::preset::PresetEntity;
 use crate::preset::PresetHandler;
 use crate::ui_egui::app::AppDataCtx;
@@ -168,25 +169,6 @@ impl WindowZColorPickerOptions {
                 control_points.reverse();
             }
         });
-
-        ui.horizontal(|ui| {
-            let rename_button = ui.button("Rename");
-
-            let rename_text_field_id = egui::Id::new(819181);
-            let mut rename_text_field: String = ui.memory(|mem| {
-                mem.data
-                    .get_temp::<String>(rename_text_field_id)
-                    .unwrap_or_default()
-            });
-            let mut was_text_box_enter = false;
-            ui.push_id(rename_text_field_id, |ui| {
-                let text_widget = TextEdit::singleline(&mut rename_text_field).desired_width(200.0);
-                let text_response = ui.add(text_widget);
-                if text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    was_text_box_enter = true;
-                }
-            });
-        });
     }
 
     fn draw_ui(
@@ -316,17 +298,17 @@ impl WindowPreset {
                 if let Some(s) = preset_handler.preset_selected_index {
                     preset_handler.presets[s].data.spline_mode = *spline_mode;
                     preset_handler.presets[s].data.control_points = control_points.to_vec();
-                    log::info!("Saved preset [{}]", preset_handler.presets[s].name);
+                    match preset_handler.save_selected_preset() {
+                        Ok(()) => log::info!("Saved preset [{}]", preset_handler.presets[s].name),
+                        Err(e) => log::error!("{e}"),
+                    }
                 } else {
                     log::info!("Could not save preset, None selected");
                 }
             }
             if ui.button("Delete").clicked_by(PointerButton::Primary) {
-                if let Some(s) = preset_handler.preset_selected_index {
-                    preset_handler.presets.remove(s);
-                    preset_handler.preset_selected_index = None;
-                } else {
-                    log::error!("Could not delete preset, None selected");
+                if let Err(e) = preset_handler.delete_selected_preset() {
+                    log::error!("{e}");
                 }
             }
         });
@@ -353,8 +335,23 @@ impl WindowPreset {
                 && (was_text_box_enter || rename_button.clicked_by(egui::PointerButton::Primary))
             {
                 if let Some(s) = preset_handler.preset_selected_index {
-                    preset_handler.presets[s].name = rename_text_field.clone();
-                    rename_text_field = "".to_string();
+                    // Write-through: a rename onto an existing name would overwrite that preset's file.
+                    if preset_handler
+                        .presets
+                        .iter()
+                        .any(|p| p.name == rename_text_field)
+                    {
+                        log::error!("Preset already exists with name {}", rename_text_field);
+                    } else {
+                        if let Err(e) = delete_preset_from_disk(&preset_handler.presets[s]) {
+                            log::error!("{e}");
+                        }
+                        preset_handler.presets[s].name = rename_text_field.clone();
+                        if let Err(e) = preset_handler.save_selected_preset() {
+                            log::error!("{e}");
+                        }
+                        rename_text_field = "".to_string();
+                    }
                 } else {
                     log::error!("Could not rename preset");
                 }

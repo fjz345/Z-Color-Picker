@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 use eframe::egui::{self, Color32, Pos2, Shape, Stroke, Ui, Vec2};
 
 use crate::datatypes::control_point::ControlPoint;
@@ -113,12 +111,6 @@ fn tangent_to_screen(rect: egui::Rect, tangent: &[f32; 3]) -> Vec2 {
     Vec2::new(tangent[0] * rect.width(), -tangent[1] * rect.height())
 }
 
-fn sorted_control_points<'a>(control_points: &'a [ControlPoint]) -> Vec<&'a ControlPoint> {
-    let mut sorted: Vec<&ControlPoint> = control_points.iter().collect();
-    sorted.sort_by(|a, b| a.t().partial_cmp(&b.t()).unwrap_or(Ordering::Equal));
-    sorted
-}
-
 fn cubic_for_segment(start: &ControlPoint, end: &ControlPoint, rect: egui::Rect) -> Cubic {
     let p0 = normalized_to_screen(rect, control_point_pos(start));
     let p3 = normalized_to_screen(rect, control_point_pos(end));
@@ -150,13 +142,14 @@ pub fn draw_curvature_comb(ui: &mut Ui, rect: egui::Rect, control_points: &[Cont
         return;
     }
 
-    let sorted = sorted_control_points(control_points);
     let tooth_color = Color32::from_rgba_unmultiplied(255, 255, 255, COMB_ALPHA);
     let outline_color = Color32::from_rgba_unmultiplied(255, 255, 255, COMB_OUTLINE_ALPHA);
-    let mut shapes = Vec::with_capacity((sorted.len() - 1) * (SAMPLES_PER_SEGMENT + 1) * 2);
-    for segment_index in 0..sorted.len() - 1 {
-        let start = sorted[segment_index];
-        let end = sorted[segment_index + 1];
+    let mut shapes =
+        Vec::with_capacity((control_points.len() - 1) * (SAMPLES_PER_SEGMENT + 1) * 2);
+    // Index order, not t order: spline keys are placed at t = index (see control_points_to_spline).
+    for (segment_index, pair) in control_points.windows(2).enumerate() {
+        let start = &pair[0];
+        let end = &pair[1];
 
         let cubic = cubic_for_segment(start, end, rect);
 

@@ -229,6 +229,29 @@ pub fn find_spline_max_t(spline: &Spline<f32, ControlPointValue>) -> f32 {
     max_t
 }
 
+/// Samples `spline` (built by `control_points_to_spline`) at `x` in [0, 1] across the real control points.
+pub fn sample_spline_normalized(
+    spline: &Spline<f32, ControlPointValue>,
+    spline_mode: SplineMode,
+    x: f32,
+) -> Option<ControlPointValue> {
+    match spline_mode {
+        SplineMode::HermiteBezier => {
+            // Real keys are at 1..=n, with phantom endpoint duplicates at 0 and n + 1.
+            let n = spline.len().checked_sub(2)?;
+            if n == 0 {
+                return None;
+            }
+            let t = 1.0 + x * (n - 1) as f32;
+            // CatmullRom needs keys[i + 2], so the sampler returns None exactly at the last real key.
+            spline
+                .clamped_sample(t)
+                .or_else(|| (t >= n as f32).then(|| spline.keys()[n].value))
+        }
+        _ => spline.clamped_sample(x * find_spline_max_t(spline)),
+    }
+}
+
 pub fn control_points_to_spline(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
@@ -289,5 +312,50 @@ pub fn control_points_to_spline(
                     .collect(),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn three_points() -> Vec<ControlPoint> {
+        vec![
+            ControlPoint::new_simple(ControlPointValue::new(0.0, 0.0, 0.2), 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 0.2), 0.5),
+            ControlPoint::new_simple(ControlPointValue::new(1.0, 1.0, 0.2), 1.0),
+        ]
+    }
+
+    #[test]
+    fn hermite_sample_at_end_returns_last_point() {
+        let cps = three_points();
+        let spline = control_points_to_spline(&cps, SplineMode::HermiteBezier);
+        assert_eq!(
+            sample_spline_normalized(&spline, SplineMode::HermiteBezier, 1.0),
+            Some(*cps[2].val())
+        );
+    }
+
+    #[test]
+    fn hermite_sample_at_start_returns_first_point() {
+        let cps = three_points();
+        let spline = control_points_to_spline(&cps, SplineMode::HermiteBezier);
+        assert_eq!(
+            sample_spline_normalized(&spline, SplineMode::HermiteBezier, 0.0),
+            Some(*cps[0].val())
+        );
+    }
+
+    #[test]
+    fn linear_sample_covers_first_segment() {
+        let cps = three_points();
+        let spline = control_points_to_spline(&cps, SplineMode::Linear);
+        assert_eq!(
+            sample_spline_normalized(&spline, SplineMode::Linear, 0.0),
+            Some(*cps[0].val())
+        );
+        let mid = sample_spline_normalized(&spline, SplineMode::Linear, 0.25).unwrap();
+        assert!((mid[0] - 0.25).abs() < 1e-6 && (mid[1] - 0.25).abs() < 1e-6);
     }
 }

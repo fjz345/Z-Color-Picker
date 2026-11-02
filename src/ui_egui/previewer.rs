@@ -15,7 +15,9 @@ use crate::{
         hsv_key_value::HsvKeyValue,
     },
     ui_egui::{
-        control_points::{control_points_to_spline, find_spline_max_t, flatten_control_points},
+        control_points::{
+            control_points_to_spline, flatten_control_points, sample_spline_normalized,
+        },
         gradient::color_function_gradient,
         ui_common::color_button,
     },
@@ -205,8 +207,6 @@ fn ui_previewer_curve(
     //     _ => spline = modify_spline_t_to_preview_sizes(spline, spline_mode, previewer_data),
     // };
 
-    let max_t = find_spline_max_t(&spline);
-
     let response = color_function_gradient(&mut previewer_ui_curve, rect.size(), |x| {
         if flatten_control_points.is_empty() {
             return HsvaGamma::default().into();
@@ -214,18 +214,10 @@ fn ui_previewer_curve(
             return flatten_control_points[0].val().color();
         }
 
-        let sample_x = match spline_mode {
-            SplineMode::HermiteBezier => {
-                let n_segments = flatten_control_points.len().saturating_sub(1) as f32;
-                1.0 + x * n_segments // map [0,1] to [1, len]
-            }
-            _ => x * max_t,
-        }
-        .max(1.0); // clamp lower bound only
-
-        let sample: HsvKeyValue = spline.clamped_sample(sample_x).unwrap_or(HsvKeyValue {
-            val: [1.0, 1.0, 1.0],
-        });
+        let sample: HsvKeyValue =
+            sample_spline_normalized(&spline, spline_mode, x).unwrap_or(HsvKeyValue {
+                val: [1.0, 1.0, 1.0],
+            });
         sample.color()
     });
 
@@ -249,18 +241,10 @@ fn ui_previewer_curve_quantized(
         _ => spline = modify_spline_t_to_preview_sizes(spline, spline_mode, previewer_data),
     };
 
-    let max_t = find_spline_max_t(&spline);
-
     let mut quantized_colors: Vec<HsvKeyValue> = Vec::new();
     for i in 0..number_levels {
-        let sample_x = match spline_mode {
-            SplineMode::HermiteBezier => {
-                1.0 + i as f32 / (number_levels) as f32 as f32 * (max_t - 2.0) as f32
-            }
-            _ => i as f32 / (number_levels - 1).max(1) as f32 as f32 * max_t,
-        };
-
-        let sample = spline.clamped_sample(sample_x).unwrap_or_default();
+        let x = i as f32 / (number_levels - 1).max(1) as f32;
+        let sample = sample_spline_normalized(&spline, spline_mode, x).unwrap_or_default();
         quantized_colors.push(sample);
     }
 

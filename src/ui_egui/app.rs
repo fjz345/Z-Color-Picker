@@ -21,7 +21,7 @@ use crate::{
     },
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead, Rgb},
     logger::LogCollector,
-    preset::{delete_all_presets_from_disk, save_all_presets_to_disk, PresetEntity, PresetHandler},
+    preset::PresetHandler,
     ui_egui::{
         clipboard::{
             write_color_to_clipboard, write_pixels_to_clipboard, ClipboardCopyEvent, ClipboardPopup,
@@ -57,7 +57,7 @@ struct MouseClickEvent {
     mouse_pos: Pos2,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AppDataCtx {
     pub spline_mode: SplineMode,
     pub control_points: Vec<ControlPoint>,
@@ -103,7 +103,7 @@ pub struct ZColorPickerAppContext {
     #[serde(skip)]
     double_click_event: Option<MouseClickEvent>,
     #[serde(skip)]
-    middle_click_event: Option<MouseClickEvent>,
+    pending_screenshot_rect: Option<Rect>,
     #[serde(skip)]
     clipboard_event: Option<ClipboardCopyEvent>,
     #[serde(skip)]
@@ -197,7 +197,7 @@ impl ZColorPickerAppContext {
             debug_window_control_points: DebugWindowControlPoints::new(Pos2 { x: 200.0, y: 200.0 }),
             debug_window_test: DebugWindowTestWindow::new(Pos2 { x: 200.0, y: 200.0 }),
             double_click_event: None,
-            middle_click_event: None,
+            pending_screenshot_rect: None,
             clipboard_event: None,
             clipboard_copy_window: ClipboardPopup::new(
                 false,
@@ -252,13 +252,6 @@ impl ZApp {
             app_ctx: app_ctx,
             log_buffer: log_buffer,
         }
-    }
-
-    fn sync_persets_on_disk(&self) {
-        let app_ctx = self.app_ctx.borrow();
-        delete_all_presets_from_disk().unwrap_or_else(|e| println!("{e}"));
-        save_all_presets_to_disk(app_ctx.preset_handler.presets())
-            .unwrap_or_else(|e| println!("{e}"));
     }
 
     fn init(&mut self) {
@@ -375,51 +368,41 @@ impl ZApp {
         ctx_write.presets_window.new_preset_window_text = text;
 
         if should_create {
-            let new_preset = PresetEntity {
-                name: ctx_write.presets_window.new_preset_window_text.clone(),
-                data: AppDataCtx {
-                    spline_mode,
-                    control_points,
-                },
-            };
-            ctx_write.preset_handler.presets.push(new_preset);
-            ctx_write.preset_handler.preset_selected_index =
-                Some(ctx_write.preset_handler.presets.len() - 1);
-
-            // Reset state
-            ctx_write.presets_window.new_preset_is_open = false;
-            ctx_write.presets_window.new_preset_window_text.clear();
+            let name = ctx_write.presets_window.new_preset_window_text.clone();
+            match ctx_write
+                .preset_handler
+                .create_preset(&name, &control_points, &spline_mode)
+            {
+                Ok(()) => {
+                    // Reset state
+                    ctx_write.presets_window.new_preset_is_open = false;
+                    ctx_write.presets_window.new_preset_window_text.clear();
+                }
+                Err(e) => log::error!("{e}"),
+            }
         }
     }
 
     fn draw_ui_tree(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Windows needs to be drawn before the tree
-        // self.show_create_preset_window(ctx);
-
-        let mut control_points = self.app_ctx.borrow().control_points.clone();
-        let mut spline_mode = self.app_ctx.borrow().spline_mode.clone();
-        let mut preset_handler = self.app_ctx.borrow().preset_handler.clone();
+        self.show_create_preset_window(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.app_ctx.borrow_mut().presets_window.draw_content(
-                ui,
-                &mut preset_handler,
-                &mut control_points,
-                &mut spline_mode,
-            );
-
             ui.with_layout(Layout::left_to_right(egui::Align::Min), |mut ui| {
                 let mut behavior = TreeBehavior {};
                 self.tree.ui(&mut behavior, ui);
 
                 // Copy to clipboard
-                let middle_mouse_clicked = ctx.input(|i| i.pointer.middle_down());
-                if middle_mouse_clicked {
+                let middle_mouse_pressed =
+                    ctx.input(|i| i.pointer.button_pressed(PointerButton::Middle));
+                if middle_mouse_pressed {
                     let interact_pos = ctx.input(|i| i.pointer.interact_pos());
                     if let Some(pos) = interact_pos {
-                        self.handle_middleclick_event(pos, ui, ctx, frame);
+                        self.handle_middleclick_event(pos, ctx, frame);
                     }
                 }
+                // The screenshot arrives in a later frame, possibly after the button is released.
+                self.handle_screenshot_event(ui);
 
                 self.draw_ui_post(ctx, &mut ui);
             });
@@ -427,11 +410,22 @@ impl ZApp {
             // auto-save-preset
             {
                 let mut app_ctx = self.app_ctx.borrow_mut();
-                if app_ctx.preset_handler.auto_save_presets {
-                    app_ctx
-                        .preset_handler
-                        .save_selected_preset()
-                        .unwrap_or_else(|e| println!("{e}"));
+                let app_ctx = &mut *app_ctx;
+                let preset_handler = &mut app_ctx.preset_handler;
+                if let (true, Some(s)) = (
+                    preset_handler.auto_save_presets,
+                    preset_handler.preset_selected_index,
+                ) {
+                    let current = AppDataCtx {
+                        spline_mode: app_ctx.spline_mode,
+                        control_points: app_ctx.control_points.clone(),
+                    };
+                    if preset_handler.presets[s].data != current {
+                        preset_handler.presets[s].data = current;
+                        preset_handler
+                            .save_selected_preset()
+                            .unwrap_or_else(|e| log::error!("{e}"));
+                    }
                 }
             }
         });
@@ -440,7 +434,6 @@ impl ZApp {
     fn handle_middleclick_event(
         &mut self,
         pointer_pos: Pos2,
-        ui: &egui::Ui,
         ctx: &egui::Context,
         _frame: &eframe::Frame,
     ) {
@@ -463,7 +456,16 @@ impl ZApp {
             Vec2::new(1.0, 1.0),
         ));
 
+        app_ctx.pending_screenshot_rect = Some(rect);
         ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+    }
+
+    fn handle_screenshot_event(&mut self, ui: &egui::Ui) {
+        let app_ctx = &mut self.app_ctx.borrow_mut();
+        let Some(rect) = app_ctx.pending_screenshot_rect else {
+            return;
+        };
+
         let rect_image = ui.input(|i| {
             for event in &i.raw.events {
                 if let egui::Event::Screenshot { image, .. } = event {
@@ -478,6 +480,7 @@ impl ZApp {
         });
 
         if let Some(img) = rect_image {
+            app_ctx.pending_screenshot_rect = None;
             let rgb_vec = img
                 .pixels
                 .iter()
@@ -594,10 +597,8 @@ impl ZApp {
                     log::info!("double click @({},{})", mouse_pos.x, mouse_pos.y);
                 }
 
-                app_ctx.middle_click_event = None;
                 if r.pointer.button_clicked(PointerButton::Middle) {
                     let mouse_pos: Pos2 = r.pointer.interact_pos().unwrap();
-                    app_ctx.middle_click_event = Some(MouseClickEvent { mouse_pos });
 
                     log::info!("middle click @({},{})", mouse_pos.x, mouse_pos.y);
                 }
@@ -658,7 +659,6 @@ impl eframe::App for ZApp {
                 self.process_ctx_inputs(ctx, frame);
             }
             AppState::Exit => {
-                self.sync_persets_on_disk();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             _ => {

@@ -130,6 +130,7 @@ pub fn load_preset_from_disk(dir_entry: &DirEntry) -> Result<PresetEntity> {
 
 pub fn save_preset_to_disk(preset: &PresetEntity) -> Result<()> {
     let preset_data_string = serde_json::to_string_pretty(&preset.data)?;
+    fs::create_dir_all(get_presets_path())?;
     let file_path = &get_preset_save_path(&preset);
 
     write_string_to_file(&preset_data_string, file_path)?;
@@ -153,22 +154,7 @@ pub fn get_preset_save_path(preset: &PresetEntity) -> String {
     file_path.to_path_buf().to_str().unwrap().to_string()
 }
 
-pub fn save_all_presets_to_disk(presets: &[PresetEntity]) -> Result<()> {
-    for preset in presets.iter() {
-        save_preset_to_disk(preset)?;
-    }
-    Ok(())
-}
-
 pub fn delete_presets_from_disk(presets: &[PresetEntity]) -> Result<()> {
-    for preset in presets.iter() {
-        delete_preset_from_disk(preset)?;
-    }
-    Ok(())
-}
-
-pub fn delete_all_presets_from_disk() -> Result<()> {
-    let presets: Vec<PresetEntity> = load_presets(get_presets_path().as_path())?;
     for preset in presets.iter() {
         delete_preset_from_disk(preset)?;
     }
@@ -199,9 +185,6 @@ impl Default for PresetHandler {
 }
 
 impl PresetHandler {
-    pub fn presets(&self) -> &Vec<PresetEntity> {
-        &self.presets
-    }
     pub fn presets_mut(&mut self) -> &mut Vec<PresetEntity> {
         &mut self.presets
     }

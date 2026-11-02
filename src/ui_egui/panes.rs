@@ -158,6 +158,7 @@ impl ZAppPane for ColorPickerOptionsPane {
         color_picker.options = options;
         mut_ctx.color_copy_format = color_copy_format;
         mut_ctx.options_window = options_window;
+        mut_ctx.presets_window = presets_window;
         mut_ctx.control_points = control_points;
         mut_ctx.spline_mode = spline_mode;
         mut_ctx.preset_handler = preset_handler;

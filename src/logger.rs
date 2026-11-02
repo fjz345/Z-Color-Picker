@@ -3,6 +3,7 @@ use log::{Metadata, Record, SetLoggerError};
 use std::sync::{Arc, Mutex, OnceLock};
 
 static GLOBAL_LOG_BUFFER: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
+const MAX_LOG_LINES: usize = 2000;
 pub struct LogCollector {
     pub buffer: Arc<Mutex<Vec<String>>>,
     delegate: Box<dyn log::Log>,
@@ -55,6 +56,11 @@ impl log::Log for LogCollector {
             // Capture in our buffer
             let mut buf = self.buffer.lock().unwrap();
             buf.push(format!("[{}] {}", record.level(), record.args()));
+            // Drop the oldest half at once so trimming stays amortized O(1) per line.
+            if buf.len() > MAX_LOG_LINES {
+                let excess = buf.len() - MAX_LOG_LINES / 2;
+                buf.drain(..excess);
+            }
         }
     }
 
@@ -68,23 +74,24 @@ pub fn ui_log_window(
     log_buffer: Arc<Mutex<Vec<String>>>,
     scroll_to_bottom: &mut bool,
 ) {
-    // Lock and clone logs for UI rendering
-    let logs = {
-        let buf = log_buffer.lock().unwrap();
-        buf.clone()
-    };
+    let num_lines = log_buffer.lock().unwrap().len();
+    let row_height = ui.text_style_height(&egui::TextStyle::Body);
 
     // ScrollArea with vertical scrollbar and full size
     let scroll_response = ScrollArea::vertical()
         .auto_shrink([false; 2]) // Don't shrink smaller than contents
         .stick_to_bottom(*scroll_to_bottom)
-        .show(ui, |ui| {
-            // Fill available width & stretch height as needed
-            ui.vertical(|ui| {
-                for line in logs {
-                    ui.label(line);
-                }
-            });
+        .show_rows(ui, row_height, num_lines, |ui, row_range| {
+            // Copy only the visible rows and release the lock before drawing: anything
+            // that logs while the lock is held would deadlock in LogCollector::log.
+            let visible: Vec<String> = {
+                let buf = log_buffer.lock().unwrap();
+                let end = row_range.end.min(buf.len());
+                buf[row_range.start.min(end)..end].to_vec()
+            };
+            for line in visible {
+                ui.label(line);
+            }
         });
 
     let has_scroll = scroll_response.content_size.y > scroll_response.inner_rect.size().y;

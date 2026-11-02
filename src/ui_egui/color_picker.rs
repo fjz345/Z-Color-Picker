@@ -504,7 +504,7 @@ pub fn main_color_picker(
         if let Some(t) = delta_t {
             if let Some(_index) = is_modifying_index {
                 for cp in ctx.control_points.iter_mut() {
-                    *cp.t_mut() += t;
+                    *cp.t_mut() -= t;
                     *cp.t_mut() = cp.t().clamp(0.0, 1.0);
                 }
             }
@@ -675,7 +675,7 @@ fn handle_control_points_ui(
     if let Some(r) = dragged_point {
         if r.dragged_by(PointerButton::Primary) {
             *ctx.dragging_index = selected_index;
-            if let Some(index) = *is_modifying_index {
+            if let Some(index) = selected_index {
                 let cp = &mut ctx.control_points[index];
                 apply_drag_delta_3(
                     &mut cp.val_mut().val,
@@ -686,7 +686,7 @@ fn handle_control_points_ui(
 
             if ctx.is_curve_locked {
                 for (i, cp) in ctx.control_points.iter_mut().enumerate() {
-                    if i == is_modifying_index.unwrap_or(0) {
+                    if i == selected_index.unwrap_or(0) {
                         continue;
                     }
                     apply_drag_delta_3(
@@ -861,8 +861,7 @@ fn handle_t_slider(
     if t_response.clicked_by(PointerButton::Primary)
         || t_response.dragged_by(PointerButton::Primary)
     {
-        let t_res = (*t_to_show - pick_t).clamp(0.0, 1.0);
-        return Some(t_res);
+        return Some(*t_to_show - pick_t);
     } else {
         None
     }
