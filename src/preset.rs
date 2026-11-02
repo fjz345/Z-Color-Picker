@@ -12,7 +12,7 @@ use crate::{
     error::{Result, ZError},
     ui_egui::app::AppDataCtx,
 };
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 
 use crate::fs::write_string_to_file;
 
@@ -202,7 +202,7 @@ pub fn validate_preset_name<'a>(
     Ok(())
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct PresetHandler {
     #[serde(skip)]
     pub presets: Vec<PresetEntity>,
@@ -213,6 +213,21 @@ pub struct PresetHandler {
     presets_dir: PathBuf,
     #[serde(skip)]
     failed_auto_save: Option<AppDataCtx>,
+    #[serde(default, rename = "selected_preset")]
+    restored_selection: Option<String>,
+}
+
+impl Serialize for PresetHandler {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let selected_preset = self
+            .preset_selected_index
+            .and_then(|i| self.presets.get(i))
+            .map(|preset| preset.name.as_str());
+        let mut state = serializer.serialize_struct("PresetHandler", 2)?;
+        state.serialize_field("auto_save_presets", &self.auto_save_presets)?;
+        state.serialize_field("selected_preset", &selected_preset)?;
+        state.end()
+    }
 }
 
 impl Default for PresetHandler {
@@ -229,6 +244,7 @@ impl PresetHandler {
             auto_save_presets: false,
             presets_dir,
             failed_auto_save: None,
+            restored_selection: None,
         }
     }
 
@@ -280,7 +296,16 @@ impl PresetHandler {
 
     pub fn init_presets(&mut self) {
         self.presets = load_presets(&self.presets_dir);
-        if self
+        if let Some(name) = self.restored_selection.take() {
+            let lowercase_name = name.to_lowercase();
+            self.preset_selected_index = self
+                .presets
+                .iter()
+                .position(|preset| preset.name.to_lowercase() == lowercase_name);
+            if self.preset_selected_index.is_none() {
+                log::info!("Previously selected preset {name:?} was not found");
+            }
+        } else if self
             .preset_selected_index
             .is_some_and(|s| s >= self.presets.len())
         {
@@ -993,5 +1018,70 @@ mod tests {
         handler.apply_selected_preset(&mut points, &mut mode);
 
         assert!(!handler.has_failed_auto_save());
+    }
+
+    fn handler_with_a_and_b_selected() -> (TempDir, PresetHandler) {
+        let (tmp, mut handler) = temp_handler();
+        create(&mut handler, "A", SplineMode::Linear).unwrap();
+        create(&mut handler, "B", SplineMode::Bezier).unwrap();
+        (tmp, handler)
+    }
+
+    fn restore(handler: &PresetHandler, saved: serde_json::Value) -> PresetHandler {
+        let mut loaded: PresetHandler = serde_json::from_value(saved).unwrap();
+        loaded.presets_dir = handler.presets_dir.clone();
+        loaded.init_presets();
+        loaded
+    }
+
+    fn selected_name(handler: &PresetHandler) -> Option<&str> {
+        handler
+            .preset_selected_index
+            .map(|i| handler.presets[i].name.as_str())
+    }
+
+    #[test]
+    fn selection_survives_serde_round_trip() {
+        let (_tmp, handler) = handler_with_a_and_b_selected();
+        let loaded = restore(&handler, serde_json::to_value(&handler).unwrap());
+        assert_eq!(selected_name(&loaded), Some("B"));
+    }
+
+    #[test]
+    fn restored_selection_matches_name_ignoring_case() {
+        let (_tmp, handler) = handler_with_a_and_b_selected();
+        let saved = serde_json::json!({ "auto_save_presets": false, "selected_preset": "b" });
+        assert_eq!(selected_name(&restore(&handler, saved)), Some("B"));
+    }
+
+    #[test]
+    fn restored_selection_of_missing_preset_selects_nothing() {
+        let (_tmp, handler) = handler_with_a_and_b_selected();
+        let saved = serde_json::json!({ "auto_save_presets": false, "selected_preset": "Gone" });
+        assert_eq!(restore(&handler, saved).preset_selected_index, None);
+    }
+
+    #[test]
+    fn state_without_selected_preset_still_loads() {
+        let (_tmp, handler) = handler_with_a_and_b_selected();
+        let loaded = restore(&handler, serde_json::json!({ "auto_save_presets": true }));
+        assert!(loaded.auto_save_presets);
+        assert_eq!(loaded.preset_selected_index, None);
+    }
+
+    #[test]
+    fn serialized_selection_follows_rename_and_clear() {
+        let (_tmp, mut handler) = handler_with_a_and_b_selected();
+        handler.rename_preset(1, "C").unwrap();
+        assert_eq!(
+            serde_json::to_value(&handler).unwrap()["selected_preset"],
+            "C"
+        );
+        handler.preset_selected_index = None;
+        let serialized = serde_json::to_value(&handler).unwrap();
+        assert_eq!(
+            serialized.get("selected_preset"),
+            Some(&serde_json::Value::Null)
+        );
     }
 }
