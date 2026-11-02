@@ -101,7 +101,7 @@ pub fn ui_ordered_spline_gradient(
 const RIBBON_HALO_EDGE: f32 = 1.25;
 const RIBBON_HALO_OPACITY: f32 = 0.6;
 
-fn ribbon_halo_stroke(fill: Color32, fill_width: f32) -> Stroke {
+pub(crate) fn ribbon_halo_stroke(fill: Color32, fill_width: f32) -> Stroke {
     Stroke::new(
         fill_width + 2.0 * RIBBON_HALO_EDGE,
         contrast_color(fill).gamma_multiply(RIBBON_HALO_OPACITY),

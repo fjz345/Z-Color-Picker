@@ -951,6 +951,7 @@ fn handle_t_slider(
     .interact(Sense::drag())
     .on_hover_text(strip_hint(Strip::T, is_modifying_index.is_some()));
 
+    let curve_slot = ui.painter().add(Shape::Noop);
     let (_t_response_cp, t_selected_index) =
         ui_t_control_points_overlay(ui, &t_response, ctx.control_points);
 
@@ -958,7 +959,10 @@ fn handle_t_slider(
         *is_modifying_index = Some(new_index);
     }
 
-    draw_t_slider_curve(ui, t_response.rect, ctx.control_points);
+    ui.painter().set(
+        curve_slot,
+        t_slider_curve_shape(t_response.rect, ctx.control_points),
+    );
 
     if t_response.clicked_by(PointerButton::Primary)
         || t_response.dragged_by(PointerButton::Primary)
@@ -1002,14 +1006,9 @@ fn hue_gizmo(
     }
 }
 
-/// Draw a line representing the t values of control points across the slider
-fn draw_t_slider_curve(
-    ui: &mut egui::Ui,
-    slider_rect: egui::Rect,
-    control_points: &[ControlPoint],
-) {
+fn t_slider_curve_shape(slider_rect: egui::Rect, control_points: &[ControlPoint]) -> Shape {
     if control_points.is_empty() {
-        return;
+        return Shape::Noop;
     }
 
     let mut points = Vec::with_capacity(control_points.len());
@@ -1023,10 +1022,12 @@ fn draw_t_slider_curve(
         points.push(pos2(x, y));
     }
 
-    ui.painter().add(egui::Shape::line(
-        points,
-        egui::Stroke::new(2.0, egui::Color32::WHITE),
-    ));
+    let stroke = Stroke::new(2.0, Color32::WHITE);
+    let halo = crate::ui_egui::curves::ribbon_halo_stroke(stroke.color, stroke.width);
+    Shape::Vec(vec![
+        Shape::line(points.clone(), halo),
+        Shape::line(points, stroke),
+    ])
 }
 
 pub fn ui_t_control_points_overlay(
@@ -1606,6 +1607,82 @@ mod tests {
         let frames = primary_click_frames(t_strip_pos(0.125));
         let points = run_t_slider_with_first_point_selected(frames);
         assert!((*points[0].t() - 0.125).abs() < 1e-5, "{}", points[0].t());
+    }
+
+    #[test]
+    fn t_curve_is_painted_under_the_gizmos_with_a_dark_halo() {
+        let mut points = two_strip_points();
+        points.insert(
+            1,
+            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.6, 0.5), 0.5),
+        );
+        let mut last_modifying_point_index = None;
+        let mut dragging_index = None;
+        let mut control_point_right_clicked = None;
+        let egui_ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0))),
+            ..Default::default()
+        };
+        let output = egui_ctx.run(input, |egui_ctx| {
+            egui::CentralPanel::default().show(egui_ctx, |ui| {
+                let mut ctx = MainColorPickerCtx {
+                    control_points: &mut points,
+                    spline_mode: SplineMode::Linear,
+                    color_copy_format: ColorStringCopy::HEXNOA,
+                    last_modifying_point_index: &mut last_modifying_point_index,
+                    dragging_index: &mut dragging_index,
+                    control_point_right_clicked: &mut control_point_right_clicked,
+                    is_hue_middle_interpolated: false,
+                    is_curve_locked: false,
+                    is_window_lock: false,
+                    is_show_curvature_comb: false,
+                };
+                let mut is_modifying_index = None;
+                let mut t_to_show = 0.0;
+                ui.scope_builder(egui::UiBuilder::new().max_rect(STRIP_RECT), |ui| {
+                    handle_t_slider(
+                        ui,
+                        &mut t_to_show,
+                        STRIP_RECT.size(),
+                        &mut ctx,
+                        &mut is_modifying_index,
+                    )
+                });
+            });
+        });
+        let shapes: Vec<Shape> = output
+            .shapes
+            .into_iter()
+            .flat_map(|clipped| match clipped.shape {
+                Shape::Vec(shapes) => shapes,
+                shape => vec![shape],
+            })
+            .collect();
+        let (curve, gizmos): (Vec<_>, Vec<_>) = shapes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, shape)| match shape {
+                Shape::Path(path) => Some((i, path)),
+                _ => None,
+            })
+            .partition(|(_, path)| !path.closed);
+        assert_eq!(gizmos.len(), 3);
+        let [(halo_index, halo), (line_index, line)] = curve[..] else {
+            panic!("expected a halo and a line, got {} open paths", curve.len());
+        };
+        let solid = |stroke: &egui::epaint::PathStroke| match stroke.color {
+            egui::epaint::ColorMode::Solid(color) => color,
+            _ => panic!("expected a solid stroke"),
+        };
+        assert!(halo_index < line_index);
+        assert!(gizmos.iter().all(|(i, _)| line_index < *i));
+        assert_eq!(halo.points, line.points);
+        assert_eq!(solid(&line.stroke), Color32::WHITE);
+        assert!(halo.stroke.width > line.stroke.width);
+        assert_eq!(contrast_color(Color32::WHITE), Color32::BLACK);
+        assert_eq!(solid(&halo.stroke).to_opaque(), Color32::BLACK);
+        assert!(solid(&halo.stroke).a() > 0);
     }
 
     #[test]
