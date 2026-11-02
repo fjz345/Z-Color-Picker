@@ -78,6 +78,7 @@ pub fn load_presets(dir: &Path) -> Vec<PresetEntity> {
             Err(e) => log::warn!("Skipping {}: {e}", path.display()),
         }
     }
+    presets.sort_by_cached_key(|preset| (preset.name.to_lowercase(), preset.name.clone()));
     presets
 }
 
@@ -91,7 +92,27 @@ fn load_preset_from_disk(path: &Path) -> Result<PresetEntity> {
         .ok_or_else(|| ZError::Message("file name is not valid UTF-8".to_string()))?;
     let string = fs::read_to_string(path)?;
     let preset_data = serde_json::from_str(&string)?;
+    if let Some(i) = first_non_finite_point(&preset_data) {
+        return Err(ZError::Message(format!("non-finite value in point {i}")));
+    }
     Ok(PresetEntity::new(name, preset_data))
+}
+
+fn first_non_finite_point(data: &AppDataCtx) -> Option<usize> {
+    data.control_points.iter().position(|point| {
+        let tangent_components = point
+            .tangents()
+            .iter()
+            .flatten()
+            .flat_map(|tangent| tangent.val);
+        !point
+            .val()
+            .val
+            .into_iter()
+            .chain([*point.t()])
+            .chain(tangent_components)
+            .all(f32::is_finite)
+    })
 }
 
 pub fn save_preset_to_disk(dir: &Path, preset: &PresetEntity) -> Result<()> {
@@ -824,6 +845,53 @@ mod tests {
         fs::write(dir.join("Bad.json"), "{ not json").unwrap();
         handler.init_presets();
         assert_eq!(names(&handler), ["Good"]);
+    }
+
+    #[test]
+    fn init_presets_skips_presets_with_non_finite_numbers() {
+        let (_tmp, mut handler) = temp_handler();
+        let dir = handler.presets_dir.clone();
+        fs::create_dir_all(&dir).unwrap();
+        let good_json = serde_json::to_string_pretty(&data(SplineMode::Linear)).unwrap();
+        fs::write(dir.join("Good.json"), good_json).unwrap();
+        let bad_files = [
+            (
+                "Bad.json",
+                SAMPLE_PRESET_JSON.replace("[0.25, 0.5, 0.75]", "[0.25, 1e39, 0.75]"),
+            ),
+            (
+                "BadT.json",
+                SAMPLE_PRESET_JSON.replace("\"t\": 1.0", "\"t\": -1e39"),
+            ),
+            (
+                "BadTangent.json",
+                SAMPLE_PRESET_JSON.replace("[0.125, -0.25, 0.0]", "[0.125, 1e39, 0.0]"),
+            ),
+        ];
+        for (file_name, json) in &bad_files {
+            fs::write(dir.join(file_name), json).unwrap();
+        }
+        handler.init_presets();
+        assert_eq!(names(&handler), ["Good"]);
+        for (file_name, json) in &bad_files {
+            assert_eq!(fs::read(dir.join(file_name)).unwrap(), json.as_bytes());
+        }
+    }
+
+    #[test]
+    fn init_presets_returns_presets_sorted_by_name() {
+        let (_tmp, mut handler) = temp_handler();
+        fs::create_dir_all(&handler.presets_dir).unwrap();
+        let preset_json = serde_json::to_string_pretty(&data(SplineMode::Linear)).unwrap();
+        for name in ["b", "A", "C", "_d"] {
+            fs::write(
+                handler.presets_dir.join(format!("{name}.json")),
+                &preset_json,
+            )
+            .unwrap();
+        }
+        handler.init_presets();
+        assert_eq!(names(&handler), ["_d", "A", "b", "C"]);
     }
 
     #[test]
