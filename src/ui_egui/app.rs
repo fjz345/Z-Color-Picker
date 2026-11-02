@@ -317,12 +317,17 @@ impl ZApp {
 
         const PICKER_FRACTION: f32 = 0.75;
         const MASTER_FRACTION: f32 = 0.8;
+        const PICKER_COLUMN_FRACTION: f32 = 0.3;
         let vertical_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
             egui_tiles::LinearDir::Vertical,
             [tile_color_picker, tile_options],
             PICKER_FRACTION,
         ));
-        let master_tile = tiles.insert_horizontal_tile(vec![vertical_tile, tile_previewer]);
+        let master_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
+            egui_tiles::LinearDir::Horizontal,
+            [vertical_tile, tile_previewer],
+            PICKER_COLUMN_FRACTION,
+        ));
         tabs.push(tiles.insert_container(egui_tiles::Linear::new_binary(
             egui_tiles::LinearDir::Vertical,
             [master_tile, tile_console],
@@ -892,8 +897,9 @@ mod tests {
     }
 
     #[test]
-    fn default_layout_fits_the_picker_and_keeps_the_log_small() {
+    fn default_layout_fits_the_picker_widens_the_previewer_and_keeps_the_log_small() {
         const MIN_PICKER_PANE_HEIGHT: f32 = 323.0;
+        const MIN_PICKER_PANE_WIDTH: f32 = 383.0;
         const MIN_OPTIONS_PANE_HEIGHT: f32 = 150.0;
         let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1040.0));
         let mut tree = ZApp::create_tree(
@@ -910,19 +916,31 @@ mod tests {
                 egui::CentralPanel::default().show(ctx, |ui| tree.ui(&mut TreeBehavior {}, ui));
             });
         }
-        let pane_height = |is_pane: fn(&Pane) -> bool| {
+        let pane_rect = |is_pane: fn(&Pane) -> bool| {
             let (id, _) = tree
                 .tiles
                 .iter()
                 .find(|(_, tile)| matches!(tile, Tile::Pane(pane) if is_pane(pane)))
                 .unwrap();
-            tree.tiles.rect(*id).unwrap().height()
+            tree.tiles.rect(*id).unwrap()
         };
 
-        let picker = pane_height(|pane| matches!(pane, Pane::ColorPicker(_)));
-        let options = pane_height(|pane| matches!(pane, Pane::ColorPickerOptionsPane(_)));
-        let log = pane_height(|pane| matches!(pane, Pane::Log(_)));
-        assert!(picker >= MIN_PICKER_PANE_HEIGHT, "picker pane {picker}");
+        let picker = pane_rect(|pane| matches!(pane, Pane::ColorPicker(_)));
+        let options = pane_rect(|pane| matches!(pane, Pane::ColorPickerOptionsPane(_))).height();
+        let previewer = pane_rect(|pane| matches!(pane, Pane::Previewer(_))).width();
+        let log = pane_rect(|pane| matches!(pane, Pane::Log(_))).height();
+        assert!(
+            picker.height() >= MIN_PICKER_PANE_HEIGHT,
+            "picker pane {picker:?}"
+        );
+        assert!(
+            picker.width() >= MIN_PICKER_PANE_WIDTH,
+            "picker pane {picker:?}"
+        );
+        assert!(
+            previewer >= 0.6 * screen.width(),
+            "previewer pane {previewer}"
+        );
         assert!(log < 0.25 * screen.height(), "log pane {log}");
         assert!(options >= MIN_OPTIONS_PANE_HEIGHT, "options pane {options}");
     }
