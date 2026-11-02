@@ -52,7 +52,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 - `HermiteBezier` is actually Catmull-Rom: the endpoints are duplicated as phantom keys.
 - There is no `Polynomial` mode; saved JSON that names it fails to parse.
 - `flatten_control_points` unwraps hue across the 0/1 boundary before interpolation.
-- The previewer (`src/ui_egui/previewer.rs`) samples with `sample_spline_normalized`, which maps x in [0,1] onto the real keys. It handles the end of a Catmull-Rom spline, where the `splines` sampler returns `None`. For non-Hermite modes, the quantized preview first remaps key `t` to the preview sizes (`modify_spline_t_to_preview_sizes`).
+- The previewer (`src/ui_egui/previewer.rs`) samples with `sample_spline_normalized`, which maps x in [0,1] onto the real keys. It handles the end of a Catmull-Rom spline, where the `splines` sampler returns `None`. In every mode, the quantized preview first remaps the real keys' `t` to the centres of the key bands (`points_preview_sizes`, `modify_spline_t_to_preview_sizes`); the Catmull-Rom phantom keys are mirrored one key spacing outside the end keys. The middle curve strip ignores the band widths.
 - Curvature comb drawing lives in `src/ui_egui/curvature.rs` and has its own cubic evaluation. It is toggled via `ZColorPickerOptions::is_show_curvature_comb`.
 
 ### Presets

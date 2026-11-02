@@ -136,28 +136,34 @@ fn modify_spline_t_to_preview_sizes(
     previewer_data: &PreviewerData,
 ) -> Spline<f32, ControlPointValue> {
     let preview_sizes = &previewer_data.points_preview_sizes;
-
-    let _hermite_index_offset = match spline_mode {
-        SplineMode::HermiteBezier => {
-            if spline.len() >= 2 {
-                1
-            } else {
-                0
-            }
-        }
-        _ => 0,
+    let mut keys = spline.keys().to_vec();
+    let real_keys = match spline_mode {
+        SplineMode::Linear | SplineMode::Bezier => 0..keys.len(),
+        SplineMode::HermiteBezier => 1..keys.len().saturating_sub(1),
     };
-
-    let mut spline_as_vec = spline.keys().to_vec();
-    let mut accum_size = 0.0;
-    for i in 0..preview_sizes.len() {
-        let center_of_preview = accum_size + preview_sizes[i] * 0.5;
-        spline_as_vec[i + 0].t = center_of_preview;
-
-        accum_size += preview_sizes[i];
+    assert_eq!(
+        real_keys.len(),
+        preview_sizes.len(),
+        "previewer band sizes must match the control points"
+    );
+    if real_keys.len() <= 1 {
+        return spline;
     }
 
-    Spline::from_vec(spline_as_vec)
+    let mut accum_size = 0.0;
+    for (key, size) in keys[real_keys.clone()].iter_mut().zip(preview_sizes) {
+        key.t = accum_size + size * 0.5;
+        accum_size += size;
+    }
+
+    if spline_mode == SplineMode::HermiteBezier {
+        // Mirrored like the index keys, so equal sizes only rescale the Catmull-Rom spline.
+        let last = real_keys.end - 1;
+        keys[0].t = 2.0 * keys[1].t - keys[2].t;
+        keys[last + 1].t = 2.0 * keys[last].t - keys[last - 1].t;
+    }
+
+    Spline::from_vec(keys)
 }
 
 fn ui_previewer_curve(
@@ -230,12 +236,11 @@ fn quantized_colors(
         return Vec::new();
     }
     let flatten_control_points = flatten_control_points(control_points);
-    let mut spline = control_points_to_spline(&flatten_control_points[..], spline_mode);
-
-    match spline_mode {
-        SplineMode::HermiteBezier => {}
-        _ => spline = modify_spline_t_to_preview_sizes(spline, spline_mode, previewer_data),
-    };
+    let spline = modify_spline_t_to_preview_sizes(
+        control_points_to_spline(&flatten_control_points[..], spline_mode),
+        spline_mode,
+        previewer_data,
+    );
 
     (0..levels)
         .map(|i| {
@@ -561,6 +566,60 @@ mod tests {
         assert_eq!(colors.len(), 3);
         for (color, cp) in colors.iter().zip(&cps) {
             assert_close(*color, *cp.val());
+        }
+    }
+
+    fn sv_ramp_points() -> Vec<ControlPoint> {
+        [0.0, 0.5, 1.0]
+            .into_iter()
+            .map(|sv| ControlPoint::new_simple(ControlPointValue::new(sv, sv, 0.2), sv))
+            .collect()
+    }
+
+    fn with_widths(widths: &[f32]) -> PreviewerData {
+        PreviewerData {
+            points_preview_sizes: widths.to_vec(),
+            ..PreviewerData::new(widths.len())
+        }
+    }
+
+    #[test]
+    fn quantized_colors_linear_follows_band_widths() {
+        let cps = sv_ramp_points();
+        for (mode, widths, middle_sv, tolerance) in [
+            (SplineMode::Linear, [100.0, 100.0, 300.0], 0.625, 1e-5),
+            (SplineMode::Linear, [100.0, 100.0, 400.0], 0.65, 1e-4),
+            (SplineMode::Bezier, [100.0, 100.0, 400.0], 0.608, 1e-3),
+        ] {
+            let colors = quantized_colors(&cps, mode, &with_widths(&widths), 3);
+            for c in 0..2 {
+                assert!(
+                    (colors[1][c] - middle_sv).abs() < tolerance,
+                    "{mode:?} {widths:?}: {colors:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn quantized_colors_hermite_follows_band_widths() {
+        let cps = sv_ramp_points();
+        let data = with_widths(&[100.0, 100.0, 300.0]);
+        let colors = quantized_colors(&cps, SplineMode::HermiteBezier, &data, 4);
+        for (level, key) in [(0, 0), (1, 1), (3, 2)] {
+            assert_close(colors[level], *cps[key].val());
+        }
+    }
+
+    #[test]
+    fn quantized_colors_hermite_equal_widths_match_index_keyed_spline() {
+        let cps = sv_ramp_points();
+        let spline = control_points_to_spline(&cps, SplineMode::HermiteBezier);
+        let colors = quantized_colors(&cps, SplineMode::HermiteBezier, &PreviewerData::new(3), 7);
+        for (i, color) in colors.iter().enumerate() {
+            let x = i as f32 / 6.0;
+            let expected = sample_spline_normalized(&spline, SplineMode::HermiteBezier, x);
+            assert_close(*color, expected.unwrap());
         }
     }
 

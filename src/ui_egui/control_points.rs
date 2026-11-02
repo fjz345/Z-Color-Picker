@@ -233,16 +233,18 @@ pub fn sample_spline_normalized(
     let x = x.clamp(0.0, 1.0);
     match spline_mode {
         SplineMode::HermiteBezier => {
-            // Real keys are at 1..=n, with phantom endpoint duplicates at 0 and n + 1.
+            // Real keys are keys[1..=n], with phantom endpoint duplicates at keys[0] and keys[n + 1].
             let n = spline.len().checked_sub(2)?;
             if n == 0 {
                 return None;
             }
-            let t = 1.0 + x * (n - 1) as f32;
+            let first = spline.keys()[1].t;
+            let last = spline.keys()[n].t;
+            let t = first + x * (last - first);
             // CatmullRom needs keys[i + 2], so the sampler returns None exactly at the last real key.
             spline
                 .clamped_sample(t)
-                .or_else(|| (t >= n as f32).then(|| spline.keys()[n].value))
+                .or_else(|| (t >= last).then(|| spline.keys()[n].value))
         }
         _ => {
             let first = spline.keys().first()?.t;
@@ -848,5 +850,25 @@ mod tests {
         let (_, output) =
             run_frames_with_output(vec![vec![egui::Event::PointerMoved(MIDDLE_CENTER)]]);
         assert_eq!(output.platform_output.cursor_icon, egui::CursorIcon::Grab);
+    }
+
+    #[test]
+    fn hermite_sample_follows_affine_key_t() {
+        let index_keyed = control_points_to_spline(&distinct_points(4), SplineMode::HermiteBezier);
+        let affine_t: Vec<f32> = index_keyed
+            .keys()
+            .iter()
+            .map(|k| 50.0 + 100.0 * k.t)
+            .collect();
+        let affine = with_key_t(&index_keyed, &affine_t);
+        for i in 0..=20 {
+            let x = i as f32 / 20.0;
+            let expected = sample_spline_normalized(&index_keyed, SplineMode::HermiteBezier, x);
+            assert_sample_near(
+                sample_spline_normalized(&affine, SplineMode::HermiteBezier, x),
+                expected.unwrap(),
+                &format!("x {x}"),
+            );
+        }
     }
 }
