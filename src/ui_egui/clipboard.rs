@@ -1,13 +1,9 @@
 use std::{ops::Rem, time::Instant};
 
 use arboard::{Clipboard, ImageData};
-use ecolor::Color32;
-use eframe::egui::{self, pos2, ColorImage, Pos2, Rect};
+use eframe::egui::{self, pos2, vec2, ColorImage, Pos2, Rect, Vec2};
 
-use crate::{
-    common::ColorStringCopy, error::Result, image_processing::FramePixelRead,
-    ui_egui::color_picker::format_color_as,
-};
+use crate::{error::Result, image_processing::FramePixelRead};
 
 pub fn write_string_to_clipboard(text: String) -> Result<()> {
     let mut clipboard = Clipboard::new()?;
@@ -15,11 +11,6 @@ pub fn write_string_to_clipboard(text: String) -> Result<()> {
 
     log::info!("Clipboard set to: {}", text);
     Ok(())
-}
-
-pub fn write_color_to_clipboard(color: Color32, format: ColorStringCopy) -> Result<()> {
-    let text = format_color_as(color.into(), format, None);
-    write_string_to_clipboard(text)
 }
 
 pub fn write_pixels_to_clipboard(image_data: ImageData) -> Result<()> {
@@ -125,10 +116,11 @@ impl ClipboardPopup {
         self.open = false;
     }
 
-    pub fn open(&mut self, position: Pos2) {
+    pub fn open(&mut self, position: Pos2, duration: f32) {
         self.open = true;
         self.position = position;
         self.open_timestamp = Instant::now();
+        self.open_duration = duration;
     }
 
     pub fn update(&mut self) {
@@ -143,11 +135,13 @@ impl ClipboardPopup {
         self.text = new_text.clone();
     }
     pub fn draw(&mut self, ctx: &egui::Context) {
+        if !self.open {
+            return;
+        }
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
             egui::Id::new("clipboard_popup"),
         ));
-        let rect = egui::Rect::from_min_size(self.position, egui::vec2(200.0, 40.0));
 
         let time_since = Instant::now()
             .duration_since(self.open_timestamp)
@@ -155,16 +149,37 @@ impl ClipboardPopup {
         let alpha = (1.0 - (time_since / self.open_duration)).clamp(0.0, 1.0);
         let color = egui::Color32::from_rgba_unmultiplied(0, 0, 0, (alpha * 200.0) as u8);
 
-        painter.rect_filled(rect, 4.0, color);
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            &self.text,
+        let galley = painter.layout_no_wrap(
+            self.text.clone(),
             egui::TextStyle::Heading.resolve(&ctx.style()),
             egui::Color32::from_rgba_unmultiplied(255, 255, 255, (alpha * 255.0) as u8),
         );
+        let rect = popup_rect(self.position, galley.size(), ctx.screen_rect());
 
-        ctx.request_repaint(); // keep redrawing until it fades out
+        painter.rect_filled(rect, 4.0, color);
+        painter.galley(
+            rect.center() - galley.size() / 2.0,
+            galley,
+            egui::Color32::WHITE,
+        );
+
+        ctx.request_repaint();
+    }
+}
+
+const POPUP_MIN_SIZE: Vec2 = vec2(200.0, 40.0);
+const POPUP_PADDING: Vec2 = vec2(16.0, 8.0);
+
+pub fn popup_rect(anchor: Pos2, text_size: Vec2, screen: Rect) -> Rect {
+    let size = (text_size + 2.0 * POPUP_PADDING).max(POPUP_MIN_SIZE);
+    let min = anchor.min(screen.max - size).max(screen.min);
+    Rect::from_min_size(min, size)
+}
+
+pub fn copy_popup_seconds(result: &Result<()>) -> f32 {
+    match result {
+        Ok(()) => 0.7,
+        Err(_) => 2.5,
     }
 }
 
@@ -172,6 +187,8 @@ impl ClipboardPopup {
 mod tests {
     use super::*;
     use crate::error::ZError;
+    use ecolor::Color32;
+    use std::time::Duration;
 
     fn black_image(width: usize, height: usize) -> ColorImage {
         ColorImage::new([width, height], Color32::BLACK)
@@ -256,5 +273,75 @@ mod tests {
             format!("Copy failed: {}", arboard::Error::ClipboardOccupied)
         );
         assert_eq!(copy_status_text(&Ok(()), "Copied"), "Copied");
+    }
+
+    fn draw_after_warm_up(popup: &mut ClipboardPopup) -> egui::FullOutput {
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| popup.draw(ctx));
+        }
+        ctx.run(egui::RawInput::default(), |ctx| popup.draw(ctx))
+    }
+
+    #[test]
+    fn closed_popup_paints_nothing_and_requests_no_repaint() {
+        let output = draw_after_warm_up(&mut ClipboardPopup::default());
+        assert!(output.shapes.is_empty());
+        assert_ne!(
+            output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn open_popup_paints_and_requests_repaint() {
+        let mut popup = ClipboardPopup::default();
+        popup.open(Pos2::ZERO, 0.7);
+        let output = draw_after_warm_up(&mut popup);
+        assert!(!output.shapes.is_empty());
+        assert_eq!(
+            output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+            Duration::ZERO
+        );
+    }
+
+    fn screen() -> Rect {
+        Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 800.0))
+    }
+
+    #[test]
+    fn popup_rect_short_text_is_minimum_size_at_anchor() {
+        let rect = popup_rect(pos2(100.0, 50.0), vec2(40.0, 10.0), screen());
+        assert_eq!(
+            rect,
+            Rect::from_min_size(pos2(100.0, 50.0), vec2(200.0, 40.0))
+        );
+    }
+
+    #[test]
+    fn popup_rect_long_text_fits_inside() {
+        let text_size = vec2(600.0, 30.0);
+        let rect = popup_rect(pos2(100.0, 50.0), text_size, screen());
+        assert!(rect.width() > text_size.x);
+        assert!(rect.height() > text_size.y);
+    }
+
+    #[test]
+    fn popup_rect_near_bottom_right_is_shifted_on_screen() {
+        let rect = popup_rect(pos2(990.0, 790.0), vec2(300.0, 30.0), screen());
+        assert!(screen().contains_rect(rect), "{rect:?}");
+    }
+
+    #[test]
+    fn popup_rect_larger_than_screen_aligns_to_screen_min() {
+        let rect = popup_rect(pos2(500.0, 500.0), vec2(2000.0, 1000.0), screen());
+        assert_eq!(rect.min, screen().min);
+    }
+
+    #[test]
+    fn failed_copy_popup_stays_longer() {
+        let failed: Result<()> = Err(ZError::from(arboard::Error::ClipboardOccupied));
+        assert_eq!(copy_popup_seconds(&failed), 2.5);
+        assert_eq!(copy_popup_seconds(&Ok(())), 0.7);
     }
 }

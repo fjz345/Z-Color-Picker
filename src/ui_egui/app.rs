@@ -21,10 +21,10 @@ use crate::{
     preset::PresetHandler,
     ui_egui::{
         clipboard::{
-            copy_status_text, crop_screenshot, write_color_to_clipboard, write_pixels_to_clipboard,
-            ClipboardCopyEvent, ClipboardPopup, ScreenshotTarget,
+            copy_popup_seconds, copy_status_text, crop_screenshot, write_pixels_to_clipboard,
+            write_string_to_clipboard, ClipboardCopyEvent, ClipboardPopup, ScreenshotTarget,
         },
-        color_picker::ZColorPickerWrapper,
+        color_picker::{format_color_as, ZColorPickerWrapper},
         content_windows::{WindowPreset, WindowZColorPickerOptions},
         debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
         panes::{
@@ -505,7 +505,7 @@ impl ZApp {
     fn handle_clipboardcopy_event(&mut self) -> bool {
         let app_ctx = &mut self.app_ctx.borrow_mut();
         if let Some(event) = app_ctx.clipboard_event.take() {
-            let mut copied_to_clipboard = false;
+            let mut popup_seconds = None;
 
             // Copy to clipboard
             if let Some(frame_pixels) = event.frame_pixels {
@@ -515,14 +515,15 @@ impl ZApp {
                         frame_pixels.data[0].val.1,
                         frame_pixels.data[0].val.2,
                     );
-                    let result = write_color_to_clipboard(color, app_ctx.color_copy_format);
+                    let text = format_color_as(color, app_ctx.color_copy_format, None);
+                    let result = write_string_to_clipboard(text.clone());
                     if let Err(e) = &result {
                         log::error!("{e}");
                     }
                     app_ctx
                         .clipboard_copy_window
-                        .set_text(&copy_status_text(&result, &format!("{:?}", color)));
-                    copied_to_clipboard = true;
+                        .set_text(&copy_status_text(&result, &format!("Copied {text}")));
+                    popup_seconds = Some(copy_popup_seconds(&result));
                     log::debug!("Wrote {:?} to clipboard", color);
                 } else if frame_pixels.data.len() > 1 {
                     let a_padded = u8u8u8_to_u8u8u8u8(&frame_pixels.data[..]);
@@ -546,7 +547,7 @@ impl ZApp {
                     app_ctx
                         .clipboard_copy_window
                         .set_text(&copy_status_text(&result, "Copied img to clipboard"));
-                    copied_to_clipboard = true;
+                    popup_seconds = Some(copy_popup_seconds(&result));
                 } else {
                     log::info!("clipboard event could not be processed, colors len was 0");
                 }
@@ -554,11 +555,13 @@ impl ZApp {
                 log::info!("clipboard event could not be processed, did not have any colors set");
             }
 
-            if copied_to_clipboard {
-                app_ctx.clipboard_copy_window.open(event.frame_rect.min);
+            if let Some(seconds) = popup_seconds {
+                app_ctx
+                    .clipboard_copy_window
+                    .open(event.frame_rect.min, seconds);
             }
 
-            return copied_to_clipboard;
+            return popup_seconds.is_some();
         }
 
         false
