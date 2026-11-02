@@ -108,13 +108,27 @@ pub fn save_preset_to_disk(dir: &Path, preset: &PresetEntity) -> Result<()> {
 pub fn delete_preset_from_disk(dir: &Path, preset: &PresetEntity) -> Result<()> {
     let file_path = &preset_file_path(dir, &preset.name);
 
-    remove_file(file_path)?;
-    log::info!("DELETED {}", file_path.display());
+    match remove_file(file_path) {
+        Ok(()) => log::info!("DELETED {}", file_path.display()),
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            log::warn!("{} was already deleted: {e}", file_path.display())
+        }
+        Err(e) => return Err(e.into()),
+    }
     Ok(())
 }
 
 fn preset_file_path(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{name}.json"))
+}
+
+fn ensure_no_preset_file(dir: &Path, name: &str) -> Result<()> {
+    if preset_file_path(dir, name).try_exists()? {
+        return Err(ZError::Message(format!(
+            "A file named {name}.json already exists in the presets folder"
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,7 +248,7 @@ impl PresetHandler {
         control_points: &mut Vec<ControlPoint>,
         spline_mode: &mut SplineMode,
     ) {
-        if let Some(preset) = self.presets.get(self.preset_selected_index.unwrap()) {
+        if let Some(preset) = self.preset_selected_index.and_then(|i| self.presets.get(i)) {
             let (preset_control_points, preset_spline_mode) = preset.clone().into();
             *control_points = preset_control_points;
             *spline_mode = preset_spline_mode;
@@ -274,6 +288,7 @@ impl PresetHandler {
         spline_mode: &SplineMode,
     ) -> Result<()> {
         self.check_name(name, None)?;
+        ensure_no_preset_file(&self.presets_dir, name)?;
 
         let preset = PresetEntity::new(name, (control_points.clone(), *spline_mode).into());
         save_preset_to_disk(&self.presets_dir, &preset)?;
@@ -301,6 +316,9 @@ impl PresetHandler {
 
     pub fn rename_preset(&mut self, index: usize, new_name: &str) -> Result<()> {
         self.check_name(new_name, Some(index))?;
+        if new_name.to_lowercase() != self.presets[index].name.to_lowercase() {
+            ensure_no_preset_file(&self.presets_dir, new_name)?;
+        }
         fs::rename(
             preset_file_path(&self.presets_dir, &self.presets[index].name),
             preset_file_path(&self.presets_dir, new_name),
@@ -313,6 +331,7 @@ impl PresetHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::datatypes::control_point::{ControlPointStorage, ControlPointValue};
     use tempfile::TempDir;
 
     fn temp_handler() -> (TempDir, PresetHandler) {
@@ -348,6 +367,44 @@ mod tests {
     fn validate(name: &str) -> std::result::Result<(), PresetNameError> {
         validate_preset_name(name, [])
     }
+
+    fn sample_points() -> Vec<ControlPoint> {
+        vec![
+            ControlPoint::ControlPointSimple(ControlPointStorage {
+                val: ControlPointValue::new(0.25, 0.5, 0.75),
+                t: 0.0,
+                tangents: [None, Some(ControlPointValue::new(0.125, -0.25, 0.0))],
+            }),
+            ControlPoint::ControlPointLeftRightTangent(ControlPointStorage {
+                val: ControlPointValue::new(0.5, 0.25, 0.125),
+                t: 1.0,
+                tangents: [
+                    Some(ControlPointValue::new(-0.5, 0.0, 0.0)),
+                    Some(ControlPointValue::new(0.5, 0.0, 0.0)),
+                ],
+            }),
+        ]
+    }
+
+    const SAMPLE_PRESET_JSON: &str = r#"{
+  "spline_mode": "Bezier",
+  "control_points": [
+    {
+      "ControlPointSimple": {
+        "val": { "val": [0.25, 0.5, 0.75] },
+        "t": 0.0,
+        "tangents": [null, { "val": [0.125, -0.25, 0.0] }]
+      }
+    },
+    {
+      "ControlPointLeftRightTangent": {
+        "val": { "val": [0.5, 0.25, 0.125] },
+        "t": 1.0,
+        "tangents": [{ "val": [-0.5, 0.0, 0.0] }, { "val": [0.5, 0.0, 0.0] }]
+      }
+    }
+  ]
+}"#;
 
     #[test]
     fn name_rejects_empty_and_whitespace_only() {
@@ -442,11 +499,45 @@ mod tests {
     #[test]
     fn delete_selected_preset_keeps_entry_when_disk_delete_fails() {
         let (_tmp, mut handler) = temp_handler();
+        fs::create_dir_all(handler.presets_dir.join("A.json")).unwrap();
         handler.presets = vec![PresetEntity::new("A", data(SplineMode::Linear))];
         handler.preset_selected_index = Some(0);
         assert!(handler.delete_selected_preset().is_err());
         assert_eq!(handler.presets.len(), 1);
         assert_eq!(handler.preset_selected_index, Some(0));
+    }
+
+    #[test]
+    fn delete_selected_preset_succeeds_when_file_already_gone() {
+        let (_tmp, mut handler) = temp_handler();
+        create(&mut handler, "A", SplineMode::Linear).unwrap();
+        fs::remove_file(handler.presets_dir.join("A.json")).unwrap();
+        handler.delete_selected_preset().unwrap();
+        assert!(handler.presets.is_empty());
+        assert_eq!(handler.preset_selected_index, None);
+    }
+
+    #[test]
+    fn apply_selected_preset_without_selection_keeps_points_and_mode() {
+        let (_tmp, mut handler) = temp_handler();
+        handler.presets = vec![PresetEntity::new("Pink", data(SplineMode::Linear))];
+        let mut points = sample_points();
+        let mut spline_mode = SplineMode::Bezier;
+        handler.apply_selected_preset(&mut points, &mut spline_mode);
+        assert_eq!(points, sample_points());
+        assert_eq!(spline_mode, SplineMode::Bezier);
+    }
+
+    #[test]
+    fn create_preset_refuses_unlisted_existing_file() {
+        let (_tmp, mut handler) = temp_handler();
+        fs::create_dir_all(&handler.presets_dir).unwrap();
+        let old_path = handler.presets_dir.join("old.json");
+        fs::write(&old_path, "{ garbage").unwrap();
+        handler.init_presets();
+        assert!(create(&mut handler, "old", SplineMode::Linear).is_err());
+        assert_eq!(fs::read_to_string(&old_path).unwrap(), "{ garbage");
+        assert!(handler.presets.is_empty());
     }
 
     #[test]
@@ -535,6 +626,46 @@ mod tests {
         assert_eq!(fs::read_to_string(&pink_path).unwrap(), pink_content);
         assert_eq!(file_names(&handler.presets_dir), ["Cold.json", "Pink.json"]);
         assert_eq!(names(&handler), ["Pink", "Cold"]);
+    }
+
+    #[test]
+    fn rename_preset_refuses_unlisted_existing_destination() {
+        let (_tmp, mut handler) = temp_handler();
+        create(&mut handler, "Src", SplineMode::Linear).unwrap();
+        let src_path = handler.presets_dir.join("Src.json");
+        let src_content = fs::read_to_string(&src_path).unwrap();
+        let dest_path = handler.presets_dir.join("Dest.json");
+        fs::write(&dest_path, "{ garbage").unwrap();
+        assert!(handler.rename_preset(0, "Dest").is_err());
+        assert_eq!(fs::read_to_string(&src_path).unwrap(), src_content);
+        assert_eq!(fs::read_to_string(&dest_path).unwrap(), "{ garbage");
+        assert_eq!(names(&handler), ["Src"]);
+    }
+
+    #[test]
+    fn init_presets_loads_pinned_json_format() {
+        let (_tmp, mut handler) = temp_handler();
+        fs::create_dir_all(&handler.presets_dir).unwrap();
+        fs::write(handler.presets_dir.join("Golden.json"), SAMPLE_PRESET_JSON).unwrap();
+        handler.init_presets();
+        assert_eq!(names(&handler), ["Golden"]);
+        let expected = AppDataCtx {
+            spline_mode: SplineMode::Bezier,
+            control_points: sample_points(),
+        };
+        assert_eq!(handler.presets[0].data, expected);
+    }
+
+    #[test]
+    fn created_preset_round_trips_through_disk() {
+        let (_tmp, mut handler) = temp_handler();
+        handler
+            .create_preset(&"Trip".to_string(), &sample_points(), &SplineMode::Bezier)
+            .unwrap();
+        let mut reloaded = PresetHandler::new(handler.presets_dir.clone());
+        reloaded.init_presets();
+        assert_eq!(names(&reloaded), ["Trip"]);
+        assert_eq!(reloaded.presets[0].data, handler.presets[0].data);
     }
 
     #[test]
