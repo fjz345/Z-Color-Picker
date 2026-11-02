@@ -243,7 +243,10 @@ impl ZApp {
     }
 
     fn init(&mut self) {
-        self.app_ctx.borrow_mut().preset_handler.init_presets();
+        let ctx = &mut *self.app_ctx.borrow_mut();
+        ctx.preset_handler.init_presets();
+        ctx.preset_handler
+            .hold_auto_save_if_dirty(&ctx.control_points, ctx.spline_mode);
     }
 
     fn startup(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

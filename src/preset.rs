@@ -427,6 +427,16 @@ impl PresetHandler {
     pub fn has_failed_auto_save(&self) -> bool {
         self.failed_auto_save.is_some()
     }
+
+    pub fn hold_auto_save_if_dirty(
+        &mut self,
+        control_points: &[ControlPoint],
+        spline_mode: SplineMode,
+    ) {
+        if self.is_selected_dirty(control_points, spline_mode) {
+            self.failed_auto_save = Some((control_points.to_vec(), spline_mode).into());
+        }
+    }
 }
 
 fn data_matches(
@@ -434,7 +444,22 @@ fn data_matches(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
 ) -> bool {
-    data.spline_mode == spline_mode && data.control_points == control_points
+    data.spline_mode == spline_mode
+        && data.control_points.len() == control_points.len()
+        && data
+            .control_points
+            .iter()
+            .zip(control_points)
+            .all(|(a, b)| points_match(a, b))
+}
+
+fn points_match(a: &ControlPoint, b: &ControlPoint) -> bool {
+    a.val() == b.val()
+        && a.t() == b.t()
+        && a.tangents()
+            .iter()
+            .zip(b.tangents())
+            .all(|(ta, tb)| ta.unwrap_or_default() == tb.unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -880,6 +905,61 @@ mod tests {
         assert!(!handler.is_selected_dirty(&moved_points(0.9), SplineMode::Linear));
     }
 
+    fn sample_points_with_tangents(tangent: Option<ControlPointValue>) -> Vec<ControlPoint> {
+        let mut points = sample_points();
+        for point in &mut points {
+            *point.tangents_mut() = [tangent; 2];
+        }
+        points
+    }
+
+    #[test]
+    fn zero_filled_tangents_are_not_an_edit() {
+        let (_tmp, mut handler) = temp_handler();
+        handler
+            .create_preset(
+                &"A".to_string(),
+                &sample_points_with_tangents(None),
+                &SplineMode::Linear,
+            )
+            .unwrap();
+        handler.auto_save_presets = true;
+        let before = read_preset_file(&handler);
+        let zero_filled = sample_points_with_tangents(Some(ControlPointValue::default()));
+
+        assert!(!handler.is_selected_dirty(&zero_filled, SplineMode::Linear));
+        assert!(!handler.auto_save(&zero_filled, SplineMode::Linear).unwrap());
+        assert_eq!(read_preset_file(&handler), before);
+    }
+
+    #[test]
+    fn point_variant_is_not_an_edit() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        let mut points = sample_points();
+        points[0] = ControlPoint::ControlPointLeftRightTangent(points[0].storage().clone());
+        assert!(!handler.is_selected_dirty(&points, SplineMode::Bezier));
+    }
+
+    #[test]
+    fn nonzero_tangent_change_is_dirty() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        let mut points = sample_points();
+        points[0].tangents_mut()[0] = Some(ControlPointValue::new(0.1, 0.0, 0.0));
+        assert!(handler.is_selected_dirty(&points, SplineMode::Bezier));
+    }
+
+    #[test]
+    fn changed_val_or_t_is_dirty() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        assert!(handler.is_selected_dirty(&moved_points(0.9), SplineMode::Bezier));
+        let mut points = sample_points();
+        *points[1].t_mut() = 0.5;
+        assert!(handler.is_selected_dirty(&points, SplineMode::Bezier));
+    }
+
     #[test]
     fn auto_save_off_does_not_write() {
         let (_tmp, mut handler) = temp_handler();
@@ -949,6 +1029,64 @@ mod tests {
         assert!(handler
             .auto_save(&moved_points(0.8), SplineMode::Linear)
             .is_err());
+    }
+
+    fn restored_a(auto_save_presets: bool) -> (TempDir, PresetHandler) {
+        let (tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        let saved = serde_json::json!({
+            "auto_save_presets": auto_save_presets,
+            "selected_preset": "A"
+        });
+        let restored = restore(&handler, saved);
+        (tmp, restored)
+    }
+
+    #[test]
+    fn restore_hold_keeps_file_until_next_edit() {
+        let (_tmp, mut handler) = restored_a(true);
+        let before = read_preset_file(&handler);
+
+        handler.hold_auto_save_if_dirty(&moved_points(0.9), SplineMode::Bezier);
+
+        assert!(!handler
+            .auto_save(&moved_points(0.9), SplineMode::Bezier)
+            .unwrap());
+        assert_eq!(read_preset_file(&handler), before);
+        assert!(handler.is_selected_dirty(&moved_points(0.9), SplineMode::Bezier));
+        assert!(handler.has_failed_auto_save());
+
+        assert!(handler
+            .auto_save(&moved_points(0.8), SplineMode::Bezier)
+            .unwrap());
+        let on_disk: AppDataCtx = serde_json::from_str(&read_preset_file(&handler)).unwrap();
+        assert_eq!(on_disk, (moved_points(0.8), SplineMode::Bezier).into());
+        assert!(!handler.has_failed_auto_save());
+    }
+
+    #[test]
+    fn restore_hold_outlives_enabling_auto_save() {
+        let (_tmp, mut handler) = restored_a(false);
+        let before = read_preset_file(&handler);
+        handler.hold_auto_save_if_dirty(&moved_points(0.9), SplineMode::Bezier);
+
+        handler.auto_save_presets = true;
+
+        assert!(!handler
+            .auto_save(&moved_points(0.9), SplineMode::Bezier)
+            .unwrap());
+        assert_eq!(read_preset_file(&handler), before);
+    }
+
+    #[test]
+    fn restore_hold_is_noop_when_clean_or_unselected() {
+        let (_tmp, mut handler) = restored_a(true);
+        handler.hold_auto_save_if_dirty(&sample_points(), SplineMode::Bezier);
+        assert!(!handler.has_failed_auto_save());
+
+        handler.preset_selected_index = None;
+        handler.hold_auto_save_if_dirty(&moved_points(0.9), SplineMode::Bezier);
+        assert!(!handler.has_failed_auto_save());
     }
 
     #[test]
