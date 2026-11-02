@@ -34,10 +34,7 @@ use crate::{
         ui_common::ContentWindow,
     },
 };
-use eframe::{
-    epaint::{Pos2, Vec2},
-    CreationContext,
-};
+use eframe::epaint::{Pos2, Vec2};
 use egui_tiles::Tile;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -199,9 +196,6 @@ impl ZColorPickerAppContext {
 
 #[derive(Serialize, Deserialize)]
 pub struct ZApp {
-    monitor_size: Vec2,
-    scale_factor: f32,
-    native_pixel_per_point: f32,
     state: AppState,
     app_ctx: Rc<RefCell<ZColorPickerAppContext>>,
     tree: egui_tiles::Tree<Pane>,
@@ -212,27 +206,28 @@ pub struct ZApp {
 }
 
 const HARDCODED_MONITOR_SIZE: Vec2 = Vec2::new(2560.0, 1440.0);
+const UI_SCALE_REFERENCE_HEIGHT: f32 = 1080.0;
+
+fn usable_monitor_size(monitor_size_px: Option<Vec2>) -> Option<Vec2> {
+    monitor_size_px.filter(|size| size.is_finite() && size.min_elem() > 0.0)
+}
+
+fn ui_scale(monitor_size_px: Option<Vec2>) -> f32 {
+    let size = usable_monitor_size(monitor_size_px).unwrap_or(HARDCODED_MONITOR_SIZE);
+    size.min_elem() / UI_SCALE_REFERENCE_HEIGHT
+}
+
 impl ZApp {
     // stupid work around since persistance storage does not work??
     pub fn request_init(&mut self) {
         self.state = AppState::Startup;
     }
 
-    pub fn new(cc: &CreationContext<'_>, log_buffer: Arc<Mutex<Vec<String>>>) -> Self {
-        // Can not get window screen size from CreationContext
-        let monitor_size = HARDCODED_MONITOR_SIZE;
-        const RESOLUTION_REF: f32 = 1080.0;
-        let scale_factor: f32 = monitor_size.x.min(monitor_size.y) / RESOLUTION_REF;
-
+    pub fn new(log_buffer: Arc<Mutex<Vec<String>>>) -> Self {
         let app_ctx = ZColorPickerAppContext::default();
         let app_ctx = Rc::new(RefCell::new(app_ctx));
 
-        let native_pixel_per_point = cc.egui_ctx.native_pixels_per_point().unwrap_or(1.0);
-
         Self {
-            monitor_size: monitor_size,
-            scale_factor: scale_factor,
-            native_pixel_per_point: native_pixel_per_point,
             state: AppState::Startup,
             tree: Self::create_tree(app_ctx.clone(), log_buffer.clone()),
             app_ctx: app_ctx,
@@ -267,13 +262,24 @@ impl ZApp {
 
         let visuals: egui::Visuals = egui::Visuals::dark();
         ctx.set_visuals(visuals);
-        ctx.set_pixels_per_point(self.scale_factor); // Maybe mult native_pixels_per_point?
-                                                     // ctx.set_debug_on_hover(true);
+        let monitor_size_px = ctx.input(|i| {
+            i.viewport()
+                .monitor_size
+                .map(|size| size * i.pixels_per_point)
+        });
+        ctx.set_pixels_per_point(ui_scale(monitor_size_px));
+        let monitor = match usable_monitor_size(monitor_size_px) {
+            Some(size) => format!("monitor {:.0}x{:.0} px", size.x, size.y),
+            None => format!(
+                "monitor size {monitor_size_px:?} unusable, fallback {}x{} px",
+                HARDCODED_MONITOR_SIZE.x, HARDCODED_MONITOR_SIZE.y
+            ),
+        };
         let native = ctx
             .native_pixels_per_point()
             .map_or_else(|| "unknown".to_owned(), |ppp| format!("{ppp:.2}"));
         log::info!(
-            "UI scale {:.2} (native pixels_per_point {native})",
+            "UI scale {:.2} from {monitor} (native pixels_per_point {native})",
             ctx.pixels_per_point()
         );
 
@@ -894,5 +900,43 @@ mod tests {
         );
         assert!(log < 0.25 * screen.height(), "log pane {log}");
         assert!(options >= MIN_OPTIONS_PANE_HEIGHT, "options pane {options}");
+    }
+
+    #[test]
+    fn ui_scale_is_the_monitor_short_side_over_1080() {
+        assert!((ui_scale(Some(Vec2::new(2560.0, 1440.0))) - 1.3333).abs() < 1e-4);
+        assert!((ui_scale(Some(Vec2::new(1440.0, 2560.0))) - 1.3333).abs() < 1e-4);
+        assert_eq!(ui_scale(Some(Vec2::new(3840.0, 2160.0))), 2.0);
+        assert_eq!(ui_scale(Some(Vec2::new(1920.0, 1080.0))), 1.0);
+    }
+
+    #[test]
+    fn ui_scale_without_a_usable_monitor_size_uses_the_hardcoded_monitor() {
+        for size in [None, Some(Vec2::ZERO), Some(Vec2::new(f32::NAN, 1080.0))] {
+            assert!((ui_scale(size) - 1.3333).abs() < 1e-4, "{size:?}");
+        }
+    }
+
+    #[test]
+    fn zapp_json_with_removed_scale_fields_still_loads() {
+        let log_buffer = Arc::new(Mutex::new(Vec::new()));
+        let app_ctx = Rc::new(RefCell::new(<ZColorPickerAppContext as Default>::default()));
+        let app = ZApp {
+            state: AppState::Idle,
+            tree: ZApp::create_tree(app_ctx.clone(), log_buffer.clone()),
+            app_ctx,
+            log_buffer,
+            had_keyboard_focus: false,
+        };
+        let mut json = serde_json::to_value(&app).unwrap();
+        let fields = json.as_object_mut().unwrap();
+        fields.insert(
+            "monitor_size".to_owned(),
+            serde_json::json!([2560.0, 1440.0]),
+        );
+        fields.insert("scale_factor".to_owned(), serde_json::json!(1.333));
+        fields.insert("native_pixel_per_point".to_owned(), serde_json::json!(1.0));
+
+        assert!(serde_json::from_value::<ZApp>(json).is_ok());
     }
 }

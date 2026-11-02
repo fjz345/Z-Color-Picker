@@ -70,5 +70,5 @@ Pressing the middle button stores a `ScreenshotTarget` in `pending_screenshot_ta
 ### Misc
 - The log filter defaults to `info,z_color_picker=debug` (`DEFAULT_LOG_FILTER` in `src/logger.rs`); a set `RUST_LOG` replaces it, e.g. `RUST_LOG=debug` shows dependency debug output too.
 - `LogCollector` (`src/logger.rs`) captures log lines into a shared `Arc<Mutex<Vec<String>>>`, capped at 2000 lines, which the Log pane displays. Never call `log::*` while holding that mutex; `LogCollector::log` locks it too, so it would deadlock.
-- The UI scale is derived from a hardcoded 2560x1440 monitor size (`HARDCODED_MONITOR_SIZE`) because the monitor size is not available at creation time.
+- The UI scale (`pixels_per_point`) is set in `startup()` to the current monitor's shorter side in physical pixels / 1080 (`ui_scale`), read from `ViewportInfo::monitor_size`. It is not persisted. If the size is unknown or unusable, it falls back to 2560x1440 (`HARDCODED_MONITOR_SIZE`), i.e. 1.33.
 - The debug windows live in `src/ui_egui/debug_windows.rs`.

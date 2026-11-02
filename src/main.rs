@@ -35,7 +35,7 @@ fn main() -> eframe::Result {
                 return Ok(Box::new(app));
             }
 
-            let app = ZApp::new(cc, log_buffer.clone());
+            let app = ZApp::new(log_buffer.clone());
             Ok(Box::<ZApp>::new(app))
         }),
     )
