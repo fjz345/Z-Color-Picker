@@ -183,6 +183,7 @@ pub struct WindowPreset {
     pub rename_error: Option<String>,
     pub save_error: Option<String>,
     last_selection: Option<usize>,
+    pending_switch: Option<usize>,
 }
 
 fn spline_mode_label(mode: SplineMode) -> &'static str {
@@ -197,6 +198,42 @@ fn selected_preset(preset_handler: &PresetHandler) -> Option<&PresetEntity> {
     preset_handler
         .preset_selected_index
         .and_then(|i| preset_handler.presets.get(i))
+}
+
+fn has_unsaved_changes(
+    preset_handler: &PresetHandler,
+    control_points: &[ControlPoint],
+    spline_mode: SplineMode,
+) -> bool {
+    !preset_handler.auto_save_presets
+        && preset_handler.is_selected_dirty(control_points, spline_mode)
+}
+
+fn combo_selected_text(name: Option<&str>, dirty: bool) -> String {
+    match name {
+        Some(name) if dirty => format!("{name} *"),
+        Some(name) => name.to_string(),
+        None => "<None>".to_string(),
+    }
+}
+
+fn apply_preset(
+    index: usize,
+    preset_handler: &mut PresetHandler,
+    control_points: &mut Vec<ControlPoint>,
+    spline_mode: &mut SplineMode,
+) -> PresetEntity {
+    preset_handler.preset_selected_index = Some(index);
+    log::info!("Selected Preset {index}");
+    preset_handler.apply_selected_preset(control_points, spline_mode);
+    preset_handler.presets[index].clone()
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PendingSwitchAction {
+    SaveAndSwitch,
+    Discard,
+    Cancel,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -226,10 +263,58 @@ impl WindowPreset {
             rename_error: None,
             save_error: None,
             last_selection: None,
+            pending_switch: None,
         }
     }
 
     pub fn update(&mut self) {}
+
+    pub fn is_modal_open(&self) -> bool {
+        self.delete_confirm_open || self.pending_switch.is_some()
+    }
+
+    fn choose_preset(
+        &mut self,
+        index: usize,
+        preset_handler: &mut PresetHandler,
+        control_points: &mut Vec<ControlPoint>,
+        spline_mode: &mut SplineMode,
+    ) -> Option<PresetEntity> {
+        if has_unsaved_changes(preset_handler, control_points, *spline_mode) {
+            self.pending_switch = Some(index);
+            self.save_error = None;
+            return None;
+        }
+        Some(apply_preset(
+            index,
+            preset_handler,
+            control_points,
+            spline_mode,
+        ))
+    }
+
+    fn resolve_pending_switch(
+        &mut self,
+        action: PendingSwitchAction,
+        preset_handler: &mut PresetHandler,
+        control_points: &mut Vec<ControlPoint>,
+        spline_mode: &mut SplineMode,
+    ) -> Option<PresetEntity> {
+        let target = self.pending_switch?;
+        let should_apply = match action {
+            PendingSwitchAction::Cancel => false,
+            PendingSwitchAction::Discard => true,
+            PendingSwitchAction::SaveAndSwitch => {
+                self.save_selected(preset_handler, control_points, *spline_mode);
+                if self.save_error.is_some() {
+                    return None;
+                }
+                true
+            }
+        };
+        self.pending_switch = None;
+        should_apply.then(|| apply_preset(target, preset_handler, control_points, spline_mode))
+    }
 
     fn save_selected(
         &mut self,
@@ -269,8 +354,11 @@ impl WindowPreset {
         let mut draw_result = WindowPresetDrawResult::default();
 
         ui.horizontal(|ui| {
-            let combobox_selected_text_to_show =
-                selected_preset(preset_handler).map_or("<None>", |p| p.name.as_str());
+            let dirty = has_unsaved_changes(preset_handler, control_points, *spline_mode);
+            let combobox_selected_text_to_show = combo_selected_text(
+                selected_preset(preset_handler).map(|p| p.name.as_str()),
+                dirty,
+            );
 
             let selected_index = preset_handler.preset_selected_index;
             let mut choice = None;
@@ -306,11 +394,8 @@ impl WindowPreset {
                     log::info!("Selected New Preset");
                 }
                 Some(PresetComboChoice::Preset(i)) => {
-                    preset_handler.preset_selected_index = Some(i);
                     draw_result.preset_result.should_apply =
-                        Some(preset_handler.presets[i].clone());
-                    log::info!("Selected Preset {i}");
-                    preset_handler.apply_selected_preset(control_points, spline_mode);
+                        self.choose_preset(i, preset_handler, control_points, spline_mode);
                 }
                 Some(PresetComboChoice::Clear) => preset_handler.preset_selected_index = None,
                 None => {}
@@ -319,9 +404,14 @@ impl WindowPreset {
             ui.checkbox(&mut preset_handler.auto_save_presets, "Auto-save")
                 .on_hover_text("Auto save preset");
             let has_selection = selected_preset(preset_handler).is_some();
+            let save_hover_text = if dirty {
+                "Unsaved changes"
+            } else {
+                "Overwrite the selected preset with the current points"
+            };
             if ui
                 .add_enabled(has_selection, egui::Button::new("Save"))
-                .on_hover_text("Overwrite the selected preset with the current points")
+                .on_hover_text(save_hover_text)
                 .on_disabled_hover_text("Select a preset first")
                 .clicked_by(PointerButton::Primary)
             {
@@ -346,6 +436,7 @@ impl WindowPreset {
         });
         let selected = preset_handler.preset_selected_index;
         if selected != self.last_selection {
+            rename_text_field.clear();
             self.rename_error = None;
             self.save_error = None;
             self.last_selection = selected;
@@ -408,8 +499,53 @@ impl WindowPreset {
         if self.delete_confirm_open {
             self.draw_delete_confirm_modal(ui, preset_handler);
         }
+        if self.pending_switch.is_some() {
+            if let Some(applied) =
+                self.draw_pending_switch_modal(ui, preset_handler, control_points, spline_mode)
+            {
+                draw_result.preset_result.should_apply = Some(applied);
+            }
+        }
 
         draw_result
+    }
+
+    fn draw_pending_switch_modal(
+        &mut self,
+        ui: &mut Ui,
+        preset_handler: &mut PresetHandler,
+        control_points: &mut Vec<ControlPoint>,
+        spline_mode: &mut SplineMode,
+    ) -> Option<PresetEntity> {
+        let Some(name) = selected_preset(preset_handler).map(|preset| preset.name.clone()) else {
+            self.pending_switch = None;
+            return None;
+        };
+
+        let modal = egui::Modal::new(egui::Id::new("unsaved_preset_modal")).show(ui.ctx(), |ui| {
+            ui.label(format!("\"{name}\" has unsaved changes."));
+            if let Some(error) = &self.save_error {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+            ui.horizontal(|ui| {
+                let mut action = None;
+                for (label, button_action) in [
+                    ("Save and switch", PendingSwitchAction::SaveAndSwitch),
+                    ("Discard", PendingSwitchAction::Discard),
+                    ("Cancel", PendingSwitchAction::Cancel),
+                ] {
+                    if ui.button(label).clicked() {
+                        action = Some(button_action);
+                    }
+                }
+                action
+            })
+            .inner
+        });
+        let action = modal
+            .inner
+            .or_else(|| modal.should_close().then_some(PendingSwitchAction::Cancel))?;
+        self.resolve_pending_switch(action, preset_handler, control_points, spline_mode)
     }
 
     fn draw_delete_confirm_modal(&mut self, ui: &mut Ui, preset_handler: &mut PresetHandler) {
@@ -686,5 +822,220 @@ mod tests {
         assert_eq!(points, original);
         assert_eq!(selected, Some(0));
         assert_eq!(sizes, [10.0, 20.0, 30.0]);
+    }
+
+    fn handler_with_edited_a_and_distinct_b(tmp: &TempDir) -> (PresetHandler, Vec<ControlPoint>) {
+        let mut handler = handler_with_presets(tmp, &["A", "B"]);
+        handler.presets[1].data = AppDataCtx {
+            spline_mode: SplineMode::Bezier,
+            control_points: three_points(),
+        };
+        handler.preset_selected_index = Some(0);
+        (handler, three_points()[..2].to_vec())
+    }
+
+    fn pending_switch_to_b(tmp: &TempDir) -> (WindowPreset, PresetHandler, Vec<ControlPoint>) {
+        let (mut handler, mut points) = handler_with_edited_a_and_distinct_b(tmp);
+        let mut window = WindowPreset::new();
+        let applied = window.choose_preset(1, &mut handler, &mut points, &mut SplineMode::Linear);
+        assert!(applied.is_none());
+        (window, handler, points)
+    }
+
+    #[test]
+    fn dirty_choose_defers_the_switch() {
+        let tmp = TempDir::new().unwrap();
+        let (mut handler, edited) = handler_with_edited_a_and_distinct_b(&tmp);
+        let mut window = WindowPreset::new();
+        let mut points = edited.clone();
+        let mut mode = SplineMode::Linear;
+
+        let applied = window.choose_preset(1, &mut handler, &mut points, &mut mode);
+
+        assert!(applied.is_none());
+        assert_eq!(window.pending_switch, Some(1));
+        assert!(window.is_modal_open());
+        assert_eq!(points, edited);
+        assert_eq!(mode, SplineMode::Linear);
+        assert_eq!(handler.preset_selected_index, Some(0));
+    }
+
+    #[test]
+    fn discard_applies_the_pending_target() {
+        let tmp = TempDir::new().unwrap();
+        let (mut window, mut handler, mut points) = pending_switch_to_b(&tmp);
+        let mut mode = SplineMode::Linear;
+
+        let applied = window.resolve_pending_switch(
+            PendingSwitchAction::Discard,
+            &mut handler,
+            &mut points,
+            &mut mode,
+        );
+
+        assert_eq!(applied.map(|p| p.name), Some("B".to_string()));
+        assert_eq!(points, three_points());
+        assert_eq!(mode, SplineMode::Bezier);
+        assert_eq!(handler.preset_selected_index, Some(1));
+        assert_eq!(window.pending_switch, None);
+    }
+
+    #[test]
+    fn cancel_keeps_the_points_and_the_selection() {
+        let tmp = TempDir::new().unwrap();
+        let (mut window, mut handler, mut points) = pending_switch_to_b(&tmp);
+        let edited = points.clone();
+        let mut mode = SplineMode::Linear;
+
+        let applied = window.resolve_pending_switch(
+            PendingSwitchAction::Cancel,
+            &mut handler,
+            &mut points,
+            &mut mode,
+        );
+
+        assert!(applied.is_none());
+        assert_eq!(points, edited);
+        assert_eq!(mode, SplineMode::Linear);
+        assert_eq!(handler.preset_selected_index, Some(0));
+        assert_eq!(window.pending_switch, None);
+        assert!(!window.is_modal_open());
+        assert!(!tmp.path().join("A.json").exists());
+    }
+
+    #[test]
+    fn save_and_switch_writes_the_old_preset_then_applies_the_target() {
+        let tmp = TempDir::new().unwrap();
+        let (mut window, mut handler, mut points) = pending_switch_to_b(&tmp);
+        let edited = points.clone();
+        let mut mode = SplineMode::Linear;
+
+        let applied = window.resolve_pending_switch(
+            PendingSwitchAction::SaveAndSwitch,
+            &mut handler,
+            &mut points,
+            &mut mode,
+        );
+
+        let saved: AppDataCtx =
+            serde_json::from_str(&std::fs::read_to_string(tmp.path().join("A.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved.control_points, edited);
+        assert_eq!(saved.spline_mode, SplineMode::Linear);
+        assert_eq!(applied.map(|p| p.name), Some("B".to_string()));
+        assert_eq!(points, three_points());
+        assert_eq!(mode, SplineMode::Bezier);
+        assert_eq!(handler.preset_selected_index, Some(1));
+        assert_eq!(window.pending_switch, None);
+    }
+
+    #[test]
+    fn failed_save_and_switch_keeps_the_modal_open() {
+        let tmp = TempDir::new().unwrap();
+        let not_a_dir = tmp.path().join("presets");
+        std::fs::write(&not_a_dir, "").unwrap();
+        let mut handler = PresetHandler::new(not_a_dir);
+        for name in ["A", "B"] {
+            handler.presets.push(PresetEntity::new(
+                name,
+                AppDataCtx {
+                    spline_mode: SplineMode::Linear,
+                    control_points: Vec::new(),
+                },
+            ));
+        }
+        handler.preset_selected_index = Some(0);
+        let mut window = WindowPreset::new();
+        let edited = three_points();
+        let mut points = edited.clone();
+        let mut mode = SplineMode::Linear;
+        assert!(window
+            .choose_preset(1, &mut handler, &mut points, &mut mode)
+            .is_none());
+
+        let applied = window.resolve_pending_switch(
+            PendingSwitchAction::SaveAndSwitch,
+            &mut handler,
+            &mut points,
+            &mut mode,
+        );
+
+        assert!(applied.is_none());
+        assert!(window.save_error.is_some());
+        assert_eq!(window.pending_switch, Some(1));
+        assert_eq!(handler.preset_selected_index, Some(0));
+        assert_eq!(points, edited);
+    }
+
+    #[test]
+    fn clean_auto_saved_or_unselected_choose_applies_immediately() {
+        let cases = [
+            ("clean", false, Some(0), Vec::new()),
+            ("auto-save", true, Some(0), three_points()[..2].to_vec()),
+            ("no selection", false, None, three_points()[..2].to_vec()),
+        ];
+        for (case, auto_save, selected, mut points) in cases {
+            let tmp = TempDir::new().unwrap();
+            let (mut handler, _) = handler_with_edited_a_and_distinct_b(&tmp);
+            handler.auto_save_presets = auto_save;
+            handler.preset_selected_index = selected;
+            let mut window = WindowPreset::new();
+            let mut mode = SplineMode::Linear;
+
+            let applied = window.choose_preset(1, &mut handler, &mut points, &mut mode);
+
+            assert_eq!(applied.map(|p| p.name), Some("B".to_string()), "{case}");
+            assert_eq!(points, three_points(), "{case}");
+            assert_eq!(mode, SplineMode::Bezier, "{case}");
+            assert_eq!(handler.preset_selected_index, Some(1), "{case}");
+            assert_eq!(window.pending_switch, None, "{case}");
+        }
+    }
+
+    #[test]
+    fn unsaved_changes_follow_edits_saves_and_auto_save() {
+        let tmp = TempDir::new().unwrap();
+        let (mut handler, edited) = handler_with_edited_a_and_distinct_b(&tmp);
+        let mut window = WindowPreset::new();
+
+        assert!(!has_unsaved_changes(&handler, &[], SplineMode::Linear));
+        assert!(has_unsaved_changes(&handler, &edited, SplineMode::Linear));
+
+        window.save_selected(&mut handler, &edited, SplineMode::Linear);
+        assert!(!has_unsaved_changes(&handler, &edited, SplineMode::Linear));
+
+        handler.auto_save_presets = true;
+        assert!(!has_unsaved_changes(&handler, &[], SplineMode::Bezier));
+    }
+
+    #[test]
+    fn rename_text_cleared_when_selection_changes() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = handler_with_presets(&tmp, &["A", "C"]);
+        let mut window = WindowPreset::new();
+        let ctx = egui::Context::default();
+        let rename_id = egui::Id::new(819181);
+        let rename_text = |ctx: &egui::Context| {
+            ctx.data(|d| d.get_temp::<String>(rename_id))
+                .unwrap_or_default()
+        };
+
+        handler.preset_selected_index = Some(0);
+        draw_frame(&ctx, &mut window, &mut handler);
+        ctx.data_mut(|d| d.insert_temp(rename_id, "X".to_string()));
+        draw_frame(&ctx, &mut window, &mut handler);
+        assert_eq!(rename_text(&ctx), "X");
+
+        handler.preset_selected_index = Some(1);
+        draw_frame(&ctx, &mut window, &mut handler);
+        assert_eq!(rename_text(&ctx), "");
+    }
+
+    #[test]
+    fn combo_selected_text_marks_unsaved_changes() {
+        assert_eq!(combo_selected_text(Some("A"), false), "A");
+        assert_eq!(combo_selected_text(Some("A"), true), "A *");
+        assert_eq!(combo_selected_text(None, false), "<None>");
+        assert_eq!(combo_selected_text(None, true), "<None>");
     }
 }

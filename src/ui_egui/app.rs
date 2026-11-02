@@ -550,7 +550,7 @@ impl ZApp {
         self.had_keyboard_focus
             || ctx.memory(|m| m.any_popup_open())
             || app_ctx.presets_window.new_preset_is_open
-            || app_ctx.presets_window.delete_confirm_open
+            || app_ctx.presets_window.is_modal_open()
     }
 
     fn process_ctx_inputs(
