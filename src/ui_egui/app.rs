@@ -453,63 +453,12 @@ impl ZApp {
         ctx: &egui::Context,
         _frame: &eframe::Frame,
     ) {
-        let app_ctx = &mut self.app_ctx.borrow_mut();
-        let mut found_rect = None;
-        for rect in app_ctx.stored_ui_responses.get_rects() {
-            if rect.contains(pointer_pos) {
-                found_rect = Some(rect.clone());
-                log::debug!("Found Rect");
-                break;
-            }
-        }
-        let target = match found_rect {
-            Some(rect) => ScreenshotTarget::Region(rect),
-            None => ScreenshotTarget::Pixel(pointer_pos),
-        };
-
-        app_ctx.pending_screenshot_target = Some(target);
+        begin_screenshot(&mut self.app_ctx.borrow_mut(), pointer_pos);
         ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
     }
 
     fn handle_screenshot_event(&mut self, ui: &egui::Ui) {
-        let app_ctx = &mut self.app_ctx.borrow_mut();
-        let Some(target) = app_ctx.pending_screenshot_target else {
-            return;
-        };
-
-        let rect_image = ui.input(|i| {
-            for event in &i.raw.events {
-                if let egui::Event::Screenshot { image, .. } = event {
-                    return Some(crop_screenshot(image, target, i.pixels_per_point()));
-                }
-            }
-            None
-        });
-
-        if let Some(img) = rect_image {
-            app_ctx.pending_screenshot_target = None;
-            let rgb_vec = img
-                .pixels
-                .iter()
-                .map(|f| Rgb {
-                    val: (f.r(), f.g(), f.b()),
-                })
-                .collect();
-
-            let frame_pixels = FramePixelRead {
-                width: img.width(),
-                height: img.height(),
-                data: rgb_vec,
-            };
-            let frame_rect = match target {
-                ScreenshotTarget::Pixel(p) => Rect::from_min_size(p, Vec2::splat(1.0)),
-                ScreenshotTarget::Region(r) => r,
-            };
-            app_ctx.clipboard_event = Some(ClipboardCopyEvent {
-                frame_rect,
-                frame_pixels: Some(frame_pixels),
-            });
-        }
+        receive_screenshot(&mut self.app_ctx.borrow_mut(), ui);
     }
 
     fn handle_clipboardcopy_event(&mut self) -> bool {
@@ -664,6 +613,64 @@ fn should_quit_on_escape(events: &[egui::Event], esc_blocked: bool) -> bool {
     esc_first_press && !esc_blocked
 }
 
+fn begin_screenshot(app_ctx: &mut ZColorPickerAppContext, pointer_pos: Pos2) {
+    let mut found_rect = None;
+    for rect in app_ctx.stored_ui_responses.get_rects() {
+        if rect.contains(pointer_pos) {
+            found_rect = Some(rect);
+            log::debug!("Found Rect");
+            break;
+        }
+    }
+    let target = match found_rect {
+        Some(rect) => ScreenshotTarget::Region(rect),
+        None => ScreenshotTarget::Pixel(pointer_pos),
+    };
+
+    app_ctx.pending_screenshot_target = Some(target);
+    app_ctx.clipboard_copy_window.close();
+}
+
+fn receive_screenshot(app_ctx: &mut ZColorPickerAppContext, ui: &egui::Ui) {
+    let Some(target) = app_ctx.pending_screenshot_target else {
+        return;
+    };
+
+    let rect_image = ui.input(|i| {
+        for event in &i.raw.events {
+            if let egui::Event::Screenshot { image, .. } = event {
+                return Some(crop_screenshot(image, target, i.pixels_per_point()));
+            }
+        }
+        None
+    });
+
+    if let Some(img) = rect_image {
+        app_ctx.pending_screenshot_target = None;
+        let rgb_vec = img
+            .pixels
+            .iter()
+            .map(|f| Rgb {
+                val: (f.r(), f.g(), f.b()),
+            })
+            .collect();
+
+        let frame_pixels = FramePixelRead {
+            width: img.width(),
+            height: img.height(),
+            data: rgb_vec,
+        };
+        let frame_rect = match target {
+            ScreenshotTarget::Pixel(p) => Rect::from_min_size(p, Vec2::splat(1.0)),
+            ScreenshotTarget::Region(r) => r,
+        };
+        app_ctx.clipboard_event = Some(ClipboardCopyEvent {
+            frame_rect,
+            frame_pixels: Some(frame_pixels),
+        });
+    }
+}
+
 impl eframe::App for ZApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         log::info!("SAVING...");
@@ -743,5 +750,51 @@ mod tests {
         assert!(!should_quit_on_escape(&release, false));
         assert!(!should_quit_on_escape(&other_key, false));
         assert!(!should_quit_on_escape(&[], false));
+    }
+
+    #[test]
+    fn begin_screenshot_closes_popup_and_targets_pixel_outside_previewer() {
+        let mut app_ctx = <ZColorPickerAppContext as Default>::default();
+        app_ctx.clipboard_copy_window.open(Pos2::ZERO, 0.7);
+        let pos = Pos2::new(10.0, 20.0);
+
+        begin_screenshot(&mut app_ctx, pos);
+
+        assert!(!app_ctx.clipboard_copy_window.open);
+        assert!(matches!(
+            app_ctx.pending_screenshot_target,
+            Some(ScreenshotTarget::Pixel(p)) if p == pos
+        ));
+    }
+
+    #[test]
+    fn receive_screenshot_stores_copy_in_a_pass_that_repaints() {
+        let mut app_ctx = <ZColorPickerAppContext as Default>::default();
+        app_ctx.pending_screenshot_target = Some(ScreenshotTarget::Pixel(Pos2::new(1.0, 1.0)));
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |_| {});
+            });
+        }
+        let input = egui::RawInput {
+            events: vec![egui::Event::Screenshot {
+                viewport_id: egui::ViewportId::ROOT,
+                user_data: Default::default(),
+                image: Arc::new(egui::ColorImage::new([4, 4], Color32::RED)),
+            }],
+            ..Default::default()
+        };
+
+        let output = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| receive_screenshot(&mut app_ctx, ui));
+        });
+
+        assert!(app_ctx.clipboard_event.is_some());
+        assert!(app_ctx.pending_screenshot_target.is_none());
+        assert_eq!(
+            output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+            std::time::Duration::ZERO
+        );
     }
 }
