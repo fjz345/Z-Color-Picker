@@ -24,7 +24,8 @@ use crate::{
     preset::PresetHandler,
     ui_egui::{
         clipboard::{
-            write_color_to_clipboard, write_pixels_to_clipboard, ClipboardCopyEvent, ClipboardPopup,
+            copy_status_text, crop_screenshot, write_color_to_clipboard, write_pixels_to_clipboard,
+            ClipboardCopyEvent, ClipboardPopup, ScreenshotTarget,
         },
         color_picker::ZColorPickerWrapper,
         content_windows::{WindowPreset, WindowZColorPickerOptions},
@@ -103,7 +104,7 @@ pub struct ZColorPickerAppContext {
     #[serde(skip)]
     double_click_event: Option<MouseClickEvent>,
     #[serde(skip)]
-    pending_screenshot_rect: Option<Rect>,
+    pending_screenshot_target: Option<ScreenshotTarget>,
     #[serde(skip)]
     clipboard_event: Option<ClipboardCopyEvent>,
     #[serde(skip)]
@@ -195,7 +196,7 @@ impl ZColorPickerAppContext {
             debug_window_control_points: DebugWindowControlPoints::new(Pos2 { x: 200.0, y: 200.0 }),
             debug_window_test: DebugWindowTestWindow::new(Pos2 { x: 200.0, y: 200.0 }),
             double_click_event: None,
-            pending_screenshot_rect: None,
+            pending_screenshot_target: None,
             clipboard_event: None,
             clipboard_copy_window: ClipboardPopup::new(
                 false,
@@ -463,41 +464,32 @@ impl ZApp {
                 break;
             }
         }
-        // found_rect = None;
-        // Fallback rect if none found: 1x1 rect at pointer_pos
-        let rect = found_rect.unwrap_or(Rect::from_min_size(
-            pointer_pos.clamp(
-                Pos2 { x: 0.0, y: 0.0 },
-                ctx.screen_rect().max - Vec2 { x: 1.0, y: 1.0 },
-            ),
-            Vec2::new(1.0, 1.0),
-        ));
+        let target = match found_rect {
+            Some(rect) => ScreenshotTarget::Region(rect),
+            None => ScreenshotTarget::Pixel(pointer_pos),
+        };
 
-        app_ctx.pending_screenshot_rect = Some(rect);
+        app_ctx.pending_screenshot_target = Some(target);
         ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
     }
 
     fn handle_screenshot_event(&mut self, ui: &egui::Ui) {
         let app_ctx = &mut self.app_ctx.borrow_mut();
-        let Some(rect) = app_ctx.pending_screenshot_rect else {
+        let Some(target) = app_ctx.pending_screenshot_target else {
             return;
         };
 
         let rect_image = ui.input(|i| {
             for event in &i.raw.events {
                 if let egui::Event::Screenshot { image, .. } = event {
-                    let pixels_per_point = i.pixels_per_point();
-                    let region = rect;
-                    let rect_image = image.region(&region, Some(pixels_per_point));
-
-                    return Some(rect_image);
+                    return Some(crop_screenshot(image, target, i.pixels_per_point()));
                 }
             }
             None
         });
 
         if let Some(img) = rect_image {
-            app_ctx.pending_screenshot_rect = None;
+            app_ctx.pending_screenshot_target = None;
             let rgb_vec = img
                 .pixels
                 .iter()
@@ -511,8 +503,12 @@ impl ZApp {
                 height: img.height(),
                 data: rgb_vec,
             };
+            let frame_rect = match target {
+                ScreenshotTarget::Pixel(p) => Rect::from_min_size(p, Vec2::splat(1.0)),
+                ScreenshotTarget::Region(r) => r,
+            };
             app_ctx.clipboard_event = Some(ClipboardCopyEvent {
-                frame_rect: rect,
+                frame_rect,
                 frame_pixels: Some(frame_pixels),
             });
         }
@@ -531,10 +527,13 @@ impl ZApp {
                         frame_pixels.data[0].val.1,
                         frame_pixels.data[0].val.2,
                     );
-                    let _ = write_color_to_clipboard(color, app_ctx.color_copy_format);
+                    let result = write_color_to_clipboard(color, app_ctx.color_copy_format);
+                    if let Err(e) = &result {
+                        log::error!("{e}");
+                    }
                     app_ctx
                         .clipboard_copy_window
-                        .set_text(&format!("{:?}", color).to_string());
+                        .set_text(&copy_status_text(&result, &format!("{:?}", color)));
                     copied_to_clipboard = true;
                     log::debug!("Wrote {:?} to clipboard", color);
                 } else if frame_pixels.data.len() > 1 {
@@ -552,11 +551,14 @@ impl ZApp {
                         &data.width,
                         &data.height
                     );
+                    let result = write_pixels_to_clipboard(data);
+                    if let Err(e) = &result {
+                        log::error!("{e}");
+                    }
                     app_ctx
                         .clipboard_copy_window
-                        .set_text(&"Copied img to clipboard".to_string());
+                        .set_text(&copy_status_text(&result, "Copied img to clipboard"));
                     copied_to_clipboard = true;
-                    let _ = write_pixels_to_clipboard(data);
                 } else {
                     log::info!("clipboard event could not be processed, colors len was 0");
                 }

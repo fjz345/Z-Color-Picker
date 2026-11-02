@@ -130,8 +130,21 @@ impl WindowZColorPickerOptions {
                 .selected_text(format!("{:?}", *color_copy_format))
                 .show_ui(ui, |ui| {
                     ui.set_min_width(60.0);
-                    ui.selectable_value(color_copy_format, ColorStringCopy::HEX, "Hex");
-                    ui.selectable_value(color_copy_format, ColorStringCopy::HEXNOA, "Hex(no A)");
+                    for format in [
+                        ColorStringCopy::HEX,
+                        ColorStringCopy::HEXNOA,
+                        ColorStringCopy::SRGBHEX,
+                        ColorStringCopy::HSV,
+                        ColorStringCopy::HSVA,
+                        ColorStringCopy::INT,
+                        ColorStringCopy::FLOAT,
+                        ColorStringCopy::RGB,
+                        ColorStringCopy::SRGB,
+                        ColorStringCopy::RGBA,
+                        ColorStringCopy::SRGBA,
+                    ] {
+                        ui.selectable_value(color_copy_format, format, format!("{format:?}"));
+                    }
                 })
                 .response
                 .on_hover_text("Color Copy Format");

@@ -2,7 +2,7 @@ use std::{fs::File, io::Write, ops::Rem, time::Instant};
 
 use arboard::{Clipboard, ImageData};
 use ecolor::Color32;
-use eframe::egui::{self, Pos2, Rect};
+use eframe::egui::{self, pos2, ColorImage, Pos2, Rect};
 
 use crate::{
     common::ColorStringCopy,
@@ -73,6 +73,50 @@ pub fn write_pixels_to_test_ppm(image_data: &ImageData, test_vec: Vec<Rgb>) -> R
     log::info!("render.ppm written");
 
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ScreenshotTarget {
+    Pixel(Pos2),
+    Region(Rect),
+}
+
+pub fn crop_screenshot(
+    image: &ColorImage,
+    target: ScreenshotTarget,
+    pixels_per_point: f32,
+) -> ColorImage {
+    let [width, height] = image.size;
+    let to_pixel = |point: f32, limit: usize| {
+        ((point * pixels_per_point).floor().max(0.0) as usize).min(limit)
+    };
+    let (min, max) = match target {
+        ScreenshotTarget::Pixel(p) => {
+            let x = to_pixel(p.x, width.saturating_sub(1));
+            let y = to_pixel(p.y, height.saturating_sub(1));
+            ([x, y], [(x + 1).min(width), (y + 1).min(height)])
+        }
+        ScreenshotTarget::Region(r) => {
+            let min = [to_pixel(r.min.x, width), to_pixel(r.min.y, height)];
+            let max = [
+                to_pixel(r.max.x, width).max(min[0]),
+                to_pixel(r.max.y, height).max(min[1]),
+            ];
+            (min, max)
+        }
+    };
+    let pixel_rect = Rect::from_min_max(
+        pos2(min[0] as f32, min[1] as f32),
+        pos2(max[0] as f32, max[1] as f32),
+    );
+    image.region(&pixel_rect, None)
+}
+
+pub fn copy_status_text(result: &Result<()>, success_text: &str) -> String {
+    match result {
+        Ok(()) => success_text.to_string(),
+        Err(e) => format!("Copy failed: {e}"),
+    }
 }
 
 #[derive(Debug)]
@@ -156,5 +200,96 @@ impl ClipboardPopup {
         );
 
         ctx.request_repaint(); // keep redrawing until it fades out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::ZError;
+
+    fn black_image(width: usize, height: usize) -> ColorImage {
+        ColorImage::new([width, height], Color32::BLACK)
+    }
+
+    fn set_pixel(image: &mut ColorImage, x: usize, y: usize, color: Color32) {
+        let width = image.width();
+        image.pixels[y * width + x] = color;
+    }
+
+    fn region(min: f32, max: f32) -> ScreenshotTarget {
+        ScreenshotTarget::Region(Rect::from_min_max(pos2(min, min), pos2(max, max)))
+    }
+
+    #[test]
+    fn pixel_crop_is_one_pixel_at_fractional_scale() {
+        let cursor_coords: Vec<f32> = (0..)
+            .map(|i| i as f32 * 0.37)
+            .take_while(|c| *c < 100.0)
+            .collect();
+        for ppp in [1.0_f32, 1.333, 1.5, 2.0] {
+            let side = (100.0 * ppp).ceil() as usize;
+            let image = black_image(side, side);
+            for &y in &cursor_coords {
+                for &x in &cursor_coords {
+                    let crop = crop_screenshot(&image, ScreenshotTarget::Pixel(pos2(x, y)), ppp);
+                    assert_eq!(crop.size, [1, 1], "ppp {ppp} cursor ({x}, {y})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pixel_crop_reads_floor_of_cursor_times_ppp() {
+        let mut image = black_image(40, 40);
+        set_pixel(&mut image, 13, 6, Color32::RED);
+        let crop = crop_screenshot(&image, ScreenshotTarget::Pixel(pos2(10.0, 5.0)), 1.333);
+        assert_eq!(crop.size, [1, 1]);
+        assert_eq!(crop.pixels[0], Color32::RED);
+    }
+
+    #[test]
+    fn pixel_crop_clamps_cursor_outside_image() {
+        let mut image = black_image(40, 40);
+        set_pixel(&mut image, 39, 39, Color32::RED);
+        set_pixel(&mut image, 0, 0, Color32::BLUE);
+
+        let past_end = crop_screenshot(&image, ScreenshotTarget::Pixel(pos2(1000.0, 1000.0)), 1.5);
+        assert_eq!(past_end.size, [1, 1]);
+        assert_eq!(past_end.pixels[0], Color32::RED);
+
+        let before_start = crop_screenshot(&image, ScreenshotTarget::Pixel(pos2(-5.0, -5.0)), 1.5);
+        assert_eq!(before_start.size, [1, 1]);
+        assert_eq!(before_start.pixels[0], Color32::BLUE);
+    }
+
+    #[test]
+    fn region_crop_is_clamped_to_image() {
+        let image = black_image(50, 50);
+        assert_eq!(
+            crop_screenshot(&image, region(10.0, 100.0), 1.0).size,
+            [40, 40]
+        );
+        assert_eq!(
+            crop_screenshot(&image, region(5.0, 40.0), 2.0).size,
+            [40, 40]
+        );
+    }
+
+    #[test]
+    fn region_crop_outside_image_is_empty() {
+        let image = black_image(50, 50);
+        let crop = crop_screenshot(&image, region(200.0, 300.0), 1.0);
+        assert_eq!(crop.width() * crop.height(), 0);
+    }
+
+    #[test]
+    fn copy_status_text_reports_clipboard_error() {
+        let failed: Result<()> = Err(ZError::from(arboard::Error::ClipboardOccupied));
+        assert_eq!(
+            copy_status_text(&failed, "Copied"),
+            format!("Copy failed: {}", arboard::Error::ClipboardOccupied)
+        );
+        assert_eq!(copy_status_text(&Ok(()), "Copied"), "Copied");
     }
 }

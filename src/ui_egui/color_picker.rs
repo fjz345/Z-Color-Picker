@@ -389,40 +389,53 @@ pub fn format_color_as(
     format_type: ColorStringCopy,
     no_alpha: Option<bool>,
 ) -> String {
-    let formatted = match format_type {
-        ColorStringCopy::HEX => match no_alpha {
-            Some(no_alpha) => {
-                if no_alpha {
-                    format!("{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
-                } else {
-                    format!(
-                        "{:02x}{:02x}{:02x}{:02x}",
-                        color.a(),
-                        color.r(),
-                        color.g(),
-                        color.b()
-                    )
-                }
-            }
-            _ => {
-                format!(
-                    "{:02x}{:02x}{:02x}{:02x}",
-                    color.a(),
-                    color.r(),
-                    color.g(),
-                    color.b()
-                )
-            }
-        },
-        ColorStringCopy::HEXNOA => {
-            format!("{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
+    let [r, g, b, a] = color.to_srgba_unmultiplied();
+    let alpha = a as f32 / 255.0;
+    let [linear_r, linear_g, linear_b] = [r, g, b].map(ecolor::linear_f32_from_gamma_u8);
+    let [hue, saturation, value] = srgb_to_rounded_hsv(r, g, b);
+    match format_type {
+        ColorStringCopy::HEX if no_alpha == Some(true) => format!("{r:02X}{g:02X}{b:02X}"),
+        ColorStringCopy::HEX => format!("{a:02X}{r:02X}{g:02X}{b:02X}"),
+        ColorStringCopy::HEXNOA => format!("{r:02X}{g:02X}{b:02X}"),
+        ColorStringCopy::SRGBHEX => format!("#{r:02X}{g:02X}{b:02X}{a:02X}"),
+        ColorStringCopy::SRGB => format!("rgb({r}, {g}, {b})"),
+        ColorStringCopy::SRGBA => format!("rgba({r}, {g}, {b}, {alpha:.2})"),
+        ColorStringCopy::RGB => format!("rgb({linear_r:.3}, {linear_g:.3}, {linear_b:.3})"),
+        ColorStringCopy::RGBA => {
+            format!("rgba({linear_r:.3}, {linear_g:.3}, {linear_b:.3}, {alpha:.3})")
         }
-        _ => {
-            log::info!("Not Implemented {:?}", format_type);
-            format!("rgb({}, {}, {})", color.r(), color.g(), color.b())
-        }
+        ColorStringCopy::HSV => format!("hsv({hue}, {saturation}%, {value}%)"),
+        ColorStringCopy::HSVA => format!("hsva({hue}, {saturation}%, {value}%, {alpha:.2})"),
+        ColorStringCopy::INT => u32::from_be_bytes([a, r, g, b]).to_string(),
+        ColorStringCopy::FLOAT => format!(
+            "{:.3}, {:.3}, {:.3}, {alpha:.3}",
+            r as f32 / 255.0,
+            g as f32 / 255.0,
+            b as f32 / 255.0
+        ),
+    }
+}
+
+fn srgb_to_rounded_hsv(r: u8, g: u8, b: u8) -> [u32; 3] {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = (max - min) as f32;
+    let [r_f, g_f, b_f] = [r, g, b].map(f32::from);
+    let hue_sector = if max == min {
+        0.0
+    } else if max == r {
+        ((g_f - b_f) / delta).rem_euclid(6.0)
+    } else if max == g {
+        (b_f - r_f) / delta + 2.0
+    } else {
+        (r_f - g_f) / delta + 4.0
     };
-    formatted.to_uppercase()
+    let saturation = if max == 0 { 0.0 } else { delta / max as f32 };
+    [
+        (hue_sector * 60.0).round() as u32 % 360,
+        (saturation * 100.0).round() as u32,
+        (max as f32 / 255.0 * 100.0).round() as u32,
+    ]
 }
 
 pub fn main_color_picker(
@@ -867,6 +880,13 @@ fn handle_t_slider(
     }
 }
 
+fn t_slider_x_fraction(index: usize, count: usize) -> f32 {
+    if count <= 1 {
+        return 0.5;
+    }
+    index as f32 / (count - 1) as f32
+}
+
 /// Draw a line representing the t values of control points across the slider
 fn draw_t_slider_curve(
     ui: &mut egui::Ui,
@@ -881,7 +901,7 @@ fn draw_t_slider_curve(
     for (i, cp) in control_points.iter().enumerate() {
         let x = lerp(
             slider_rect.left()..=slider_rect.right(),
-            i as f32 / (control_points.len() - 1) as f32,
+            t_slider_x_fraction(i, control_points.len()),
         );
         let y = lerp(slider_rect.bottom()..=slider_rect.top(), *cp.t());
 
@@ -913,7 +933,7 @@ pub fn ui_t_control_points_overlay(
         // Show where the slider is at
         let x: f32 = lerp(
             container_response.rect.left()..=container_response.rect.right(),
-            i as f32 / (control_points.len() - 1) as f32,
+            t_slider_x_fraction(i, control_points.len()),
         );
         let y = lerp(
             container_response.rect.bottom()..=container_response.rect.top(),
@@ -957,4 +977,107 @@ pub fn ui_t_control_points_overlay(
     }
 
     (container_response, selected_key_frame)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn orange() -> Color32 {
+        Color32::from_rgba_unmultiplied(255, 128, 0, 204)
+    }
+
+    fn format_orange(format: ColorStringCopy) -> String {
+        format_color_as(orange(), format, None)
+    }
+
+    #[test]
+    fn t_slider_x_fraction_centers_single_point() {
+        assert_eq!(t_slider_x_fraction(0, 1), 0.5);
+    }
+
+    #[test]
+    fn t_slider_x_fraction_spans_slider_for_many_points() {
+        assert_eq!(t_slider_x_fraction(0, 3), 0.0);
+        assert_eq!(t_slider_x_fraction(1, 3), 0.5);
+        assert_eq!(t_slider_x_fraction(2, 3), 1.0);
+    }
+
+    #[test]
+    fn format_color_as_hex() {
+        assert_eq!(format_orange(ColorStringCopy::HEX), "CCFF8000");
+    }
+
+    #[test]
+    fn format_color_as_hexnoa() {
+        assert_eq!(format_orange(ColorStringCopy::HEXNOA), "FF8000");
+    }
+
+    #[test]
+    fn format_color_as_srgbhex() {
+        assert_eq!(format_orange(ColorStringCopy::SRGBHEX), "#FF8000CC");
+    }
+
+    #[test]
+    fn format_color_as_srgb() {
+        assert_eq!(format_orange(ColorStringCopy::SRGB), "rgb(255, 128, 0)");
+    }
+
+    #[test]
+    fn format_color_as_srgba() {
+        assert_eq!(
+            format_orange(ColorStringCopy::SRGBA),
+            "rgba(255, 128, 0, 0.80)"
+        );
+    }
+
+    #[test]
+    fn format_color_as_rgb() {
+        assert_eq!(
+            format_orange(ColorStringCopy::RGB),
+            "rgb(1.000, 0.216, 0.000)"
+        );
+    }
+
+    #[test]
+    fn format_color_as_rgba() {
+        assert_eq!(
+            format_orange(ColorStringCopy::RGBA),
+            "rgba(1.000, 0.216, 0.000, 0.800)"
+        );
+    }
+
+    #[test]
+    fn format_color_as_hsv() {
+        assert_eq!(format_orange(ColorStringCopy::HSV), "hsv(30, 100%, 100%)");
+    }
+
+    #[test]
+    fn format_color_as_hsva() {
+        assert_eq!(
+            format_orange(ColorStringCopy::HSVA),
+            "hsva(30, 100%, 100%, 0.80)"
+        );
+    }
+
+    #[test]
+    fn format_color_as_int() {
+        assert_eq!(format_orange(ColorStringCopy::INT), "3439296512");
+    }
+
+    #[test]
+    fn format_color_as_float() {
+        assert_eq!(
+            format_orange(ColorStringCopy::FLOAT),
+            "1.000, 0.502, 0.000, 0.800"
+        );
+    }
+
+    #[test]
+    fn format_color_as_hsv_gray_has_zero_hue() {
+        assert_eq!(
+            format_color_as(Color32::from_rgb(128, 128, 128), ColorStringCopy::HSV, None),
+            "hsv(0, 0%, 50%)"
+        );
+    }
 }

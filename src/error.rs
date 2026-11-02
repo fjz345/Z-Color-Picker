@@ -39,8 +39,21 @@ impl From<String> for ZError {
 
 impl From<arboard::Error> for ZError {
     fn from(err: arboard::Error) -> ZError {
-        ZError::Message(err.to_string())
+        ZError::Clipboard(err)
     }
 }
 
 pub type Result<T> = std::result::Result<T, ZError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arboard_error_converts_to_clipboard_variant() {
+        assert!(matches!(
+            ZError::from(arboard::Error::ContentNotAvailable),
+            ZError::Clipboard(_)
+        ));
+    }
+}
