@@ -10,7 +10,6 @@ mod common;
 mod datatypes;
 mod error;
 mod fs;
-mod image_processing;
 mod logger;
 mod math;
 mod preset;

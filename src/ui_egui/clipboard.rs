@@ -1,9 +1,9 @@
-use std::{ops::Rem, time::Instant};
+use std::time::Instant;
 
 use arboard::{Clipboard, ImageData};
-use eframe::egui::{self, pos2, vec2, ColorImage, Pos2, Rect, Vec2};
+use eframe::egui::{self, pos2, vec2, Color32, ColorImage, Pos2, Rect, Vec2};
 
-use crate::{error::Result, image_processing::FramePixelRead};
+use crate::{common::ColorStringCopy, error::Result, ui_egui::color_picker::format_color_as};
 
 pub fn write_string_to_clipboard(text: String) -> Result<()> {
     let mut clipboard = Clipboard::new()?;
@@ -14,20 +14,19 @@ pub fn write_string_to_clipboard(text: String) -> Result<()> {
 }
 
 pub fn write_pixels_to_clipboard(image_data: ImageData) -> Result<()> {
-    assert!(
-        image_data.bytes.len().rem(4) == 0,
+    assert_eq!(
+        image_data.bytes.len(),
+        image_data.width * image_data.height * 4,
         "Needs to be 4 bytes per pixel"
     );
     let mut clipboard = Clipboard::new()?;
-    let copy = image_data.clone();
-    clipboard.set_image(image_data)?;
-
     log::info!(
-        "Clipboard set to: W[{}],H[{}], NumBytes[{}]",
-        copy.width,
-        copy.height,
-        copy.bytes.len()
+        "Setting clipboard to: W[{}],H[{}], NumBytes[{}]",
+        image_data.width,
+        image_data.height,
+        image_data.bytes.len()
     );
+    clipboard.set_image(image_data)?;
     Ok(())
 }
 
@@ -81,7 +80,7 @@ pub fn copy_status_text(result: &Result<()>, success_text: &str) -> String {
 #[derive(Debug)]
 pub struct ClipboardCopyEvent {
     pub frame_rect: Rect,
-    pub frame_pixels: Option<FramePixelRead>,
+    pub image: ColorImage,
 }
 #[derive(Debug)]
 pub struct ClipboardPopup {
@@ -192,7 +191,38 @@ pub fn popup_alpha(elapsed: f32, duration: f32) -> f32 {
 pub fn copy_popup_seconds(result: &Result<()>) -> f32 {
     match result {
         Ok(()) => 1.5,
-        Err(_) => 3.0,
+        Err(_) => FAILED_COPY_POPUP_SECONDS,
+    }
+}
+
+pub const FAILED_COPY_POPUP_SECONDS: f32 = 3.0;
+
+#[derive(Debug, PartialEq)]
+pub enum ClipboardPayload {
+    Text(String),
+    Image {
+        width: usize,
+        height: usize,
+        rgba: Vec<u8>,
+    },
+}
+
+pub fn clipboard_payload(image: &ColorImage, format: ColorStringCopy) -> Option<ClipboardPayload> {
+    match image.pixels.as_slice() {
+        [] => None,
+        [p] => Some(ClipboardPayload::Text(format_color_as(
+            Color32::from_rgb(p.r(), p.g(), p.b()),
+            format,
+            None,
+        ))),
+        pixels => Some(ClipboardPayload::Image {
+            width: image.width(),
+            height: image.height(),
+            rgba: pixels
+                .iter()
+                .flat_map(|p| [p.r(), p.g(), p.b(), 255])
+                .collect(),
+        }),
     }
 }
 
@@ -433,5 +463,57 @@ mod tests {
         assert!(alpha.is_finite());
         assert_eq!(alpha, 0.0);
         assert_eq!(popup_alpha(1.0, -1.0), 0.0);
+    }
+
+    #[test]
+    fn one_pixel_becomes_text_in_the_copy_format() {
+        let image = ColorImage::new([1, 1], Color32::from_rgb(255, 128, 0));
+        assert_eq!(
+            clipboard_payload(&image, ColorStringCopy::HEXNOA),
+            Some(ClipboardPayload::Text("FF8000".to_string()))
+        );
+        assert_eq!(
+            clipboard_payload(&image, ColorStringCopy::SRGB),
+            Some(ClipboardPayload::Text("rgb(255, 128, 0)".to_string()))
+        );
+    }
+
+    #[test]
+    fn two_by_one_image_is_rgba_in_row_major_order() {
+        let mut image = black_image(2, 1);
+        set_pixel(&mut image, 0, 0, Color32::from_rgb(1, 2, 3));
+        set_pixel(&mut image, 1, 0, Color32::from_rgb(4, 5, 6));
+        assert_eq!(
+            clipboard_payload(&image, ColorStringCopy::HEXNOA),
+            Some(ClipboardPayload::Image {
+                width: 2,
+                height: 1,
+                rgba: vec![1, 2, 3, 255, 4, 5, 6, 255],
+            })
+        );
+    }
+
+    #[test]
+    fn three_by_two_image_is_opaque_rgba() {
+        let image = ColorImage::new([3, 2], Color32::from_rgba_unmultiplied(10, 20, 30, 40));
+        match clipboard_payload(&image, ColorStringCopy::HEXNOA) {
+            Some(ClipboardPayload::Image {
+                width: 3,
+                height: 2,
+                rgba,
+            }) => {
+                assert_eq!(rgba.len(), 24);
+                assert!(rgba.chunks_exact(4).all(|pixel| pixel[3] == 255));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_image_has_no_payload() {
+        assert_eq!(
+            clipboard_payload(&black_image(0, 0), ColorStringCopy::HEXNOA),
+            None
+        );
     }
 }

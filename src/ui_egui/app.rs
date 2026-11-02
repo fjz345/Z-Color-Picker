@@ -1,5 +1,4 @@
 use arboard::ImageData;
-use ecolor::Color32;
 use eframe::egui::{self, Layout, PointerButton, Rect, Ui};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -16,15 +15,15 @@ use crate::{
     datatypes::control_point::{
         ControlPoint, ControlPointStorage, ControlPointTangent, ControlPointValue,
     },
-    image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead, Rgb},
     logger::LogCollector,
     preset::{PresetHandler, PresetNameError},
     ui_egui::{
         clipboard::{
-            copy_popup_seconds, copy_status_text, crop_screenshot, write_pixels_to_clipboard,
-            write_string_to_clipboard, ClipboardCopyEvent, ClipboardPopup, ScreenshotTarget,
+            clipboard_payload, copy_popup_seconds, copy_status_text, crop_screenshot,
+            write_pixels_to_clipboard, write_string_to_clipboard, ClipboardCopyEvent,
+            ClipboardPayload, ClipboardPopup, ScreenshotTarget, FAILED_COPY_POPUP_SECONDS,
         },
-        color_picker::{format_color_as, ZColorPickerWrapper},
+        color_picker::ZColorPickerWrapper,
         content_windows::{WindowPreset, WindowZColorPickerOptions},
         debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
         panes::{
@@ -492,69 +491,52 @@ impl ZApp {
         receive_screenshot(&mut self.app_ctx.borrow_mut(), ui);
     }
 
-    fn handle_clipboardcopy_event(&mut self) -> bool {
+    fn handle_clipboardcopy_event(&mut self) {
         let app_ctx = &mut self.app_ctx.borrow_mut();
-        if let Some(event) = app_ctx.clipboard_event.take() {
-            let mut popup_seconds = None;
+        let Some(event) = app_ctx.clipboard_event.take() else {
+            return;
+        };
 
-            // Copy to clipboard
-            if let Some(frame_pixels) = event.frame_pixels {
-                if frame_pixels.data.len() == 1 {
-                    let color = Color32::from_rgb(
-                        frame_pixels.data[0].val.0,
-                        frame_pixels.data[0].val.1,
-                        frame_pixels.data[0].val.2,
-                    );
-                    let text = format_color_as(color, app_ctx.color_copy_format, None);
-                    let result = write_string_to_clipboard(text.clone());
-                    if let Err(e) = &result {
-                        log::error!("{e}");
-                    }
-                    app_ctx
-                        .clipboard_copy_window
-                        .set_text(&copy_status_text(&result, &format!("Copied {text}")));
-                    popup_seconds = Some(copy_popup_seconds(&result));
-                    log::debug!("Wrote {:?} to clipboard", color);
-                } else if frame_pixels.data.len() > 1 {
-                    let a_padded = u8u8u8_to_u8u8u8u8(&frame_pixels.data[..]);
-                    let u8_stream = u8u8u8u8_to_u8(&a_padded[..]);
-                    let cow = Cow::Owned(u8_stream);
-                    let data = ImageData {
-                        width: frame_pixels.width,
-                        height: frame_pixels.height,
-                        bytes: cow,
-                    };
-                    // let _ = write_pixels_to_test_ppm(&data, copy);
-                    log::debug!(
-                        "Writing pixels ({},{}) to clipboard",
-                        &data.width,
-                        &data.height
-                    );
-                    let result = write_pixels_to_clipboard(data);
-                    if let Err(e) = &result {
-                        log::error!("{e}");
-                    }
-                    app_ctx
-                        .clipboard_copy_window
-                        .set_text(&copy_status_text(&result, "Copied img to clipboard"));
-                    popup_seconds = Some(copy_popup_seconds(&result));
-                } else {
-                    log::info!("clipboard event could not be processed, colors len was 0");
+        let (status_text, popup_seconds) =
+            match clipboard_payload(&event.image, app_ctx.color_copy_format) {
+                None => {
+                    let text = "Nothing to copy";
+                    log::warn!("{text}");
+                    (text.to_string(), FAILED_COPY_POPUP_SECONDS)
                 }
-            } else {
-                log::info!("clipboard event could not be processed, did not have any colors set");
-            }
+                Some(payload) => {
+                    let (result, success_text) = match payload {
+                        ClipboardPayload::Text(text) => {
+                            let success_text = format!("Copied {text}");
+                            (write_string_to_clipboard(text), success_text)
+                        }
+                        ClipboardPayload::Image {
+                            width,
+                            height,
+                            rgba,
+                        } => (
+                            write_pixels_to_clipboard(ImageData {
+                                width,
+                                height,
+                                bytes: Cow::Owned(rgba),
+                            }),
+                            "Copied img to clipboard".to_string(),
+                        ),
+                    };
+                    if let Err(e) = &result {
+                        log::error!("{e}");
+                    }
+                    (
+                        copy_status_text(&result, &success_text),
+                        copy_popup_seconds(&result),
+                    )
+                }
+            };
 
-            if let Some(seconds) = popup_seconds {
-                app_ctx
-                    .clipboard_copy_window
-                    .open(event.frame_rect.min, seconds);
-            }
-
-            return popup_seconds.is_some();
-        }
-
-        false
+        app_ctx.clipboard_copy_window.set_text(&status_text);
+        app_ctx
+            .clipboard_copy_window
+            .open(event.frame_rect.min, popup_seconds);
     }
 
     fn request_shutdown(&mut self) {
@@ -682,29 +664,13 @@ fn receive_screenshot(app_ctx: &mut ZColorPickerAppContext, ui: &egui::Ui) {
         None
     });
 
-    if let Some(img) = rect_image {
+    if let Some(image) = rect_image {
         app_ctx.pending_screenshot_target = None;
-        let rgb_vec = img
-            .pixels
-            .iter()
-            .map(|f| Rgb {
-                val: (f.r(), f.g(), f.b()),
-            })
-            .collect();
-
-        let frame_pixels = FramePixelRead {
-            width: img.width(),
-            height: img.height(),
-            data: rgb_vec,
-        };
         let frame_rect = match target {
             ScreenshotTarget::Pixel(p) => Rect::from_min_size(p, Vec2::splat(1.0)),
             ScreenshotTarget::Region(r) => r,
         };
-        app_ctx.clipboard_event = Some(ClipboardCopyEvent {
-            frame_rect,
-            frame_pixels: Some(frame_pixels),
-        });
+        app_ctx.clipboard_event = Some(ClipboardCopyEvent { frame_rect, image });
     }
 }
 
@@ -737,31 +703,13 @@ impl eframe::App for ZApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
-
-        // let screen_size_px = [ctx.used_size().x as u32, ctx.used_size().y as u32];
-        // if let Some(event) = &mut self.app_ctx.clipboard_event {
-        //     let pixel_read = read_pixels_from_frame(
-        //         frame,
-        //         screen_size_px,
-        //         self.native_pixel_per_point,
-        //         self.scale_factor,
-        //         event.frame_rect.min.x,
-        //         event.frame_rect.max.y,
-        //         event.frame_rect.size().x,
-        //         event.frame_rect.size().y,
-        //     );
-        //     if pixel_read.data.len() > 0 {
-        //         event.frame_pixels = Some(pixel_read);
-        //     } else {
-        //         event.frame_pixels = None;
-        //     }
-        // }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ecolor::Color32;
 
     fn key_event(key: egui::Key, pressed: bool, repeat: bool) -> egui::Event {
         egui::Event::Key {
