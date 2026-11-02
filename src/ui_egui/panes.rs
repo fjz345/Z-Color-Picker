@@ -14,7 +14,7 @@ use crate::{
     preset::PresetHandler,
     ui_egui::{
         app::ZColorPickerAppContext, color_picker::ZColorPickerWrapper,
-        content_windows::flip_control_points,
+        content_windows::flip_control_points, previewer::PreviewerData,
     },
 };
 pub struct TreeBehavior {}
@@ -166,6 +166,7 @@ impl ZAppPane for ColorPickerOptionsPane {
                 &mut preset_handler,
                 &mut control_points,
                 spline_mode,
+                &mut mut_ctx.previewer.data,
             );
         }
         mut_ctx.color_copy_format = color_copy_format;
@@ -237,12 +238,16 @@ fn normalize_applied_preset(
     preset_handler: &mut PresetHandler,
     control_points: &mut Vec<ControlPoint>,
     spline_mode: SplineMode,
+    preview: &mut PreviewerData,
 ) {
     color_picker.pre_draw_update(control_points, spline_mode);
     // Twice: the hue lerp runs before the clamp, so one pass lerps from unclamped endpoint hues.
     color_picker.apply_control_point_constraints(control_points);
     color_picker.apply_control_point_constraints(control_points);
     preset_handler.set_selected_data_in_memory(control_points, spline_mode);
+    color_picker.last_modifying_point_index = None;
+    color_picker.dragging_index = None;
+    preview.reset_preview_sizes();
 }
 
 #[cfg(test)]
@@ -294,7 +299,14 @@ mod tests {
         handler.apply_selected_preset(&mut points, &mut spline_mode);
         assert_eq!(spline_mode, MODE);
         let mut color_picker = ZColorPickerWrapper::default();
-        normalize_applied_preset(&mut color_picker, &mut handler, &mut points, spline_mode);
+        let mut preview = PreviewerData::new(points.len());
+        normalize_applied_preset(
+            &mut color_picker,
+            &mut handler,
+            &mut points,
+            spline_mode,
+            &mut preview,
+        );
         SelectedPreset {
             tmp,
             handler,
@@ -324,6 +336,30 @@ mod tests {
         next_picker_frame(&mut selected.color_picker, &mut selected.points);
         assert!(selected.handler.auto_save(&selected.points, MODE).unwrap());
         assert_ne!(selected.file_bytes(), before);
+    }
+
+    #[test]
+    fn applying_a_preset_clears_the_selection_and_band_widths() {
+        let mut selected = select_preset_with_auto_save();
+        selected.color_picker.last_modifying_point_index = Some(2);
+        selected.color_picker.dragging_index = Some(1);
+        let mut preview = PreviewerData::new(4);
+        preview.points_preview_sizes = vec![300.0, 50.0, 100.0, 100.0];
+
+        normalize_applied_preset(
+            &mut selected.color_picker,
+            &mut selected.handler,
+            &mut selected.points,
+            MODE,
+            &mut preview,
+        );
+
+        assert_eq!(selected.color_picker.last_modifying_point_index, None);
+        assert_eq!(selected.color_picker.dragging_index, None);
+        assert_eq!(
+            preview.points_preview_sizes,
+            PreviewerData::new(4).points_preview_sizes
+        );
     }
 
     #[test]
