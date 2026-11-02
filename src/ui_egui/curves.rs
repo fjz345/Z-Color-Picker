@@ -170,12 +170,6 @@ mod tests {
         assert_eq!(halo.color, Color32::BLACK.gamma_multiply_u8(halo.color.a()));
     }
 
-    const ALL_SPLINE_MODES: [SplineMode; 3] = [
-        SplineMode::Linear,
-        SplineMode::Bezier,
-        SplineMode::HermiteBezier,
-    ];
-
     fn zigzag_points(n: usize) -> Vec<ControlPoint> {
         (0..n)
             .map(|i| {
@@ -217,7 +211,7 @@ mod tests {
             ControlPointValue::new(0.5, 0.5, 0.5),
             0.0,
         )];
-        for mode in ALL_SPLINE_MODES {
+        for mode in SplineMode::ALL {
             assert!(generate_spline_points(&[], mode, 4).is_empty());
             assert!(generate_spline_points(&single, mode, 4).is_empty());
         }
@@ -225,7 +219,7 @@ mod tests {
 
     #[test]
     fn spline_points_start_at_first_and_end_at_last_point() {
-        for mode in ALL_SPLINE_MODES {
+        for mode in SplineMode::ALL {
             for n in 2..=6 {
                 let points = zigzag_points(n);
                 let samples = generate_spline_points(&points, mode, 4);
@@ -237,7 +231,7 @@ mod tests {
 
     #[test]
     fn spline_points_have_no_consecutive_duplicates() {
-        for mode in ALL_SPLINE_MODES {
+        for mode in SplineMode::ALL {
             for n in 2..=6 {
                 for samples_per_segment in [1, 4, 100] {
                     let samples =

@@ -200,22 +200,18 @@ pub fn draw_curvature_comb(ui: &mut Ui, rect: egui::Rect, control_points: &[Cont
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::datatypes::control_point::ControlPointValue;
+    use crate::datatypes::control_point::test_support::{
+        point_with_tangent, RUNAWAY_POINT, RUNAWAY_TANGENT,
+    };
 
     const RECT: egui::Rect = egui::Rect {
         min: Pos2::new(100.0, 100.0),
         max: Pos2::new(300.0, 300.0),
     };
 
-    fn point_with_tangent(val: [f32; 3], slot: usize, offset: [f32; 3]) -> ControlPoint {
-        let mut cp = ControlPoint::new_simple(ControlPointValue::from(val), 0.0);
-        cp.tangents_mut()[slot] = Some(ControlPointValue::from(offset));
-        cp
-    }
-
     #[test]
     fn runaway_outgoing_tangent_puts_p1_on_border_at_clamped_handle() {
-        let start = point_with_tangent([0.035, 0.855, 0.566], 1, [161.96, 35.47, 0.0]);
+        let start = point_with_tangent(RUNAWAY_POINT, 1, RUNAWAY_TANGENT);
         let end = point_with_tangent([0.775, 0.592, 0.604], 0, [-0.175, 0.315, 0.0]);
         let cubic = cubic_for_segment(&start, &end, RECT);
         assert_eq!(cubic.p1, RECT.right_top());

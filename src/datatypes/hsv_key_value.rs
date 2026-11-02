@@ -296,21 +296,27 @@ impl splines::interpolate::Interpolate<f32> for HsvKeyValue {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use splines::interpolate::Interpolate;
+pub mod test_support {
+    use super::HsvKeyValue;
 
-    fn bezier(t: f32, a: HsvKeyValue, b: HsvKeyValue) -> HsvKeyValue {
-        <HsvKeyValue as Interpolate<f32>>::cubic_bezier(t, a, a, b, b)
-    }
-
-    fn assert_close(actual: HsvKeyValue, expected: HsvKeyValue) {
+    pub fn assert_close(actual: HsvKeyValue, expected: HsvKeyValue) {
         for i in 0..3 {
             assert!(
                 (actual[i] - expected[i]).abs() < 1e-5,
                 "{actual:?} != {expected:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::assert_close;
+    use super::*;
+    use splines::interpolate::Interpolate;
+
+    fn bezier(t: f32, a: HsvKeyValue, b: HsvKeyValue) -> HsvKeyValue {
+        <HsvKeyValue as Interpolate<f32>>::cubic_bezier(t, a, a, b, b)
     }
 
     #[test]

@@ -92,6 +92,20 @@ impl ControlPoint {
 }
 
 #[cfg(test)]
+pub mod test_support {
+    use super::{ControlPoint, ControlPointValue};
+
+    pub const RUNAWAY_POINT: [f32; 3] = [0.035, 0.855, 0.566];
+    pub const RUNAWAY_TANGENT: [f32; 3] = [161.96, 35.47, 0.0];
+
+    pub fn point_with_tangent(val: [f32; 3], slot: usize, offset: [f32; 3]) -> ControlPoint {
+        let mut cp = ControlPoint::new_simple(ControlPointValue::from(val), 0.0);
+        cp.tangents_mut()[slot] = Some(ControlPointValue::from(offset));
+        cp
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

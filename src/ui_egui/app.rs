@@ -510,7 +510,7 @@ impl ZApp {
             .open(event.frame_rect.min, popup_seconds);
     }
 
-    fn handle_selected_color_copy(&mut self, ctx: &egui::Context, esc_blocked: bool) {
+    fn handle_selected_color_copy(&mut self, ctx: &egui::Context, input_blocked: bool) {
         let clicked_anchor = self
             .app_ctx
             .borrow()
@@ -519,7 +519,7 @@ impl ZApp {
             .copy_request
             .take();
         let shortcut_blocked =
-            esc_blocked || egui::text_selection::LabelSelectionState::load(ctx).has_selection();
+            input_blocked || egui::text_selection::LabelSelectionState::load(ctx).has_selection();
         let shortcut_anchor = ctx
             .input(|i| is_copy_shortcut(&i.events, shortcut_blocked))
             .then(|| {
@@ -562,7 +562,7 @@ impl ZApp {
         ctx.debug_window_control_points.draw_ui(ui);
     }
 
-    fn is_escape_blocked(&self, ctx: &egui::Context) -> bool {
+    fn is_input_blocked(&self, ctx: &egui::Context) -> bool {
         let app_ctx = self.app_ctx.borrow();
         self.had_keyboard_focus
             || ctx.memory(|m| m.any_popup_open())
@@ -574,13 +574,13 @@ impl ZApp {
         &mut self,
         ctx: &egui::Context,
         _frame: &mut eframe::Frame,
-        esc_blocked: bool,
+        input_blocked: bool,
     ) {
         let mut user_quit: bool = false;
         {
             let app_ctx = &mut self.app_ctx.borrow_mut();
             ctx.input(|r| {
-                user_quit = should_quit_on_escape(&r.events, esc_blocked);
+                user_quit = should_quit_on_escape(&r.events, input_blocked);
 
                 // Debug toggles
                 if r.key_pressed(egui::Key::F12) {
@@ -726,11 +726,11 @@ impl eframe::App for ZApp {
             }
             AppState::Idle => {
                 // egui drops focus and closes popups during the Esc frame, so read them first.
-                let esc_blocked = self.is_escape_blocked(ctx);
+                let input_blocked = self.is_input_blocked(ctx);
                 self.handle_clipboardcopy_event();
                 self.draw_ui_tree(ctx, frame);
-                self.handle_selected_color_copy(ctx, esc_blocked);
-                self.process_ctx_inputs(ctx, frame, esc_blocked);
+                self.handle_selected_color_copy(ctx, input_blocked);
+                self.process_ctx_inputs(ctx, frame, input_blocked);
                 self.had_keyboard_focus = ctx.wants_keyboard_input();
             }
             AppState::Exit => {

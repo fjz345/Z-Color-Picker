@@ -299,7 +299,7 @@ fn ui_previewer_options(ui: &mut Ui, previewer_data: &mut PreviewerData) {
         ))
         .on_hover_text("Number of quantized colors");
         if ui
-            .button("Reset sizes")
+            .button("Reset widths")
             .on_hover_text("Reset the color band widths")
             .clicked()
         {
@@ -517,6 +517,7 @@ impl Default for ZPreviewer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::datatypes::hsv_key_value::test_support::assert_close;
 
     #[test]
     fn strip_heights_plus_controls_fill_total() {
@@ -538,15 +539,6 @@ mod tests {
         let heights = previewer_strip_heights(10.0, 27.0);
         assert!(heights.iter().all(|&height| height >= 0.0), "{heights:?}");
         assert_eq!(heights.iter().sum::<f32>(), 0.0);
-    }
-
-    fn assert_close(actual: HsvKeyValue, expected: HsvKeyValue) {
-        for c in 0..3 {
-            assert!(
-                (actual[c] - expected[c]).abs() < 1e-5,
-                "{actual:?} != {expected:?}"
-            );
-        }
     }
 
     fn two_points() -> Vec<ControlPoint> {

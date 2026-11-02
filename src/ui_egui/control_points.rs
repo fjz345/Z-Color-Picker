@@ -311,6 +311,9 @@ pub fn control_points_to_spline(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::datatypes::control_point::test_support::{
+        point_with_tangent, RUNAWAY_POINT, RUNAWAY_TANGENT,
+    };
     use crate::math::hue_abs_distance;
 
     fn three_points() -> Vec<ControlPoint> {
@@ -761,15 +764,6 @@ mod tests {
         assert_eq!(index, 1);
         assert!(response.clicked_by(egui::PointerButton::Secondary));
     }
-
-    fn point_with_tangent(val: [f32; 3], slot: usize, offset: [f32; 3]) -> ControlPoint {
-        let mut cp = ControlPoint::new_simple(val.into(), 0.0);
-        cp.tangents_mut()[slot] = Some(offset.into());
-        cp
-    }
-
-    const RUNAWAY_POINT: [f32; 3] = [0.035, 0.855, 0.566];
-    const RUNAWAY_TANGENT: [f32; 3] = [161.96, 35.47, 0.0];
 
     #[test]
     fn bezier_handle_clamps_runaway_tangent_to_square() {

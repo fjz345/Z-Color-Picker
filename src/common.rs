@@ -24,6 +24,14 @@ pub enum SplineMode {
     HermiteBezier,
 }
 
+impl SplineMode {
+    pub const ALL: [SplineMode; 3] = [
+        SplineMode::Linear,
+        SplineMode::Bezier,
+        SplineMode::HermiteBezier,
+    ];
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,16 +88,13 @@ mod tests {
 
     #[test]
     fn spline_mode_json_names_are_pinned() {
-        let all = [
-            SplineMode::Linear,
-            SplineMode::Bezier,
-            SplineMode::HermiteBezier,
-        ];
-        let distinct: std::collections::HashSet<_> =
-            all.iter().map(|&m| spline_mode_json_name(m)).collect();
+        let distinct: std::collections::HashSet<_> = SplineMode::ALL
+            .iter()
+            .map(|&m| spline_mode_json_name(m))
+            .collect();
         assert_eq!(distinct.len(), 3);
 
-        for m in all {
+        for m in SplineMode::ALL {
             let json = format!("\"{}\"", spline_mode_json_name(m));
             assert_eq!(serde_json::to_string(&m).unwrap(), json);
             assert_eq!(serde_json::from_str::<SplineMode>(&json).unwrap(), m);

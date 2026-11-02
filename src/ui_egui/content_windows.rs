@@ -135,8 +135,8 @@ impl WindowZColorPickerOptions {
                 })
                 .response
                 .on_hover_text(
-                    "Text format for a middle-click copy of one pixel; \
-                     the previewer strips are copied as images",
+                    "Text format used when copying a color (readout click, Ctrl+C or \
+                     middle-click); the previewer strips are copied as images",
                 );
 
             ui.label("Spline");
@@ -144,11 +144,7 @@ impl WindowZColorPickerOptions {
                 .selected_text(spline_mode_label(*spline_mode))
                 .show_ui(ui, |ui| {
                     ui.set_min_width(60.0);
-                    for mode in [
-                        SplineMode::Linear,
-                        SplineMode::Bezier,
-                        SplineMode::HermiteBezier,
-                    ] {
+                    for mode in SplineMode::ALL {
                         ui.selectable_value(spline_mode, mode, spline_mode_label(mode))
                             .on_hover_text(spline_mode_hover_text(mode));
                     }
