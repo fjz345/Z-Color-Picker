@@ -797,7 +797,7 @@ pub fn ui_hue_control_points_overlay(
             }
         }
 
-        let val = control_points[i].val().h();
+        let val = hue_strip_x_fraction(control_points[i].val().h());
         let picked_color = control_points[i].val().color();
         // Show where the slider is at:
         let x = lerp(
@@ -898,6 +898,7 @@ fn handle_t_slider(
         }
         .into()
     })
+    .interact(Sense::drag())
     .on_hover_text(strip_hint(Strip::T, is_modifying_index.is_some()));
 
     let (_t_response_cp, t_selected_index) =
@@ -923,6 +924,10 @@ fn t_slider_x_fraction(index: usize, count: usize) -> f32 {
         return 0.5;
     }
     index as f32 / (count - 1) as f32
+}
+
+fn hue_strip_x_fraction(hue: f32) -> f32 {
+    hue.rem_euclid(1.0)
 }
 
 /// Draw a line representing the t values of control points across the slider
@@ -1287,6 +1292,124 @@ mod tests {
         );
         assert_eq!(selected, Some(0));
         assert_eq!(*points[0].t(), 0.4);
+    }
+
+    #[test]
+    fn hue_strip_x_fraction_wraps_every_turn_onto_the_strip() {
+        assert_eq!(hue_strip_x_fraction(-0.25), 0.75);
+        assert_eq!(hue_strip_x_fraction(1.25), 0.25);
+        assert_eq!(hue_strip_x_fraction(0.5), 0.5);
+        for hue in [-2.5, -1.0, -0.25, 0.0, 0.5, 1.0, 1.25, 3.75] {
+            let x = hue_strip_x_fraction(hue);
+            assert!((0.0..1.0).contains(&x), "{hue}: {x}");
+        }
+    }
+
+    #[test]
+    fn clicking_wrapped_hue_gizmo_selects_its_point() {
+        let mut points = two_strip_points();
+        points[0].val_mut()[2] = -0.75;
+        let r = STRIP_RECT.height() / 4.0;
+        let first_gizmo_center = pos2(
+            STRIP_RECT.left() + 0.25 * STRIP_RECT.width(),
+            STRIP_RECT.top() + 3.0 * r + 5.0,
+        );
+        let selected = run_strip_overlay(
+            &mut points,
+            primary_click_frames(first_gizmo_center),
+            |ui, strip, points| ui_hue_control_points_overlay(ui, strip, points, Some(1), false).1,
+        );
+        assert_eq!(selected, Some(0));
+        assert_eq!(points[0].val().h(), -0.75);
+    }
+
+    fn t_strip_pos(t: f32) -> Pos2 {
+        pos2(
+            STRIP_RECT.center().x,
+            lerp(STRIP_RECT.bottom()..=STRIP_RECT.top(), t),
+        )
+    }
+
+    fn run_t_slider_with_first_point_selected(frames: Vec<Vec<egui::Event>>) -> Vec<ControlPoint> {
+        let mut points = two_strip_points();
+        let mut last_modifying_point_index = Some(0);
+        let mut dragging_index = None;
+        let mut control_point_right_clicked = None;
+        let egui_ctx = egui::Context::default();
+        for events in frames {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0))),
+                events,
+                ..Default::default()
+            };
+            let _ = egui_ctx.run(input, |egui_ctx| {
+                egui::CentralPanel::default().show(egui_ctx, |ui| {
+                    let mut ctx = MainColorPickerCtx {
+                        control_points: &mut points,
+                        spline_mode: SplineMode::Linear,
+                        color_copy_format: ColorStringCopy::HEXNOA,
+                        last_modifying_point_index: &mut last_modifying_point_index,
+                        dragging_index: &mut dragging_index,
+                        control_point_right_clicked: &mut control_point_right_clicked,
+                        is_hue_middle_interpolated: false,
+                        is_curve_locked: false,
+                        is_window_lock: false,
+                        is_show_curvature_comb: false,
+                    };
+                    let mut is_modifying_index = Some(0);
+                    let mut t_to_show = *ctx.control_points[0].t();
+                    let strip = egui::UiBuilder::new().max_rect(STRIP_RECT);
+                    let delta_t = ui
+                        .scope_builder(strip, |ui| {
+                            handle_t_slider(
+                                ui,
+                                &mut t_to_show,
+                                STRIP_RECT.size(),
+                                &mut ctx,
+                                &mut is_modifying_index,
+                            )
+                        })
+                        .inner;
+                    if let Some(delta_t) = delta_t {
+                        for cp in ctx.control_points.iter_mut() {
+                            *cp.t_mut() = (*cp.t() - delta_t).clamp(0.0, 1.0);
+                        }
+                    }
+                });
+            });
+        }
+        points
+    }
+
+    #[test]
+    fn dragging_t_strip_moves_the_selected_point() {
+        let start = t_strip_pos(0.125);
+        let end = t_strip_pos(0.875);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        let mut frames = vec![
+            Vec::new(),
+            vec![egui::Event::PointerMoved(start)],
+            vec![button(start, true)],
+        ];
+        for step in 1..=3 {
+            let pos = start.lerp(end, step as f32 / 3.0);
+            frames.push(vec![egui::Event::PointerMoved(pos)]);
+        }
+        frames.push(vec![button(end, false)]);
+        let points = run_t_slider_with_first_point_selected(frames);
+        assert!((*points[0].t() - 0.875).abs() < 1e-5, "{}", points[0].t());
+    }
+
+    #[test]
+    fn clicking_t_strip_moves_the_selected_point() {
+        let frames = primary_click_frames(t_strip_pos(0.125));
+        let points = run_t_slider_with_first_point_selected(frames);
+        assert!((*points[0].t() - 0.125).abs() < 1e-5, "{}", points[0].t());
     }
 
     #[test]
