@@ -27,10 +27,11 @@ pub struct ControlPointUiResult {
 }
 
 pub fn control_point_pos(cp: &ControlPoint) -> Pos2 {
-    Pos2::new(
-        cp.val()[0].clamp(0.0, 1.0),
-        1.0 - cp.val()[1].clamp(0.0, 1.0),
-    )
+    value_pos(cp.val())
+}
+
+pub fn value_pos(val: &ControlPointValue) -> Pos2 {
+    Pos2::new(val[0].clamp(0.0, 1.0), 1.0 - val[1].clamp(0.0, 1.0))
 }
 
 fn to_screen_pos(to_screen: &RectTransform, cp: &ControlPoint) -> Pos2 {
@@ -255,6 +256,13 @@ pub fn sample_spline_normalized(
     }
 }
 
+pub fn bezier_handle(cp: &ControlPoint, slot: usize) -> ControlPointValue {
+    let mut handle = *cp.val() + cp.tangents()[slot].unwrap_or_default();
+    handle[0] = handle[0].clamp(0.0, 1.0);
+    handle[1] = handle[1].clamp(0.0, 1.0);
+    handle
+}
+
 pub fn control_points_to_spline(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
@@ -275,12 +283,7 @@ pub fn control_points_to_spline(
                     Key::new(
                         index as f32,
                         *e.val(),
-                        Interpolation::StrokeBezier(
-                            *control_points[index].val()
-                                + control_points[index].tangents()[0].unwrap_or_default(),
-                            *control_points[index].val()
-                                + control_points[index].tangents()[1].unwrap_or_default(),
-                        ),
+                        Interpolation::StrokeBezier(bezier_handle(e, 0), bezier_handle(e, 1)),
                     )
                 })
                 .collect(),
@@ -569,5 +572,63 @@ mod tests {
         let (response, index) = result.hovering_control_point.expect("point hovered");
         assert_eq!(index, 1);
         assert!(response.clicked_by(egui::PointerButton::Secondary));
+    }
+
+    fn point_with_tangent(val: [f32; 3], slot: usize, offset: [f32; 3]) -> ControlPoint {
+        let mut cp = ControlPoint::new_simple(val.into(), 0.0);
+        cp.tangents_mut()[slot] = Some(offset.into());
+        cp
+    }
+
+    const RUNAWAY_POINT: [f32; 3] = [0.035, 0.855, 0.566];
+    const RUNAWAY_TANGENT: [f32; 3] = [161.96, 35.47, 0.0];
+
+    #[test]
+    fn bezier_handle_clamps_runaway_tangent_to_square() {
+        let cp = point_with_tangent(RUNAWAY_POINT, 1, RUNAWAY_TANGENT);
+        assert_eq!(
+            bezier_handle(&cp, 1),
+            ControlPointValue::new(1.0, 1.0, 0.566)
+        );
+    }
+
+    #[test]
+    fn bezier_handle_in_range_is_point_plus_offset() {
+        let offset = [0.1, -0.2, 0.05];
+        let cp = point_with_tangent([0.4, 0.5, 0.2], 0, offset);
+        assert_eq!(
+            bezier_handle(&cp, 0),
+            *cp.val() + ControlPointValue::from(offset)
+        );
+    }
+
+    #[test]
+    fn bezier_handle_clamps_negative_overshoot_to_zero() {
+        let cp = point_with_tangent([0.2, 0.3, 0.5], 0, [-0.5, -0.9, 0.0]);
+        assert_eq!(bezier_handle(&cp, 0), ControlPointValue::new(0.0, 0.0, 0.5));
+    }
+
+    #[test]
+    fn bezier_handle_keeps_unwrapped_hue() {
+        let cp = point_with_tangent([0.5, 0.5, 0.9], 1, [0.0, 0.0, 0.3]);
+        let hue = bezier_handle(&cp, 1)[2];
+        assert!((hue - 1.2).abs() < 1e-6, "{hue}");
+    }
+
+    #[test]
+    fn bezier_spline_with_runaway_tangent_stays_in_square() {
+        let cps = [
+            point_with_tangent(RUNAWAY_POINT, 1, RUNAWAY_TANGENT),
+            point_with_tangent([0.775, 0.592, 0.604], 0, [-0.175, 0.315, 0.0]),
+        ];
+        let spline = control_points_to_spline(&cps, SplineMode::Bezier);
+        for i in 0..=100 {
+            let x = i as f32 / 100.0;
+            let sample = sample_spline_normalized(&spline, SplineMode::Bezier, x).unwrap();
+            assert!(
+                (0.0..=1.0).contains(&sample[0]) && (0.0..=1.0).contains(&sample[1]),
+                "at {x}: {sample:?}"
+            );
+        }
     }
 }

@@ -5,7 +5,10 @@ use eframe::{
     epaint::PathShape,
 };
 
-use crate::{datatypes::control_point::ControlPoint, ui_egui::control_points::control_point_pos};
+use crate::{
+    datatypes::control_point::ControlPoint,
+    ui_egui::control_points::{bezier_handle, control_point_pos, value_pos},
+};
 
 pub struct TangentUiResult {
     pub selected_by_tangent: bool,
@@ -54,12 +57,10 @@ pub fn ui_control_point_tangents(
             continue;
         }
 
-        let Some(tang) = tangent else { continue };
-        let tang_xy = [cp.val()[0] + tang.val[0], cp.val()[1] + tang.val[1]];
-        let tang_screen = to_screen.transform_pos(Pos2::new(
-            tang_xy[0].clamp(0.0, 1.0),
-            (1.0 - tang_xy[1]).clamp(0.0, 1.0),
-        ));
+        if tangent.is_none() {
+            continue;
+        }
+        let tang_screen = to_screen.transform_pos(value_pos(&bezier_handle(cp, tangent_index)));
 
         if is_selected {
             let tang_screen = with_min_handle_length(

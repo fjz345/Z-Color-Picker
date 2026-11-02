@@ -1,7 +1,7 @@
 use eframe::egui::{self, Color32, Pos2, Shape, Stroke, Ui, Vec2};
 
 use crate::datatypes::control_point::ControlPoint;
-use crate::ui_egui::control_points::control_point_pos;
+use crate::ui_egui::control_points::{bezier_handle, control_point_pos, value_pos};
 
 const SAMPLES_PER_SEGMENT: usize = 64;
 const CURVATURE_SCALE: f32 = 100.0;
@@ -107,25 +107,12 @@ fn normalized_to_screen(rect: egui::Rect, position: Pos2) -> Pos2 {
     )
 }
 
-fn tangent_to_screen(rect: egui::Rect, tangent: &[f32; 3]) -> Vec2 {
-    Vec2::new(tangent[0] * rect.width(), -tangent[1] * rect.height())
-}
-
 fn cubic_for_segment(start: &ControlPoint, end: &ControlPoint, rect: egui::Rect) -> Cubic {
-    let p0 = normalized_to_screen(rect, control_point_pos(start));
-    let p3 = normalized_to_screen(rect, control_point_pos(end));
-
-    let outgoing = start.tangents()[1].unwrap_or_default();
-    let incoming = end.tangents()[0].unwrap_or_default();
-
-    let outgoing_screen = tangent_to_screen(rect, &outgoing.val);
-    let incoming_screen = tangent_to_screen(rect, &incoming.val);
-
     Cubic {
-        p0,
-        p1: p0 + outgoing_screen,
-        p2: p3 + incoming_screen,
-        p3,
+        p0: normalized_to_screen(rect, control_point_pos(start)),
+        p1: normalized_to_screen(rect, value_pos(&bezier_handle(start, 1))),
+        p2: normalized_to_screen(rect, value_pos(&bezier_handle(end, 0))),
+        p3: normalized_to_screen(rect, control_point_pos(end)),
     }
 }
 
@@ -208,4 +195,41 @@ pub fn draw_curvature_comb(ui: &mut Ui, rect: egui::Rect, control_points: &[Cont
     }
 
     ui.painter().with_clip_rect(rect).extend(shapes);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::datatypes::control_point::ControlPointValue;
+
+    const RECT: egui::Rect = egui::Rect {
+        min: Pos2::new(100.0, 100.0),
+        max: Pos2::new(300.0, 300.0),
+    };
+
+    fn point_with_tangent(val: [f32; 3], slot: usize, offset: [f32; 3]) -> ControlPoint {
+        let mut cp = ControlPoint::new_simple(ControlPointValue::from(val), 0.0);
+        cp.tangents_mut()[slot] = Some(ControlPointValue::from(offset));
+        cp
+    }
+
+    #[test]
+    fn runaway_outgoing_tangent_puts_p1_on_border_at_clamped_handle() {
+        let start = point_with_tangent([0.035, 0.855, 0.566], 1, [161.96, 35.47, 0.0]);
+        let end = point_with_tangent([0.775, 0.592, 0.604], 0, [-0.175, 0.315, 0.0]);
+        let cubic = cubic_for_segment(&start, &end, RECT);
+        assert_eq!(cubic.p1, RECT.right_top());
+    }
+
+    #[test]
+    fn in_range_tangents_offset_the_endpoints() {
+        let start = point_with_tangent([0.2, 0.3, 0.5], 1, [0.1, 0.2, 0.0]);
+        let end = point_with_tangent([0.8, 0.6, 0.5], 0, [-0.1, 0.15, 0.0]);
+        let cubic = cubic_for_segment(&start, &end, RECT);
+        let size = RECT.size();
+        let expected_p1 = cubic.p0 + Vec2::new(0.1 * size.x, -0.2 * size.y);
+        let expected_p2 = cubic.p3 + Vec2::new(-0.1 * size.x, -0.15 * size.y);
+        assert!((cubic.p1 - expected_p1).length() < 1e-3, "{cubic:?}");
+        assert!((cubic.p2 - expected_p2).length() < 1e-3, "{cubic:?}");
+    }
 }
