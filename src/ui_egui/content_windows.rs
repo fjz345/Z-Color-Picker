@@ -113,19 +113,19 @@ impl WindowZColorPickerOptions {
             ui.checkbox(&mut options.is_insert_right, insert_label)
                 .on_hover_text(insert_hover);
             ui.checkbox(&mut options.is_window_lock, "Clamp")
-                .on_hover_text("Clamps the control points so they are contained");
+                .on_hover_text("Keep points inside the S/V square and wrap hue into 0..1");
             ui.add_enabled(
                 *spline_mode == SplineMode::Bezier,
                 egui::Checkbox::new(&mut options.is_show_curvature_comb, "Comb"),
             )
-            .on_hover_text("Show curvature comb")
+            .on_hover_text("Curvature comb: spikes show how sharply the Bezier curve bends")
             .on_disabled_hover_text("The comb is only drawn in Bezier mode");
         });
 
         ui.horizontal_wrapped(|ui| {
             ui.label("Copy as");
             egui::ComboBox::new(12312312, "")
-                .selected_text(format!("{:?}", *color_copy_format))
+                .selected_text(copy_format_label(*color_copy_format))
                 .show_ui(ui, |ui| {
                     ui.set_min_width(60.0);
                     for format in COPY_FORMATS {
@@ -133,7 +133,10 @@ impl WindowZColorPickerOptions {
                     }
                 })
                 .response
-                .on_hover_text("Color Copy Format");
+                .on_hover_text(
+                    "Text format for a middle-click copy of one pixel; \
+                     the previewer strips are copied as images",
+                );
 
             ui.label("Spline");
             egui::ComboBox::new(12312313, "")
@@ -150,7 +153,7 @@ impl WindowZColorPickerOptions {
                     }
                 })
                 .response
-                .on_hover_text("Spline Mode");
+                .on_hover_text(spline_mode_hover_text(*spline_mode));
 
             ui.button("Flip")
                 .on_hover_text("Reverse the point order (tangents and band widths follow)")
@@ -384,6 +387,26 @@ impl WindowPreset {
         }
     }
 
+    fn open_create_window(&mut self) {
+        self.new_preset_is_open = true;
+        self.new_preset_window_text.clear();
+        self.create_error = None;
+        log::info!("Opened Create Preset");
+    }
+
+    fn on_save_clicked(
+        &mut self,
+        preset_handler: &mut PresetHandler,
+        control_points: &[ControlPoint],
+        spline_mode: SplineMode,
+    ) {
+        if selected_preset(preset_handler).is_some() {
+            self.save_selected(preset_handler, control_points, spline_mode);
+        } else {
+            self.open_create_window();
+        }
+    }
+
     pub fn draw_content(
         &mut self,
         ui: &mut Ui,
@@ -434,12 +457,7 @@ impl WindowPreset {
                 ));
 
             match choice {
-                Some(PresetComboChoice::New) => {
-                    self.new_preset_is_open = true;
-                    self.new_preset_window_text.clear();
-                    self.create_error = None;
-                    log::info!("Selected New Preset");
-                }
+                Some(PresetComboChoice::New) => self.open_create_window(),
                 Some(PresetComboChoice::Preset(i)) => {
                     draw_result.preset_result.should_apply =
                         self.choose_preset(i, preset_handler, control_points, spline_mode);
@@ -451,18 +469,19 @@ impl WindowPreset {
             let has_selection = selected_preset(preset_handler).is_some();
             ui.checkbox(&mut preset_handler.auto_save_presets, "Auto-save")
                 .on_hover_text(auto_save_hint(has_selection));
-            let save_hover_text = if dirty {
+            let save_hover_text = if !has_selection {
+                "Save the current points as a new preset"
+            } else if dirty {
                 "Unsaved changes"
             } else {
                 "Overwrite the selected preset with the current points"
             };
             if ui
-                .add_enabled(has_selection, egui::Button::new("Save"))
+                .button("Save")
                 .on_hover_text(save_hover_text)
-                .on_disabled_hover_text("Select a preset first")
                 .clicked_by(PointerButton::Primary)
             {
-                self.save_selected(preset_handler, control_points, *spline_mode);
+                self.on_save_clicked(preset_handler, control_points, *spline_mode);
             }
             if ui
                 .add_enabled(has_selection, egui::Button::new("Delete"))
@@ -1182,5 +1201,50 @@ mod tests {
         let rename_text = ctx.data(|d| d.get_temp::<String>(egui::Id::new(819181)));
         assert_eq!(rename_text.unwrap_or_default(), "");
         assert_eq!(handler.preset_selected_index, None);
+    }
+
+    #[test]
+    fn open_create_window_resets_the_create_state() {
+        let mut window = WindowPreset::new();
+        window.new_preset_window_text = "stale".to_string();
+        window.create_error = Some("Name already exists".to_string());
+
+        window.open_create_window();
+
+        assert!(window.new_preset_is_open);
+        assert_eq!(window.new_preset_window_text, "");
+        assert_eq!(window.create_error, None);
+    }
+
+    #[test]
+    fn save_clicked_without_selection_opens_create_window() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = handler_with_presets(&tmp, &["A"]);
+        let mut window = WindowPreset::new();
+
+        window.on_save_clicked(&mut handler, &three_points(), SplineMode::Bezier);
+
+        assert!(window.new_preset_is_open);
+        assert_eq!(window.save_error, None);
+        assert_eq!(handler.preset_selected_index, None);
+        assert!(std::fs::read_dir(tmp.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn save_clicked_with_selection_saves() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = handler_with_presets(&tmp, &["A"]);
+        handler.preset_selected_index = Some(0);
+        let mut window = WindowPreset::new();
+
+        window.on_save_clicked(&mut handler, &three_points(), SplineMode::Bezier);
+
+        let saved: AppDataCtx =
+            serde_json::from_str(&std::fs::read_to_string(tmp.path().join("A.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved.control_points, three_points());
+        assert_eq!(saved.spline_mode, SplineMode::Bezier);
+        assert!(!window.new_preset_is_open);
+        assert_eq!(window.save_error, None);
     }
 }
