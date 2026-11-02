@@ -15,8 +15,8 @@ use eframe::{
     egui::{
         self,
         color_picker::{show_color, Alpha},
-        lerp, pos2, Frame, Layout, Margin, PointerButton, Pos2, Rect, Response, Sense, Shape,
-        Stroke, Ui, Widget, WidgetInfo,
+        lerp, pos2, CursorIcon, Frame, Layout, Margin, PointerButton, Pos2, Rect, Response, Sense,
+        Shape, Stroke, TextStyle, Ui, Widget, WidgetInfo,
     },
     epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
@@ -496,6 +496,9 @@ pub fn main_color_picker(
             &mut color_to_show.v,
             main_color_picker_color_at_function(color_to_show.h, 1.0),
         );
+        if ctx.control_points.is_empty() {
+            paint_empty_picker_hint(ui, slider_2d_response.rect);
+        }
 
         // TODO: Fix for hermite bezier
         if ctx.is_show_curvature_comb {
@@ -577,6 +580,44 @@ fn handle_alpha_slider(
     }
 }
 
+const EMPTY_PICKER_HINT: &str = "Double-click to add a control point";
+
+fn paint_empty_picker_hint(ui: &Ui, square: Rect) {
+    let padding = 6.0;
+    let painter = ui.painter_at(square);
+    let galley = painter.layout(
+        EMPTY_PICKER_HINT.to_owned(),
+        TextStyle::Body.resolve(ui.style()),
+        Color32::WHITE,
+        square.width() - 4.0 * padding,
+    );
+    let text_rect = Rect::from_center_size(square.center(), galley.size());
+    painter.rect_filled(
+        text_rect.expand(padding),
+        4.0,
+        Color32::from_black_alpha(170),
+    );
+    painter.galley(text_rect.min, galley, Color32::WHITE);
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Strip {
+    Hue,
+    T,
+}
+
+fn strip_hint(strip: Strip, has_selection: bool) -> &'static str {
+    match (strip, has_selection) {
+        (_, false) => "Select a control point first",
+        (Strip::Hue, true) => {
+            "Click or drag: set the selected point's hue; the other points rotate with it"
+        }
+        (Strip::T, true) => {
+            "Click or drag: shift every point's T (T does not affect the gradient yet)"
+        }
+    }
+}
+
 fn handle_hue_slider(
     ui: &mut Ui,
     color: &mut HsvaGamma,
@@ -597,7 +638,7 @@ fn handle_hue_slider(
         }
         .into()
     })
-    .on_hover_text("Hue");
+    .on_hover_text(strip_hint(Strip::Hue, is_modifying_index.is_some()));
 
     if hue_response.clicked_by(PointerButton::Primary)
         || hue_response.dragged_by(PointerButton::Primary)
@@ -832,14 +873,20 @@ pub fn ui_hue_control_points_overlay(
             ]
         };
 
-        let response = ui.interact(
-            Rect::from_points(&gizmo_rect),
-            container_response.id.with(i),
-            Sense::click_and_drag(),
-        );
+        let response = ui
+            .interact(
+                Rect::from_points(&gizmo_rect),
+                container_response.id.with(i),
+                Sense::click_and_drag(),
+            )
+            .on_hover_and_drag_cursor(CursorIcon::ResizeHorizontal);
 
-        if response.dragged_by(PointerButton::Primary) {
+        if response.clicked_by(PointerButton::Primary)
+            || response.dragged_by(PointerButton::Primary)
+        {
             selected_key_frame = Some(i);
+        }
+        if response.dragged_by(PointerButton::Primary) {
             control_points[i].val_mut()[2] +=
                 response.drag_delta().x / container_response.rect.width();
         }
@@ -873,7 +920,7 @@ fn handle_t_slider(
         }
         .into()
     })
-    .on_hover_text("T");
+    .on_hover_text(strip_hint(Strip::T, is_modifying_index.is_some()));
 
     let (_t_response_cp, t_selected_index) =
         ui_t_control_points_overlay(ui, &t_response, ctx.control_points);
@@ -969,14 +1016,20 @@ pub fn ui_t_control_points_overlay(
             ]
         };
 
-        let response = ui.interact(
-            Rect::from_points(&gizmo_rect),
-            container_response.id.with(i),
-            Sense::click_and_drag(),
-        );
+        let response = ui
+            .interact(
+                Rect::from_points(&gizmo_rect),
+                container_response.id.with(i),
+                Sense::click_and_drag(),
+            )
+            .on_hover_and_drag_cursor(CursorIcon::ResizeVertical);
 
-        if response.dragged_by(PointerButton::Primary) {
+        if response.clicked_by(PointerButton::Primary)
+            || response.dragged_by(PointerButton::Primary)
+        {
             selected_key_frame = Some(i);
+        }
+        if response.dragged_by(PointerButton::Primary) {
             *control_points[i].t_mut() -=
                 response.drag_delta().y / container_response.rect.height();
             *control_points[i].t_mut() = control_points[i].t().clamp(0.0, 1.0);
@@ -1176,6 +1229,124 @@ mod tests {
         assert_eq!(t_slider_x_fraction(0, 3), 0.0);
         assert_eq!(t_slider_x_fraction(1, 3), 0.5);
         assert_eq!(t_slider_x_fraction(2, 3), 1.0);
+    }
+
+    const STRIP_RECT: Rect = Rect {
+        min: Pos2::new(100.0, 100.0),
+        max: Pos2::new(300.0, 140.0),
+    };
+
+    fn two_strip_points() -> Vec<ControlPoint> {
+        vec![
+            ControlPoint::new_simple(ControlPointValue::new(0.2, 0.3, 0.25), 0.4),
+            ControlPoint::new_simple(ControlPointValue::new(0.8, 0.9, 0.75), 0.6),
+        ]
+    }
+
+    fn primary_click_frames(pos: Pos2) -> Vec<Vec<egui::Event>> {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        vec![
+            Vec::new(),
+            vec![egui::Event::PointerMoved(pos)],
+            vec![button(true)],
+            vec![button(false)],
+        ]
+    }
+
+    fn run_strip_overlay(
+        points: &mut [ControlPoint],
+        frames: Vec<Vec<egui::Event>>,
+        overlay: impl Fn(&mut Ui, &Response, &mut [ControlPoint]) -> Option<usize>,
+    ) -> Option<usize> {
+        let ctx = egui::Context::default();
+        let mut selected = None;
+        for events in frames {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0))),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let strip = ui.allocate_rect(STRIP_RECT, Sense::click_and_drag());
+                    selected = overlay(ui, &strip, points);
+                });
+            });
+        }
+        selected
+    }
+
+    #[test]
+    fn clicking_hue_gizmo_selects_its_point_without_changing_hue() {
+        let mut points = two_strip_points();
+        let r = STRIP_RECT.height() / 4.0;
+        let first_gizmo_center = pos2(
+            STRIP_RECT.left() + 0.25 * STRIP_RECT.width(),
+            STRIP_RECT.top() + 3.0 * r + 5.0,
+        );
+        let selected = run_strip_overlay(
+            &mut points,
+            primary_click_frames(first_gizmo_center),
+            |ui, strip, points| ui_hue_control_points_overlay(ui, strip, points, Some(1), false).1,
+        );
+        assert_eq!(selected, Some(0));
+        assert_eq!(points[0].val().h(), 0.25);
+    }
+
+    #[test]
+    fn clicking_t_gizmo_selects_its_point_without_changing_t() {
+        let mut points = two_strip_points();
+        let first_gizmo_center = pos2(STRIP_RECT.left(), lerp(STRIP_RECT.y_range(), 0.6));
+        let selected = run_strip_overlay(
+            &mut points,
+            primary_click_frames(first_gizmo_center),
+            |ui, strip, points| ui_t_control_points_overlay(ui, strip, points).1,
+        );
+        assert_eq!(selected, Some(0));
+        assert_eq!(*points[0].t(), 0.4);
+    }
+
+    #[test]
+    fn strip_hint_is_distinct_per_strip_and_shared_without_selection() {
+        let hue = strip_hint(Strip::Hue, true);
+        let t = strip_hint(Strip::T, true);
+        let no_selection = strip_hint(Strip::Hue, false);
+        assert_eq!(strip_hint(Strip::T, false), no_selection);
+        for hint in [hue, t, no_selection] {
+            assert!(!hint.is_empty());
+        }
+        assert_ne!(hue, t);
+        assert_ne!(hue, no_selection);
+        assert_ne!(t, no_selection);
+    }
+
+    fn paints_empty_picker_hint(points: &mut Vec<ControlPoint>) -> bool {
+        let ctx = egui::Context::default();
+        let mut picker = ZColorPickerWrapper::default();
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 900.0))),
+            ..Default::default()
+        };
+        let output = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                picker.draw_ui(ui, points, SplineMode::Linear, &ColorStringCopy::HEXNOA);
+            });
+        });
+        output.shapes.iter().any(|clipped| match &clipped.shape {
+            Shape::Text(text) => text.galley.text() == EMPTY_PICKER_HINT,
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn empty_picker_hint_is_painted_only_without_points() {
+        assert!(paints_empty_picker_hint(&mut Vec::new()));
+        assert!(!paints_empty_picker_hint(&mut points_sv(&[(0.5, 0.5)])));
     }
 
     #[test]
