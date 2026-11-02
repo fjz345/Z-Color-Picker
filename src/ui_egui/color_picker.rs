@@ -639,16 +639,6 @@ fn handle_hue_slider(
     delta_hue
 }
 
-fn drag_delta_sv(delta: Vec2, rect_size: Vec2) -> Vec2 {
-    vec2(delta.x / rect_size.x, -delta.y / rect_size.y)
-}
-
-fn apply_drag_delta_3(point: &mut [f32; 3], delta: Vec2, rect_size: Vec2) {
-    let delta_sv = drag_delta_sv(delta, rect_size);
-    point[0] += delta_sv.x;
-    point[1] += delta_sv.y;
-}
-
 fn limit_group_delta(points: &[ControlPoint], delta_sv: Vec2) -> Vec2 {
     let mut min_sv = Vec2::splat(f32::INFINITY);
     let mut max_sv = Vec2::splat(f32::NEG_INFINITY);
@@ -668,6 +658,11 @@ fn apply_group_delta_sv(points: &mut [ControlPoint], delta_sv: Vec2) {
         val[0] += delta_sv.x;
         val[1] += delta_sv.y;
     }
+}
+
+fn drag_target_sv(pointer: Pos2, grab_offset: Vec2, rect: Rect) -> Vec2 {
+    let normalized = (pointer - grab_offset - rect.min) / rect.size();
+    vec2(normalized.x, 1.0 - normalized.y)
 }
 
 fn handle_control_points_ui(
@@ -712,36 +707,39 @@ fn handle_control_points_ui(
     }
 
     // Drag control point
-    if let Some(r) = dragged_point {
+    if let (Some(r), Some(index)) = (dragged_point, selected_index) {
         if r.dragged_by(PointerButton::Primary) {
             *ctx.dragging_index = selected_index;
-            if ctx.is_curve_locked && ctx.is_window_lock {
-                let delta_sv = limit_group_delta(
-                    ctx.control_points,
-                    drag_delta_sv(r.drag_delta(), slider_2d_response.rect.size()),
-                );
-                apply_group_delta_sv(ctx.control_points, delta_sv);
-            } else {
-                if let Some(index) = selected_index {
-                    let cp = &mut ctx.control_points[index];
-                    apply_drag_delta_3(
-                        &mut cp.val_mut().val,
-                        r.drag_delta(),
-                        slider_2d_response.rect.size(),
-                    );
+            let rect = slider_2d_response.rect;
+            let grab_offset_id = r.id.with("grab_offset");
+            if r.drag_started_by(PointerButton::Primary) {
+                let press_origin = ui
+                    .input(|i| i.pointer.press_origin())
+                    .or(r.interact_pointer_pos());
+                if let Some(press_origin) = press_origin {
+                    let drawn =
+                        rect.lerp_inside(control_point_pos(&ctx.control_points[index]).to_vec2());
+                    ui.data_mut(|d| d.insert_temp(grab_offset_id, press_origin - drawn));
                 }
-
+            }
+            let grab_offset = ui
+                .data(|d| d.get_temp::<Vec2>(grab_offset_id))
+                .unwrap_or_default();
+            if let Some(pointer) = r.interact_pointer_pos() {
+                let target = drag_target_sv(pointer, grab_offset, rect);
                 if ctx.is_curve_locked {
-                    for (i, cp) in ctx.control_points.iter_mut().enumerate() {
-                        if i == selected_index.unwrap_or(0) {
-                            continue;
-                        }
-                        apply_drag_delta_3(
-                            &mut cp.val_mut().val,
-                            r.drag_delta(),
-                            slider_2d_response.rect.size(),
-                        );
-                    }
+                    let dragged = ctx.control_points[index].val();
+                    let delta_sv = target - vec2(dragged[0], dragged[1]);
+                    let delta_sv = if ctx.is_window_lock {
+                        limit_group_delta(ctx.control_points, delta_sv)
+                    } else {
+                        delta_sv
+                    };
+                    apply_group_delta_sv(ctx.control_points, delta_sv);
+                } else {
+                    let val = &mut ctx.control_points[index].val_mut().val;
+                    val[0] = target.x;
+                    val[1] = target.y;
                 }
             }
         }
@@ -1812,6 +1810,157 @@ mod tests {
     fn limit_group_delta_wider_than_range_does_not_move() {
         let points = points_sv(&[(-0.1, 0.5), (1.1, 0.5)]);
         assert_eq!(limit_group_delta(&points, vec2(0.2, 0.0)).x, 0.0);
+    }
+
+    const DRAG_RECT: Rect = Rect {
+        min: pos2(10.0, 20.0),
+        max: pos2(210.0, 120.0),
+    };
+
+    #[test]
+    fn drag_target_sv_centre_without_offset_is_half() {
+        assert_eq!(
+            drag_target_sv(DRAG_RECT.center(), Vec2::ZERO, DRAG_RECT),
+            vec2(0.5, 0.5)
+        );
+    }
+
+    #[test]
+    fn drag_target_sv_top_left_is_zero_saturation_full_value() {
+        assert_eq!(
+            drag_target_sv(DRAG_RECT.min, Vec2::ZERO, DRAG_RECT),
+            vec2(0.0, 1.0)
+        );
+    }
+
+    #[test]
+    fn drag_target_sv_subtracts_grab_offset() {
+        let offset = vec2(20.0, -10.0);
+        assert_eq!(
+            drag_target_sv(DRAG_RECT.center() + offset, offset, DRAG_RECT),
+            vec2(0.5, 0.5)
+        );
+    }
+
+    #[test]
+    fn drag_target_sv_outside_rect_is_unclamped() {
+        let pointer = DRAG_RECT.right_bottom() + vec2(50.0, 50.0);
+        assert_eq!(
+            drag_target_sv(pointer, Vec2::ZERO, DRAG_RECT),
+            vec2(1.25, -0.5)
+        );
+    }
+
+    fn run_picker_frame(
+        ctx: &egui::Context,
+        picker: &mut ZColorPickerWrapper,
+        points: &mut Vec<ControlPoint>,
+        event: Option<egui::Event>,
+    ) -> Rect {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 700.0))),
+            events: event.into_iter().collect(),
+            ..Default::default()
+        };
+        let mut square = Rect::NOTHING;
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                square = picker
+                    .draw_ui(ui, points, SplineMode::Linear, &ColorStringCopy::HEXNOA)
+                    .rect;
+            });
+        });
+        square
+    }
+
+    struct OutAndBackDrag {
+        at_far: Vec<ControlPoint>,
+        at_back: Vec<ControlPoint>,
+        back_s: f32,
+        tolerance: f32,
+    }
+
+    fn drag_first_point_right_out_and_back(
+        options: ZColorPickerOptions,
+        mut points: Vec<ControlPoint>,
+    ) -> OutAndBackDrag {
+        let ctx = egui::Context::default();
+        let mut picker = ZColorPickerWrapper {
+            options,
+            ..Default::default()
+        };
+        let square = run_picker_frame(&ctx, &mut picker, &mut points, None);
+        let start = square.lerp_inside(control_point_pos(&points[0]).to_vec2());
+        let below_drag_threshold = start + vec2(3.0, 0.0);
+        let far = pos2(square.right() + 60.0, start.y);
+        let back = pos2(square.right() - 30.0, start.y);
+        let press = egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        };
+        let mut run = |points: &mut Vec<ControlPoint>, event| {
+            run_picker_frame(&ctx, &mut picker, points, Some(event));
+        };
+        run(&mut points, egui::Event::PointerMoved(start));
+        run(&mut points, press);
+        run(&mut points, egui::Event::PointerMoved(below_drag_threshold));
+        for step in 1..=4 {
+            let pos = below_drag_threshold.lerp(far, step as f32 / 4.0);
+            run(&mut points, egui::Event::PointerMoved(pos));
+        }
+        let at_far = points.clone();
+        for step in 1..=3 {
+            let pos = far.lerp(back, step as f32 / 3.0);
+            run(&mut points, egui::Event::PointerMoved(pos));
+        }
+        OutAndBackDrag {
+            at_far,
+            at_back: points,
+            back_s: (back.x - square.left()) / square.width(),
+            tolerance: 0.5 / square.width(),
+        }
+    }
+
+    fn assert_s_near(actual: f32, expected: f32, tolerance: f32) {
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "s {actual}, expected {expected} +- {tolerance}"
+        );
+    }
+
+    #[test]
+    fn drag_past_border_and_back_keeps_point_under_pointer_with_clamp() {
+        let drag = drag_first_point_right_out_and_back(
+            ZColorPickerOptions::default(),
+            points_sv(&[(0.5, 0.5)]),
+        );
+        assert_s_near(drag.at_back[0].val()[0], drag.back_s, drag.tolerance);
+    }
+
+    #[test]
+    fn drag_past_border_and_back_keeps_point_under_pointer_without_clamp() {
+        let options = ZColorPickerOptions {
+            is_window_lock: false,
+            ..Default::default()
+        };
+        let drag = drag_first_point_right_out_and_back(options, points_sv(&[(0.5, 0.5)]));
+        assert_s_near(drag.at_back[0].val()[0], drag.back_s, drag.tolerance);
+    }
+
+    #[test]
+    fn locked_clamped_group_drag_stops_at_border_and_follows_pointer_back() {
+        let options = ZColorPickerOptions {
+            is_curve_locked: true,
+            ..Default::default()
+        };
+        let drag =
+            drag_first_point_right_out_and_back(options, points_sv(&[(0.5, 0.5), (0.25, 0.25)]));
+        assert_s_near(drag.at_far[0].val()[0], 1.0, drag.tolerance);
+        assert_s_near(drag.at_far[1].val()[0], 0.75, drag.tolerance);
+        assert_s_near(drag.at_back[0].val()[0], drag.back_s, drag.tolerance);
+        assert_s_near(drag.at_back[1].val()[0], drag.back_s - 0.25, drag.tolerance);
     }
 
     fn spawn_at(points: &[ControlPoint], x: f32, y: f32) -> Option<ControlPoint> {
