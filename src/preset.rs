@@ -78,8 +78,12 @@ pub fn load_presets(dir: &Path) -> Vec<PresetEntity> {
             Err(e) => log::warn!("Skipping {}: {e}", path.display()),
         }
     }
-    presets.sort_by_cached_key(|preset| (preset.name.to_lowercase(), preset.name.clone()));
+    sort_presets(&mut presets);
     presets
+}
+
+fn sort_presets(presets: &mut [PresetEntity]) {
+    presets.sort_by_cached_key(|preset| (preset.name.to_lowercase(), preset.name.clone()));
 }
 
 fn load_preset_from_disk(path: &Path) -> Result<PresetEntity> {
@@ -376,12 +380,24 @@ impl PresetHandler {
 
         let preset = PresetEntity::new(name, (control_points.clone(), *spline_mode).into());
         save_preset_to_disk(&self.presets_dir, &preset)?;
-        let index = self.presets.len();
         self.presets.push(preset);
-
-        self.preset_selected_index = Some(index);
+        self.preset_selected_index = Some(self.presets.len() - 1);
+        self.sort_presets_keeping_selection();
 
         Ok(())
+    }
+
+    fn sort_presets_keeping_selection(&mut self) {
+        let selected_name = self
+            .preset_selected_index
+            .map(|i| self.presets[i].name.clone());
+        sort_presets(&mut self.presets);
+        self.preset_selected_index = selected_name.map(|name| {
+            self.presets
+                .iter()
+                .position(|preset| preset.name == name)
+                .expect("sorting keeps every preset")
+        });
     }
 
     pub fn delete_selected_preset(&mut self) -> Result<()> {
@@ -408,7 +424,9 @@ impl PresetHandler {
             preset_file_path(&self.presets_dir, new_name),
         )?;
         self.presets[index].name = new_name.to_string();
-        save_preset_to_disk(&self.presets_dir, &self.presets[index])
+        let saved = save_preset_to_disk(&self.presets_dir, &self.presets[index]);
+        self.sort_presets_keeping_selection();
+        saved
     }
 
     pub fn is_selected_dirty(
@@ -517,7 +535,11 @@ mod tests {
     }
 
     fn names(handler: &PresetHandler) -> Vec<&str> {
-        handler.presets.iter().map(|p| p.name.as_str()).collect()
+        names_of(&handler.presets)
+    }
+
+    fn names_of(presets: &[PresetEntity]) -> Vec<&str> {
+        presets.iter().map(|p| p.name.as_str()).collect()
     }
 
     fn file_names(dir: &Path) -> Vec<String> {
@@ -787,10 +809,10 @@ mod tests {
         create(&mut handler, "Cold", SplineMode::Bezier).unwrap();
         let pink_path = handler.presets_dir.join("Pink.json");
         let pink_content = fs::read_to_string(&pink_path).unwrap();
-        assert!(handler.rename_preset(1, "pink").is_err());
+        assert!(handler.rename_preset(0, "pink").is_err());
         assert_eq!(fs::read_to_string(&pink_path).unwrap(), pink_content);
         assert_eq!(file_names(&handler.presets_dir), ["Cold.json", "Pink.json"]);
-        assert_eq!(names(&handler), ["Pink", "Cold"]);
+        assert_eq!(names(&handler), ["Cold", "Pink"]);
     }
 
     #[test]
@@ -805,6 +827,42 @@ mod tests {
         assert_eq!(fs::read_to_string(&src_path).unwrap(), src_content);
         assert_eq!(fs::read_to_string(&dest_path).unwrap(), "{ garbage");
         assert_eq!(names(&handler), ["Src"]);
+    }
+
+    #[test]
+    fn create_preset_keeps_load_order_and_selects_new_preset() {
+        let (_tmp, mut handler) = temp_handler();
+        for name in ["b", "C", "a"] {
+            create(&mut handler, name, SplineMode::Linear).unwrap();
+        }
+        assert_eq!(names(&handler), names_of(&load_presets(&handler.presets_dir)));
+        assert_eq!(names(&handler), ["a", "b", "C"]);
+        assert_eq!(handler.preset_selected_index, Some(0));
+    }
+
+    #[test]
+    fn rename_selected_preset_keeps_load_order_and_selection() {
+        let (_tmp, mut handler) = temp_handler();
+        for name in ["A", "B", "C"] {
+            create(&mut handler, name, SplineMode::Linear).unwrap();
+        }
+        handler.preset_selected_index = Some(0);
+        handler.rename_preset(0, "D").unwrap();
+        assert_eq!(names(&handler), names_of(&load_presets(&handler.presets_dir)));
+        assert_eq!(names(&handler), ["B", "C", "D"]);
+        assert_eq!(handler.preset_selected_index, Some(2));
+    }
+
+    #[test]
+    fn rename_other_preset_keeps_selection_on_same_preset() {
+        let (_tmp, mut handler) = temp_handler();
+        for name in ["A", "B", "C"] {
+            create(&mut handler, name, SplineMode::Linear).unwrap();
+        }
+        handler.preset_selected_index = Some(2);
+        handler.rename_preset(0, "D").unwrap();
+        assert_eq!(names(&handler), ["B", "C", "D"]);
+        assert_eq!(handler.preset_selected_index, Some(1));
     }
 
     #[test]
