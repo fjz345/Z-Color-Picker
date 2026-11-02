@@ -3,7 +3,9 @@ use crate::{
     datatypes::control_point::{create_tangent_for_control_point, ControlPoint},
     ui_egui::{
         app::ZColorPickerOptions,
-        control_points::{ui_ordered_control_points, ControlPointUiResult},
+        control_points::{
+            ui_ordered_control_points, ControlPointUiResult, CONTROL_POINT_FILL_RADIUS,
+        },
         curvature::draw_curvature_comb,
         ui_common::contrast_color,
     },
@@ -12,8 +14,8 @@ use eframe::{
     egui::{
         self,
         color_picker::{show_color, Alpha},
-        lerp, pos2, Layout, PointerButton, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Widget,
-        WidgetInfo,
+        lerp, pos2, Frame, Layout, Margin, PointerButton, Pos2, Rect, Response, Sense, Shape,
+        Stroke, Ui, Widget, WidgetInfo,
     },
     epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
@@ -58,11 +60,11 @@ impl<'a> ZColorPicker<'a> {
         let spacing = ui.spacing();
         let strip_ratio = spacing.interact_size.y / spacing.slider_width;
         let label_row_height = spacing.interact_size.y;
-        // Must match main_color_picker's stack: swatch, label, hue, T, square, and the overlays' add_space(8.0).
+        // Must match main_color_picker's stack inside the margins: swatch, label, hue, T, square, and the overlays' add_space(8.0).
         let gap_count = 4.0;
         let overlay_space = 2.0 * 8.0;
         let fixed_height = label_row_height + gap_count * spacing.item_spacing.y + overlay_space;
-        let side = picker_side(ui.available_size(), strip_ratio, fixed_height);
+        let (side, margin) = picker_layout(ui.available_size(), strip_ratio, fixed_height);
         let desired_size = vec2(side, side);
         if let Some(last_modified_index) = *self.ctx.last_modifying_point_index {
             if self.ctx.control_points.len() == 0 {
@@ -73,7 +75,10 @@ impl<'a> ZColorPicker<'a> {
             }
         }
 
-        return main_color_picker(ui, desired_size, self.ctx);
+        Frame::NONE
+            .inner_margin(Margin::symmetric(margin.x as i8, margin.y as i8))
+            .show(ui, |ui| main_color_picker(ui, desired_size, self.ctx))
+            .inner
     }
 
     fn add_contents(&mut self, ui: &mut Ui) -> Response {
@@ -561,6 +566,21 @@ fn picker_side(available: Vec2, strip_ratio: f32, fixed_height: f32) -> f32 {
     available.x.min(height_limited_side).clamp(160.0, 800.0)
 }
 
+fn picker_layout(available: Vec2, strip_ratio: f32, fixed_height: f32) -> (f32, Vec2) {
+    let gizmo_ratio = strip_ratio / 4.0;
+    let fill_margin = CONTROL_POINT_FILL_RADIUS.ceil();
+    let gizmo_margins_ceil_slack = 2.0;
+    let width_limited_side = (available.x - 2.0 * fill_margin)
+        .min((available.x - gizmo_margins_ceil_slack) / (1.0 + 2.0 * gizmo_ratio));
+    let side = picker_side(
+        vec2(width_limited_side, available.y - 2.0 * fill_margin),
+        strip_ratio,
+        fixed_height,
+    );
+    let margin = vec2(fill_margin.max((side * gizmo_ratio).ceil()), fill_margin);
+    (side, margin)
+}
+
 fn handle_additive_blending(ui: &mut Ui, color: &mut HsvaGamma, alpha: Alpha) {
     if alpha == Alpha::BlendOrAdditive {
         let a = &mut color.a;
@@ -1019,6 +1039,7 @@ pub fn ui_t_control_points_overlay(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::datatypes::control_point::ControlPointValue;
 
     fn orange() -> Color32 {
         Color32::from_rgba_unmultiplied(255, 128, 0, 204)
@@ -1076,6 +1097,117 @@ mod tests {
                 }
             }
         }
+    }
+
+    const LAYOUT_WIDTHS: [f32; 6] = [170.0, 250.0, 480.0, 799.0, 900.0, 1200.0];
+    const LAYOUT_HEIGHTS: [f32; 5] = [300.0, 420.0, 700.0, 1000.0, 1400.0];
+
+    #[test]
+    fn picker_layout_margins_cover_control_point_fill() {
+        for w in LAYOUT_WIDTHS {
+            for h in LAYOUT_HEIGHTS {
+                let (_, margin) = picker_layout(vec2(w, h), STRIP_RATIO, FIXED_HEIGHT);
+                assert!(margin.x >= CONTROL_POINT_FILL_RADIUS, "{w}x{h}: {margin:?}");
+                assert!(margin.y >= CONTROL_POINT_FILL_RADIUS, "{w}x{h}: {margin:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn picker_layout_horizontal_margin_covers_strip_gizmos() {
+        for w in LAYOUT_WIDTHS {
+            for h in LAYOUT_HEIGHTS {
+                let (side, margin) = picker_layout(vec2(w, h), STRIP_RATIO, FIXED_HEIGHT);
+                assert!(
+                    margin.x >= side * STRIP_RATIO / 4.0,
+                    "{w}x{h}: side {side}, {margin:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn picker_layout_unclamped_fits_available() {
+        let mut unclamped_count = 0;
+        for w in LAYOUT_WIDTHS {
+            for h in LAYOUT_HEIGHTS {
+                let (side, margin) = picker_layout(vec2(w, h), STRIP_RATIO, FIXED_HEIGHT);
+                if side > 160.0 && side < 800.0 {
+                    unclamped_count += 1;
+                    assert!(side + 2.0 * margin.x <= w + 1e-3, "{w}x{h}: side {side}");
+                    assert!(
+                        picker_height(side) + 2.0 * margin.y <= h + 1e-3,
+                        "{w}x{h}: side {side}"
+                    );
+                }
+            }
+        }
+        assert!(unclamped_count >= 10, "{unclamped_count}");
+    }
+
+    fn square_and_pane_rects(screen_size: Vec2) -> (Rect, Rect) {
+        let ctx = egui::Context::default();
+        let mut picker = ZColorPickerWrapper::default();
+        let mut points = vec![
+            ControlPoint::new_simple(ControlPointValue::new(0.0, 0.0, 0.0), 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(1.0, 0.0, 0.3), 0.3),
+            ControlPoint::new_simple(ControlPointValue::new(0.0, 1.0, 0.6), 0.6),
+            ControlPoint::new_simple(ControlPointValue::new(1.0, 1.0, 1.0), 1.0),
+        ];
+        let mut rects = None;
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, screen_size)),
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let pane = ui.max_rect();
+                    let square = picker
+                        .draw_ui(
+                            ui,
+                            &mut points,
+                            SplineMode::HermiteBezier,
+                            &ColorStringCopy::HEXNOA,
+                        )
+                        .rect;
+                    rects = Some((square, pane));
+                });
+            });
+        }
+        rects.unwrap()
+    }
+
+    fn assert_square_inset(screen_size: Vec2) {
+        let (square, pane) = square_and_pane_rects(screen_size);
+        let horizontal = CONTROL_POINT_FILL_RADIUS.max(square.width() * STRIP_RATIO / 4.0) - 0.5;
+        let vertical = CONTROL_POINT_FILL_RADIUS - 0.5;
+        assert!(
+            square.width() > 160.0 && square.width() < 800.0,
+            "{square:?}"
+        );
+        assert!(
+            square.left() - pane.left() >= horizontal,
+            "{square:?} in {pane:?}"
+        );
+        assert!(
+            pane.right() - square.right() >= horizontal,
+            "{square:?} in {pane:?}"
+        );
+        assert!(
+            pane.bottom() - square.bottom() >= vertical,
+            "{square:?} in {pane:?}"
+        );
+    }
+
+    #[test]
+    fn picker_insets_square_in_width_limited_pane() {
+        assert_square_inset(vec2(260.0, 900.0));
+    }
+
+    #[test]
+    fn picker_insets_square_in_height_limited_pane() {
+        assert_square_inset(vec2(1000.0, 520.0));
     }
 
     #[test]

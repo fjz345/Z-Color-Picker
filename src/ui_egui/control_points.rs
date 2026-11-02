@@ -12,6 +12,10 @@ use crate::{
     ui_egui::tangents::ui_control_point_tangents,
 };
 
+const CONTROL_POINT_RADIUS: f32 = 8.0;
+const FILL_RADIUS_SCALE: f32 = 1.8;
+pub const CONTROL_POINT_FILL_RADIUS: f32 = FILL_RADIUS_SCALE * CONTROL_POINT_RADIUS;
+
 #[derive(Default)]
 pub struct ControlPointUiResult {
     pub dragged_point: Option<egui::Response>,
@@ -44,8 +48,6 @@ pub fn ui_ordered_control_points(
 
     const SHOW_LINEAR_LINE: bool = false;
 
-    const FILL_RADIUS_SCALE: f32 = 1.8;
-
     if control_points.is_empty() {
         return ControlPointUiResult::default();
     }
@@ -55,7 +57,7 @@ pub fn ui_ordered_control_points(
         parent_response.rect,
     );
 
-    let control_point_radius = 8.0;
+    let control_point_radius = CONTROL_POINT_RADIUS;
     let control_point_draw_size = Vec2::splat(2.0 * control_point_radius);
 
     let inactive_stroke = ui.style().noninteractive().fg_stroke;
