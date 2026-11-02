@@ -13,10 +13,9 @@ use crate::{
 };
 use eframe::{
     egui::{
-        self,
-        color_picker::{show_color, Alpha},
-        lerp, pos2, CursorIcon, Frame, Layout, Margin, PointerButton, Pos2, Rect, Response, Sense,
-        Shape, Stroke, TextStyle, Ui, Widget, WidgetInfo,
+        self, color_picker::show_color, lerp, pos2, CursorIcon, Frame, Label, Layout, Margin,
+        PointerButton, Pos2, Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind, TextStyle,
+        Ui, Widget, WidgetInfo,
     },
     epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
@@ -26,7 +25,7 @@ use std::cmp::Ordering;
 use crate::{
     math::hue_lerp,
     ui_egui::curves::ui_ordered_spline_gradient,
-    ui_egui::ui_common::{color_slider_1d, color_slider_2d, color_text_ui},
+    ui_egui::ui_common::{color_slider_1d, color_slider_2d},
 };
 
 pub struct MainColorPickerCtx<'a> {
@@ -382,6 +381,15 @@ pub fn format_color_as(
     }
 }
 
+const NO_SELECTION_READOUT: &str = "No point selected";
+
+fn readout_text(color: Option<Color32>, format: ColorStringCopy) -> String {
+    match color {
+        Some(color) => format_color_as(color, format, None),
+        None => NO_SELECTION_READOUT.to_owned(),
+    }
+}
+
 fn srgb_to_rounded_hsv(r: u8, g: u8, b: u8) -> [u32; 3] {
     let max = r.max(g).max(b);
     let min = r.min(g).min(b);
@@ -416,38 +424,19 @@ pub fn main_color_picker(
             Vec2::new(ui.spacing().slider_width, ui.spacing().interact_size.y) * scale_factor;
 
         let mut is_modifying_index = ctx.dragging_index.or(*ctx.last_modifying_point_index);
-        let modifying_control_point =
-            is_modifying_index.and_then(|i| ctx.control_points.get_mut(i));
+        let selected_color = is_modifying_index
+            .and_then(|i| ctx.control_points.get(i))
+            .map(|cp| cp.val().hsv());
 
-        let mut color_to_show = modifying_control_point
-            .as_ref()
-            .map(|cp| cp.val().hsv())
-            .unwrap_or(HsvaGamma {
-                h: 0.0,
-                s: 0.0,
-                v: 0.0,
-                a: 1.0,
-            });
+        selected_color_swatch(ui, selected_color, slider_2d_rect_size);
+        selected_color_readout(ui, selected_color.map(Color32::from), ctx.color_copy_format);
 
-        show_color(ui, color_to_show, slider_2d_rect_size).on_hover_text("Selected color");
-        let alpha = Alpha::Opaque;
-        color_text_ui(ui, color_to_show, alpha, ctx.color_copy_format);
-        handle_additive_blending(ui, &mut color_to_show, alpha);
-
-        let additive = color_to_show.a < 0.0;
-        let opaque = HsvaGamma {
+        let mut color_to_show = selected_color.unwrap_or(HsvaGamma {
+            h: 0.0,
+            s: 0.0,
+            v: 0.0,
             a: 1.0,
-            ..color_to_show
-        };
-
-        handle_alpha_slider(
-            ui,
-            alpha,
-            &mut color_to_show,
-            &opaque,
-            additive,
-            slider_2d_rect_size,
-        );
+        });
 
         let delta_hue = handle_hue_slider(
             ui,
@@ -542,42 +531,31 @@ fn picker_layout(available: Vec2, strip_ratio: f32, fixed_height: f32) -> (f32, 
     (side, margin)
 }
 
-fn handle_additive_blending(ui: &mut Ui, color: &mut HsvaGamma, alpha: Alpha) {
-    if alpha == Alpha::BlendOrAdditive {
-        let a = &mut color.a;
-        let mut additive = *a < 0.0;
-        ui.horizontal(|ui| {
-            ui.label("Blending:");
-            ui.radio_value(&mut additive, false, "Normal");
-            ui.radio_value(&mut additive, true, "Additive");
-
-            *a = if additive { -a.abs() } else { a.abs() };
-        });
+fn selected_color_swatch(ui: &mut Ui, color: Option<HsvaGamma>, size: Vec2) {
+    match color {
+        Some(color) => {
+            show_color(ui, color, size).on_hover_text("Selected color");
+        }
+        None => {
+            let (rect, response) = ui.allocate_at_least(size, Sense::hover());
+            ui.painter().rect_stroke(
+                rect,
+                0.0,
+                ui.visuals().widgets.noninteractive.bg_stroke,
+                StrokeKind::Inside,
+            );
+            response.on_hover_text(NO_SELECTION_READOUT);
+        }
     }
 }
 
-fn handle_alpha_slider(
-    ui: &mut Ui,
-    alpha: Alpha,
-    color: &mut HsvaGamma,
-    opaque: &HsvaGamma,
-    additive: bool,
-    hue_slider_size: Vec2,
-) {
-    if alpha == Alpha::Opaque {
-        color.a = 1.0;
-    } else {
-        let a = &mut color.a;
-        if alpha == Alpha::OnlyBlend && *a < 0.0 {
-            *a = 0.5;
-        }
-        if alpha == Alpha::OnlyBlend || !additive {
-            color_slider_1d(ui, hue_slider_size, Some(a), |a| {
-                HsvaGamma { a, ..*opaque }.into()
-            })
-            .on_hover_text("Alpha");
-        }
-    }
+fn selected_color_readout(ui: &mut Ui, color: Option<Color32>, format: ColorStringCopy) {
+    let text = RichText::new(readout_text(color, format));
+    let text = if color.is_some() { text } else { text.weak() };
+    ui.horizontal(|ui| {
+        ui.add(Label::new(text).truncate())
+            .on_hover_text(format!("Selected color as {format:?}"));
+    });
 }
 
 const EMPTY_PICKER_HINT: &str = "Double-click to add a control point";
@@ -1347,6 +1325,64 @@ mod tests {
     fn empty_picker_hint_is_painted_only_without_points() {
         assert!(paints_empty_picker_hint(&mut Vec::new()));
         assert!(!paints_empty_picker_hint(&mut points_sv(&[(0.5, 0.5)])));
+    }
+
+    #[test]
+    fn readout_text_without_color_is_placeholder() {
+        assert_eq!(
+            readout_text(None, ColorStringCopy::HEXNOA),
+            NO_SELECTION_READOUT
+        );
+    }
+
+    #[test]
+    fn readout_text_follows_format() {
+        assert_eq!(
+            readout_text(Some(orange()), ColorStringCopy::HEXNOA),
+            "FF8000"
+        );
+        assert_eq!(
+            readout_text(Some(orange()), ColorStringCopy::SRGB),
+            "rgb(255, 128, 0)"
+        );
+        assert_eq!(
+            readout_text(Some(orange()), ColorStringCopy::HSV),
+            format_orange(ColorStringCopy::HSV)
+        );
+    }
+
+    fn paints_text(
+        points: &mut Vec<ControlPoint>,
+        selected: Option<usize>,
+        expected: &str,
+    ) -> bool {
+        let ctx = egui::Context::default();
+        let mut picker = ZColorPickerWrapper::default();
+        picker.last_modifying_point_index = selected;
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 900.0))),
+            ..Default::default()
+        };
+        let output = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                picker.draw_ui(ui, points, SplineMode::Linear, &ColorStringCopy::HEXNOA);
+            });
+        });
+        output.shapes.iter().any(|clipped| match &clipped.shape {
+            Shape::Text(text) => text.galley.text() == expected,
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn readout_placeholder_is_painted_without_selection() {
+        let mut points = points_sv(&[(0.5, 0.5)]);
+        let selected_text =
+            readout_text(Some(points[0].val().hsv().into()), ColorStringCopy::HEXNOA);
+        assert!(paints_text(&mut points, None, NO_SELECTION_READOUT));
+        assert!(!paints_text(&mut points, None, &selected_text));
+        assert!(paints_text(&mut points, Some(0), &selected_text));
+        assert!(!paints_text(&mut points, Some(0), NO_SELECTION_READOUT));
     }
 
     #[test]

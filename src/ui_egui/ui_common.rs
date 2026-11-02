@@ -1,13 +1,10 @@
-use crate::common::ColorStringCopy;
-use crate::egui::TextStyle;
 use eframe::egui::InnerResponse;
 use eframe::egui::Window;
 use eframe::{
-    egui::{color_picker::Alpha, Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
+    egui::{Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
     emath::{lerp, remap_clamp},
     epaint::{pos2, Color32, Mesh, Rect, Rgba, Shape, Vec2},
 };
-use std::sync::Arc;
 
 pub fn contrast_color(color: impl Into<Rgba>) -> Color32 {
     if color.into().intensity() < 0.5 {
@@ -197,36 +194,6 @@ pub fn color_slider_2d(
     }
 
     response
-}
-
-pub fn color_text_ui(
-    ui: &mut Ui,
-    color: impl Into<Color32>,
-    alpha: Alpha,
-    _color_copy_format: ColorStringCopy,
-) -> InnerResponse<()> {
-    let color = color.into();
-    let [r, g, b, a] = color.to_array();
-
-    ui.horizontal(|ui| {
-        let old_style = Arc::as_ref(ui.style()).clone();
-
-        ui.style_mut()
-            .text_styles
-            .get_mut(&TextStyle::Body)
-            .unwrap()
-            .size = 8.0;
-
-        if alpha == Alpha::Opaque {
-            ui.label(format!("rgb({}, {}, {})", r, g, b))
-                .on_hover_text("Red Green Blue");
-        } else {
-            ui.label(format!("rgba({}, {}, {}, {})", r, g, b, a))
-                .on_hover_text("Red Green Blue with premultiplied Alpha");
-        }
-
-        *ui.style_mut() = old_style;
-    })
 }
 
 pub trait ContentWindow {
