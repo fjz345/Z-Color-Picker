@@ -1,6 +1,6 @@
 use ecolor::HsvaGamma;
 use eframe::{
-    egui::{self, Layout, PointerButton, Response, Sense, Ui, Vec2},
+    egui::{self, CursorIcon, Layout, PointerButton, Response, Sense, Ui, Vec2},
     epaint::Rect,
 };
 use serde::{Deserialize, Serialize};
@@ -42,6 +42,8 @@ fn ui_previewer_colors(
     let num_control_points = control_points.len();
     let size_per_color_x = ui_size.x / (num_control_points as f32);
     let size_per_color_y = ui_size.y;
+    let hover_text =
+        format!("{num_control_points} quantized colors; middle-click copies the strip as an image");
 
     for cp in control_points {
         let size_weight: f32 = 1.0;
@@ -53,7 +55,8 @@ fn ui_previewer_colors(
             },
             cp.color(),
             true,
-        );
+        )
+        .on_hover_text(&hover_text);
     }
 
     response
@@ -94,20 +97,19 @@ fn ui_previewer_control_points_with_drag(
             },
             cp.val().color(),
             true,
-        );
+        )
+        .on_hover_text(
+            "Key colors. Drag a band to resize it; middle-click copies the strip as an image",
+        )
+        .on_hover_and_drag_cursor(CursorIcon::ResizeHorizontal);
 
         if response_button.dragged_by(PointerButton::Primary) {
-            const PREVIEWER_DRAG_SENSITIVITY: f32 = 0.6;
-            previewer_data.points_preview_sizes[i] +=
-                response_button.drag_delta().x * PREVIEWER_DRAG_SENSITIVITY;
-            previewer_data.points_preview_sizes[i] =
-                previewer_data.points_preview_sizes[i].max(0.0);
-
-            let min_percentage_x = 0.5 * (1.0 / num_control_points as f32);
-            let min_preview_size: f32 = min_percentage_x * previewer_sizes_sum;
-
-            // TODO: loop over all and set min_preview_size
-            previewer_data.enforce_min_size(min_preview_size);
+            resize_band(
+                &mut previewer_data.points_preview_sizes,
+                i,
+                response_button.drag_delta().x,
+                ui_size.x,
+            );
         }
 
         let _color_response_rect = response_button.ctx.available_rect();
@@ -184,7 +186,7 @@ fn ui_previewer_curve(
         sample.color()
     });
 
-    response
+    response.on_hover_text("Gradient along the curve; middle-click copies it as an image")
 }
 
 fn ui_previewer_curve_quantized(
@@ -230,14 +232,47 @@ fn previewer_strip_heights(total_height: f32, controls_height: f32) -> [f32; 3] 
     [0.2, 0.4, 0.4].map(|share| share * strips_height)
 }
 
+const MIN_QUANTIZE_LEVELS: usize = 2;
 const MAX_QUANTIZE_LEVELS: usize = 32;
+
+fn quantize_levels(stored: usize) -> usize {
+    stored.clamp(MIN_QUANTIZE_LEVELS, MAX_QUANTIZE_LEVELS)
+}
+
+fn resize_band(sizes: &mut [f32], index: usize, dx_px: f32, width_px: f32) {
+    let n = sizes.len();
+    if n <= 1 || width_px <= 0.0 {
+        return;
+    }
+    let sum: f32 = sizes.iter().sum();
+    let others_sum = sum - sizes[index];
+    if sum <= 0.0 || others_sum <= 0.0 {
+        return;
+    }
+
+    let to_px = |size: f32| size / sum * width_px;
+    let px = to_px(sizes[index]);
+    let min_px = width_px / n as f32 / 2.0;
+    let narrowest_other_px = sizes
+        .iter()
+        .enumerate()
+        .filter(|&(j, _)| j != index)
+        .map(|(_, &size)| to_px(size))
+        .fold(f32::INFINITY, f32::min);
+    let max_px = width_px - min_px * (width_px - px) / narrowest_other_px;
+
+    let grow_limit = max_px.max(px);
+    let shrink_limit = min_px.min(px);
+    let new_px = (px + dx_px).min(grow_limit).max(shrink_limit);
+    sizes[index] = new_px * others_sum / (width_px - new_px);
+}
 
 fn ui_previewer_options(ui: &mut Ui, previewer_data: &mut PreviewerData) {
     ui.horizontal(|ui| {
         ui.label("Levels");
         ui.add(egui::Slider::new(
             &mut previewer_data.quantize_num_levels,
-            1..=MAX_QUANTIZE_LEVELS,
+            MIN_QUANTIZE_LEVELS..=MAX_QUANTIZE_LEVELS,
         ))
         .on_hover_text("Number of quantized colors");
         if ui
@@ -256,6 +291,7 @@ pub fn ui_previewer(
     previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
 ) -> PreviewerUiResponses {
+    previewer_data.quantize_num_levels = quantize_levels(previewer_data.quantize_num_levels);
     let previewer_rect = ui.available_rect_before_wrap();
     let gaps_after_strips = 3.0 * ui.spacing().item_spacing.y;
     let controls_height = ui.spacing().interact_size.y + gaps_after_strips;
@@ -356,12 +392,6 @@ impl PreviewerData {
     pub fn reset_preview_sizes(&mut self) {
         for val in self.points_preview_sizes.iter_mut() {
             *val = PREVIEWER_DEFAULT_VALUE;
-        }
-    }
-
-    pub fn enforce_min_size(&mut self, min_size: f32) {
-        for point_ref in &mut self.points_preview_sizes {
-            *point_ref = point_ref.max(min_size);
         }
     }
 }
@@ -483,5 +513,111 @@ mod tests {
         for (color, cp) in colors.iter().zip(&cps) {
             assert_close(*color, *cp.val());
         }
+    }
+
+    fn band_widths(sizes: &[f32], width_px: f32) -> Vec<f32> {
+        let sum: f32 = sizes.iter().sum();
+        sizes.iter().map(|size| size / sum * width_px).collect()
+    }
+
+    const BAND_LAYOUTS: [(f32, usize); 4] = [(800.0, 4), (2000.0, 4), (600.0, 6), (1500.0, 2)];
+
+    #[test]
+    fn band_width_tracks_pointer() {
+        for (width_px, n) in BAND_LAYOUTS {
+            for index in 0..n {
+                for dx in [10.0, -10.0] {
+                    let mut sizes = vec![PREVIEWER_DEFAULT_VALUE; n];
+                    let before = band_widths(&sizes, width_px)[index];
+                    resize_band(&mut sizes, index, dx, width_px);
+                    let after = band_widths(&sizes, width_px)[index];
+                    assert!(
+                        (after - before - dx).abs() < 1e-3,
+                        "W {width_px} n {n} band {index} dx {dx}: {before} -> {after}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn band_never_narrower_than_half_share() {
+        for (width_px, n) in BAND_LAYOUTS {
+            let min_px = width_px / n as f32 / 2.0;
+            for dx in [1e4, -1e4] {
+                let mut sizes = vec![PREVIEWER_DEFAULT_VALUE; n];
+                for index in 0..n {
+                    resize_band(&mut sizes, index, dx, width_px);
+                    let widths = band_widths(&sizes, width_px);
+                    assert!(
+                        widths.iter().all(|&w| w >= min_px - 1e-3),
+                        "W {width_px} n {n} band {index} dx {dx}: {widths:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn single_band_zero_sum_zero_width_are_noops() {
+        let mut single = vec![PREVIEWER_DEFAULT_VALUE];
+        resize_band(&mut single, 0, 10.0, 800.0);
+        assert_eq!(single, [PREVIEWER_DEFAULT_VALUE]);
+
+        let mut zero_sum = vec![0.0; 3];
+        resize_band(&mut zero_sum, 1, 10.0, 800.0);
+        assert_eq!(zero_sum, [0.0; 3]);
+
+        let mut zero_width = vec![PREVIEWER_DEFAULT_VALUE; 3];
+        resize_band(&mut zero_width, 1, 10.0, 0.0);
+        assert_eq!(zero_width, [PREVIEWER_DEFAULT_VALUE; 3]);
+    }
+
+    #[test]
+    fn other_bands_keep_their_ratio() {
+        let width_px = 1000.0;
+        let mut sizes = vec![120.0, 80.0, 200.0, 100.0];
+        let before = band_widths(&sizes, width_px);
+        resize_band(&mut sizes, 1, 15.0, width_px);
+        let after = band_widths(&sizes, width_px);
+        let scale = (width_px - after[1]) / (width_px - before[1]);
+        for j in [0, 2, 3] {
+            assert!(
+                (after[j] - before[j] * scale).abs() < 1e-3,
+                "{before:?} -> {after:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bands_already_past_the_bounds_do_not_jump() {
+        let width_px = 1000.0;
+        let mut sizes = vec![300.0, 150.0, 40.0];
+        let before = band_widths(&sizes, width_px);
+        let assert_unchanged = |sizes: &[f32]| {
+            let after = band_widths(sizes, width_px);
+            assert!(
+                after.iter().zip(&before).all(|(a, b)| (a - b).abs() < 1e-3),
+                "{before:?} -> {after:?}"
+            );
+        };
+        resize_band(&mut sizes, 0, 1.0, width_px);
+        assert_unchanged(&sizes);
+
+        resize_band(&mut sizes, 2, -1.0, width_px);
+        assert_unchanged(&sizes);
+
+        resize_band(&mut sizes, 2, 1.0, width_px);
+        let grown = band_widths(&sizes, width_px)[2];
+        assert!((grown - before[2] - 1.0).abs() < 1e-3, "{grown}");
+    }
+
+    #[test]
+    fn quantize_levels_clamps_to_slider_range() {
+        assert_eq!(quantize_levels(0), MIN_QUANTIZE_LEVELS);
+        assert_eq!(quantize_levels(1), 2);
+        assert_eq!(quantize_levels(5), 5);
+        assert_eq!(quantize_levels(99), MAX_QUANTIZE_LEVELS);
+        assert_eq!(MAX_QUANTIZE_LEVELS, 32);
     }
 }
