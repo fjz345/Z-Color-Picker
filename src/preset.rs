@@ -266,6 +266,16 @@ impl PresetHandler {
         validate_preset_name(name, other_names)
     }
 
+    pub fn matches_any_preset(
+        &self,
+        control_points: &[ControlPoint],
+        spline_mode: SplineMode,
+    ) -> bool {
+        self.presets
+            .iter()
+            .any(|preset| data_matches(&preset.data, control_points, spline_mode))
+    }
+
     pub fn apply_selected_preset(
         &mut self,
         control_points: &mut Vec<ControlPoint>,

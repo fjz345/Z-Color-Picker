@@ -247,6 +247,16 @@ fn has_unsaved_changes(
         && (!preset_handler.auto_save_presets || preset_handler.has_failed_auto_save())
 }
 
+fn points_saved_nowhere(
+    preset_handler: &PresetHandler,
+    control_points: &[ControlPoint],
+    spline_mode: SplineMode,
+) -> bool {
+    selected_preset(preset_handler).is_none()
+        && !control_points.is_empty()
+        && !preset_handler.matches_any_preset(control_points, spline_mode)
+}
+
 fn combo_selected_text(name: Option<&str>, dirty: bool) -> String {
     match name {
         Some(name) if dirty => format!("{name} *"),
@@ -330,7 +340,9 @@ impl WindowPreset {
         control_points: &mut Vec<ControlPoint>,
         spline_mode: &mut SplineMode,
     ) -> Option<PresetEntity> {
-        if has_unsaved_changes(preset_handler, control_points, *spline_mode) {
+        if has_unsaved_changes(preset_handler, control_points, *spline_mode)
+            || points_saved_nowhere(preset_handler, control_points, *spline_mode)
+        {
             self.pending_switch = Some(index);
             self.save_error = None;
             return None;
@@ -589,23 +601,33 @@ impl WindowPreset {
         control_points: &mut Vec<ControlPoint>,
         spline_mode: &mut SplineMode,
     ) -> Option<PresetEntity> {
-        let Some(name) = selected_preset(preset_handler).map(|preset| preset.name.clone()) else {
-            self.pending_switch = None;
-            return None;
-        };
+        let name = selected_preset(preset_handler).map(|preset| preset.name.clone());
 
         let modal = egui::Modal::new(egui::Id::new("unsaved_preset_modal")).show(ui.ctx(), |ui| {
-            ui.label(format!("\"{name}\" has unsaved changes."));
+            let buttons: &[(&str, PendingSwitchAction)] = match &name {
+                Some(name) => {
+                    ui.label(format!("\"{name}\" has unsaved changes."));
+                    &[
+                        ("Save and switch", PendingSwitchAction::SaveAndSwitch),
+                        ("Discard", PendingSwitchAction::Discard),
+                        ("Cancel", PendingSwitchAction::Cancel),
+                    ]
+                }
+                None => {
+                    ui.label("The current points are not saved in any preset.");
+                    ui.weak("Use <NEW> first to keep them.");
+                    &[
+                        ("Discard", PendingSwitchAction::Discard),
+                        ("Cancel", PendingSwitchAction::Cancel),
+                    ]
+                }
+            };
             if let Some(error) = &self.save_error {
                 ui.colored_label(ui.visuals().error_fg_color, error);
             }
             ui.horizontal(|ui| {
                 let mut action = None;
-                for (label, button_action) in [
-                    ("Save and switch", PendingSwitchAction::SaveAndSwitch),
-                    ("Discard", PendingSwitchAction::Discard),
-                    ("Cancel", PendingSwitchAction::Cancel),
-                ] {
+                for &(label, button_action) in buttons {
                     if ui.button(label).clicked() {
                         action = Some(button_action);
                     }
@@ -1140,7 +1162,7 @@ mod tests {
         let cases = [
             ("clean", false, Some(0), Vec::new()),
             ("auto-save", true, Some(0), three_points()[..2].to_vec()),
-            ("no selection", false, None, three_points()[..2].to_vec()),
+            ("no selection", false, None, Vec::new()),
         ];
         for (case, auto_save, selected, mut points) in cases {
             let tmp = TempDir::new().unwrap();
@@ -1158,6 +1180,119 @@ mod tests {
             assert_eq!(handler.preset_selected_index, Some(1), "{case}");
             assert_eq!(window.pending_switch, None, "{case}");
         }
+    }
+
+    #[test]
+    fn unselected_points_saved_nowhere_defer_the_switch() {
+        let tmp = TempDir::new().unwrap();
+        let (mut handler, edited) = handler_with_edited_a_and_distinct_b(&tmp);
+        handler.preset_selected_index = None;
+        let mut window = WindowPreset::new();
+        let mut points = edited.clone();
+        let mut mode = SplineMode::Linear;
+
+        let applied = window.choose_preset(1, &mut handler, &mut points, &mut mode);
+
+        assert!(applied.is_none());
+        assert_eq!(window.pending_switch, Some(1));
+        assert_eq!(points, edited);
+        assert_eq!(mode, SplineMode::Linear);
+        assert_eq!(handler.preset_selected_index, None);
+    }
+
+    #[test]
+    fn unselected_points_saved_in_a_preset_or_empty_apply_immediately() {
+        let cases = [
+            (
+                "saved in A",
+                three_points()[..2].to_vec(),
+                SplineMode::Linear,
+            ),
+            ("empty", Vec::new(), SplineMode::Bezier),
+        ];
+        for (case, mut points, mut mode) in cases {
+            let tmp = TempDir::new().unwrap();
+            let (mut handler, edited) = handler_with_edited_a_and_distinct_b(&tmp);
+            handler.presets[0].data = AppDataCtx {
+                spline_mode: SplineMode::Linear,
+                control_points: edited,
+            };
+            handler.preset_selected_index = None;
+            let mut window = WindowPreset::new();
+
+            let applied = window.choose_preset(1, &mut handler, &mut points, &mut mode);
+
+            assert_eq!(applied.map(|p| p.name), Some("B".to_string()), "{case}");
+            assert_eq!(points, three_points(), "{case}");
+            assert_eq!(mode, SplineMode::Bezier, "{case}");
+            assert_eq!(handler.preset_selected_index, Some(1), "{case}");
+            assert_eq!(window.pending_switch, None, "{case}");
+        }
+    }
+
+    fn unselected_pending_switch_to_b(
+        tmp: &TempDir,
+    ) -> (WindowPreset, PresetHandler, Vec<ControlPoint>) {
+        let (mut handler, mut points) = handler_with_edited_a_and_distinct_b(tmp);
+        handler.preset_selected_index = None;
+        let mut window = WindowPreset::new();
+        let applied = window.choose_preset(1, &mut handler, &mut points, &mut SplineMode::Linear);
+        assert!(applied.is_none());
+        (window, handler, points)
+    }
+
+    #[test]
+    fn discard_without_selection_applies_the_pending_target() {
+        let tmp = TempDir::new().unwrap();
+        let (mut window, mut handler, mut points) = unselected_pending_switch_to_b(&tmp);
+        let mut mode = SplineMode::Linear;
+
+        let applied = window.resolve_pending_switch(
+            PendingSwitchAction::Discard,
+            &mut handler,
+            &mut points,
+            &mut mode,
+        );
+
+        assert_eq!(applied.map(|p| p.name), Some("B".to_string()));
+        assert_eq!(points, three_points());
+        assert_eq!(mode, SplineMode::Bezier);
+        assert_eq!(handler.preset_selected_index, Some(1));
+        assert_eq!(window.pending_switch, None);
+    }
+
+    #[test]
+    fn cancel_without_selection_keeps_the_points_unselected() {
+        let tmp = TempDir::new().unwrap();
+        let (mut window, mut handler, mut points) = unselected_pending_switch_to_b(&tmp);
+        let edited = points.clone();
+        let mut mode = SplineMode::Linear;
+
+        let applied = window.resolve_pending_switch(
+            PendingSwitchAction::Cancel,
+            &mut handler,
+            &mut points,
+            &mut mode,
+        );
+
+        assert!(applied.is_none());
+        assert_eq!(points, edited);
+        assert_eq!(mode, SplineMode::Linear);
+        assert_eq!(handler.preset_selected_index, None);
+        assert_eq!(window.pending_switch, None);
+        assert!(!window.is_modal_open());
+    }
+
+    #[test]
+    fn switch_pending_without_selection_keeps_the_modal_open_across_frames() {
+        let tmp = TempDir::new().unwrap();
+        let (mut window, mut handler, _) = unselected_pending_switch_to_b(&tmp);
+        let ctx = egui::Context::default();
+
+        draw_frame(&ctx, &mut window, &mut handler);
+
+        assert!(window.is_modal_open());
+        assert_eq!(window.pending_switch, Some(1));
     }
 
     #[test]
