@@ -1,6 +1,6 @@
 use ecolor::HsvaGamma;
 use eframe::{
-    egui::{self, CursorIcon, Layout, PointerButton, Response, Sense, Ui, Vec2},
+    egui::{self, CursorIcon, Layout, PointerButton, Response, Sense, TextStyle, Ui, Vec2},
     epaint::Rect,
 };
 use serde::{Deserialize, Serialize};
@@ -211,6 +211,9 @@ fn quantized_colors(
     previewer_data: &PreviewerData,
     levels: usize,
 ) -> Vec<HsvKeyValue> {
+    if control_points.is_empty() {
+        return Vec::new();
+    }
     let flatten_control_points = flatten_control_points(control_points);
     let mut spline = control_points_to_spline(&flatten_control_points[..], spline_mode);
 
@@ -285,6 +288,23 @@ fn ui_previewer_options(ui: &mut Ui, previewer_data: &mut PreviewerData) {
     });
 }
 
+const EMPTY_PREVIEWER_HINT: &str = "Add control points to preview the gradient";
+
+fn paint_empty_previewer_hint(ui: &Ui, rect: Rect) {
+    let padding = 6.0;
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 0.0, ui.visuals().faint_bg_color);
+    let text_color = ui.visuals().text_color();
+    let galley = painter.layout(
+        EMPTY_PREVIEWER_HINT.to_owned(),
+        TextStyle::Body.resolve(ui.style()),
+        text_color,
+        rect.width() - 4.0 * padding,
+    );
+    let text_rect = Rect::from_center_size(rect.center(), galley.size());
+    painter.galley(text_rect.min, galley, text_color);
+}
+
 pub fn ui_previewer(
     ui: &mut Ui,
     spline_mode: SplineMode,
@@ -301,6 +321,20 @@ pub fn ui_previewer(
 
     let inner_response = ui.vertical(|ui| {
         let control_points = &previewer_data.control_points.clone();
+
+        if control_points.is_empty() {
+            let gaps_between_strips = 2.0 * ui.spacing().item_spacing.y;
+            let strips_height =
+                control_points_height + curve_height + quantized_height + gaps_between_strips;
+            let rect = Rect::from_min_size(
+                ui.available_rect_before_wrap().min,
+                Vec2::new(width, strips_height),
+            );
+            ui.allocate_rect(rect, Sense::hover());
+            paint_empty_previewer_hint(ui, rect);
+            ui_previewer_options(ui, previewer_data);
+            return PreviewerUiResponses::default();
+        }
 
         let response_control_points = ui_previewer_control_points_with_drag(
             ui,
@@ -619,5 +653,53 @@ mod tests {
         assert_eq!(quantize_levels(5), 5);
         assert_eq!(quantize_levels(99), MAX_QUANTIZE_LEVELS);
         assert_eq!(MAX_QUANTIZE_LEVELS, 32);
+    }
+
+    #[test]
+    fn quantized_colors_without_points_is_empty() {
+        for spline_mode in [
+            SplineMode::Linear,
+            SplineMode::Bezier,
+            SplineMode::HermiteBezier,
+        ] {
+            for levels in [2, 32] {
+                let colors = quantized_colors(&[], spline_mode, &PreviewerData::new(0), levels);
+                assert!(colors.is_empty(), "{spline_mode:?} {levels}: {colors:?}");
+            }
+        }
+    }
+
+    fn draw_previewer(previewer_data: &mut PreviewerData) -> (bool, usize) {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(
+                egui::Pos2::ZERO,
+                Vec2::new(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+        let mut rects = Vec::new();
+        let output = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                rects = ui_previewer(
+                    ui,
+                    SplineMode::Linear,
+                    previewer_data,
+                    ColorStringCopy::HEXNOA,
+                )
+                .get_rects();
+            });
+        });
+        let paints_hint = output.shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) => text.galley.text() == EMPTY_PREVIEWER_HINT,
+            _ => false,
+        });
+        (paints_hint, rects.len())
+    }
+
+    #[test]
+    fn empty_previewer_paints_hint_and_no_copy_rects() {
+        assert_eq!(draw_previewer(&mut PreviewerData::new(0)), (true, 0));
+        assert_eq!(draw_previewer(&mut PreviewerData::new(2)), (false, 3));
     }
 }
