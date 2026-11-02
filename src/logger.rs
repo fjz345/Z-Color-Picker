@@ -4,6 +4,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 static GLOBAL_LOG_BUFFER: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
 const MAX_LOG_LINES: usize = 2000;
+const DEFAULT_LOG_FILTER: &str = "info,z_color_picker=debug";
+
+fn default_env() -> env_logger::Env<'static> {
+    env_logger::Env::default().default_filter_or(DEFAULT_LOG_FILTER)
+}
+
 pub struct LogCollector {
     pub buffer: Arc<Mutex<Vec<String>>>,
     delegate: Box<dyn log::Log>,
@@ -13,7 +19,7 @@ impl Default for LogCollector {
     fn default() -> Self {
         Self {
             buffer: Default::default(),
-            delegate: Box::new(env_logger::Builder::from_env(env_logger::Env::default()).build()),
+            delegate: Box::new(env_logger::Builder::from_env(default_env()).build()),
         }
     }
 }
@@ -24,7 +30,7 @@ impl LogCollector {
             return Ok(buffer.clone());
         }
 
-        let env_logger = env_logger::Builder::from_env(env_logger::Env::default()).build();
+        let env_logger = env_logger::Builder::from_env(default_env()).build();
 
         let buffer = Arc::new(Mutex::new(Vec::new()));
 
@@ -64,18 +70,14 @@ impl log::Log for LogCollector {
     }
 }
 
-pub fn ui_log_window(
-    ui: &mut egui::Ui,
-    log_buffer: Arc<Mutex<Vec<String>>>,
-    scroll_to_bottom: &mut bool,
-) {
+pub fn ui_log_window(ui: &mut egui::Ui, log_buffer: Arc<Mutex<Vec<String>>>) {
     let num_lines = log_buffer.lock().unwrap().len();
     let row_height = ui.text_style_height(&egui::TextStyle::Body);
 
     // ScrollArea with vertical scrollbar and full size
-    let scroll_response = ScrollArea::vertical()
+    ScrollArea::vertical()
         .auto_shrink([false; 2]) // Don't shrink smaller than contents
-        .stick_to_bottom(*scroll_to_bottom)
+        .stick_to_bottom(true)
         .show_rows(ui, row_height, num_lines, |ui, row_range| {
             // Copy only the visible rows and release the lock before drawing: anything
             // that logs while the lock is held would deadlock in LogCollector::log.
@@ -92,19 +94,6 @@ pub fn ui_log_window(
                 ui.add(Label::new(text).truncate());
             }
         });
-
-    let has_scroll = scroll_response.content_size.y > scroll_response.inner_rect.size().y;
-
-    if has_scroll {
-        let scroll_pos = ui.ctx().input(|input| input.raw_scroll_delta.y);
-        if scroll_pos > 0.0 {
-            *scroll_to_bottom = false;
-        } else if scroll_pos < 0.0 {
-            *scroll_to_bottom = true;
-        }
-    } else {
-        *scroll_to_bottom = true;
-    }
 }
 
 fn normalize_log_line(level: log::Level, message: impl std::fmt::Display) -> String {
@@ -200,5 +189,22 @@ mod tests {
             Some(visuals.weak_text_color())
         );
         assert_eq!(log_line_color("[INFO] x", &visuals), None);
+    }
+
+    #[test]
+    fn default_filter_keeps_app_debug_and_drops_dependency_debug() {
+        let logger = env_logger::Builder::new()
+            .parse_filters(DEFAULT_LOG_FILTER)
+            .build();
+        let enabled = |target: &str, level: log::Level| {
+            log::Log::enabled(
+                &logger,
+                &Metadata::builder().target(target).level(level).build(),
+            )
+        };
+        assert!(enabled("z_color_picker::preset", log::Level::Debug));
+        assert!(!enabled("glutin_winit", log::Level::Debug));
+        assert!(enabled("glutin_winit", log::Level::Warn));
+        assert!(enabled("eframe", log::Level::Info));
     }
 }

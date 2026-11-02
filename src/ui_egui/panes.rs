@@ -219,14 +219,13 @@ impl ZAppPane for PreviewerPane {
 pub struct LogPane {
     pub title: Option<String>,
     pub log_buffer: Arc<Mutex<Vec<String>>>,
-    pub scroll_to_bottom: bool, // to remove, LogPane variable
 }
 impl ZAppPane for LogPane {
     fn title(&self) -> String {
         self.title.clone().unwrap_or(format!("Pane"))
     }
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
-        ui_log_window(ui, self.log_buffer.clone(), &mut self.scroll_to_bottom);
+        ui_log_window(ui, self.log_buffer.clone());
         return egui_tiles::UiResponse::None;
     }
 
@@ -325,5 +324,11 @@ mod tests {
         next_picker_frame(&mut selected.color_picker, &mut selected.points);
         assert!(selected.handler.auto_save(&selected.points, MODE).unwrap());
         assert_ne!(selected.file_bytes(), before);
+    }
+
+    #[test]
+    fn old_log_pane_json_still_loads() {
+        let json = r#"{"title":"Log","log_buffer":[],"scroll_to_bottom":true}"#;
+        assert!(serde_json::from_str::<LogPane>(json).is_ok());
     }
 }

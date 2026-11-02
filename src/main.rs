@@ -2,8 +2,6 @@
 // #![allow(dead_code)]
 // #![allow(unreachable_patterns)]
 
-use std::env;
-
 use eframe::egui::{self};
 
 use crate::{logger::LogCollector, ui_egui::app::ZApp};
@@ -19,8 +17,6 @@ mod preset;
 mod ui_egui;
 
 fn main() -> eframe::Result {
-    unsafe { env::set_var("RUST_LOG", "debug") }; // or "info" or "debug"
-
     let log_buffer = LogCollector::init().expect("Failed to init logger");
 
     let native_options = eframe::NativeOptions {

@@ -305,7 +305,6 @@ impl ZApp {
         let pane_log = LogPane {
             title: Some("Log".to_string()),
             log_buffer: log_buffer.clone(),
-            scroll_to_bottom: true,
         };
 
         let tile_color_picker = tiles.insert_pane(Pane::ColorPicker(pane_color_picker));

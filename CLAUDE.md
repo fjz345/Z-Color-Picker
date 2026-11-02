@@ -68,7 +68,7 @@ Pressing the middle button stores a `ScreenshotTarget` in `pending_screenshot_ta
 - `format_color_as` supports all 11 `ColorStringCopy` formats, from unmultiplied sRGB; `RGB`/`RGBA` are linear.
 
 ### Misc
-- `main.rs` forces `RUST_LOG=debug`.
+- The log filter defaults to `info,z_color_picker=debug` (`DEFAULT_LOG_FILTER` in `src/logger.rs`); a set `RUST_LOG` replaces it, e.g. `RUST_LOG=debug` shows dependency debug output too.
 - `LogCollector` (`src/logger.rs`) captures log lines into a shared `Arc<Mutex<Vec<String>>>`, capped at 2000 lines, which the Log pane displays. Never call `log::*` while holding that mutex; `LogCollector::log` locks it too, so it would deadlock.
 - The UI scale is derived from a hardcoded 2560x1440 monitor size (`HARDCODED_MONITOR_SIZE`) because the monitor size is not available at creation time.
 - The debug windows live in `src/ui_egui/debug_windows.rs`.
