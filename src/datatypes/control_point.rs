@@ -90,3 +90,42 @@ impl ControlPoint {
         self.tangents_mut().swap(0, 1);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn round_trip(cp: &ControlPoint) -> String {
+        let json = serde_json::to_string(cp).unwrap();
+        assert_eq!(&serde_json::from_str::<ControlPoint>(&json).unwrap(), cp);
+        json
+    }
+
+    #[test]
+    fn simple_point_json_is_pinned() {
+        let cp = ControlPoint::new_simple(ControlPointValue::new(0.25, 0.5, 0.75), 0.5);
+        assert_eq!(
+            round_trip(&cp),
+            r#"{"ControlPointSimple":{"val":{"val":[0.25,0.5,0.75]},"t":0.5,"tangents":[null,null]}}"#
+        );
+    }
+
+    #[test]
+    fn left_right_tangent_point_json_round_trips() {
+        let cp = ControlPoint::ControlPointLeftRightTangent(ControlPointStorage {
+            val: ControlPointValue::new(0.5, 0.25, 0.125),
+            t: 1.0,
+            tangents: [None, Some(ControlPointTangent::new(0.125, -0.25, 0.0))],
+        });
+        let json = round_trip(&cp);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let storage = parsed["ControlPointLeftRightTangent"].as_object().unwrap();
+        let mut keys: Vec<_> = storage.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["t", "tangents", "val"]);
+        assert_eq!(
+            storage["tangents"][1]["val"],
+            serde_json::json!([0.125, -0.25, 0.0])
+        );
+    }
+}
