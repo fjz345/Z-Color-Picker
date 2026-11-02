@@ -63,7 +63,12 @@ impl ZAppPane for Pane {
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
         match self {
             Pane::ColorPicker(pane) => pane.ui(ui),
-            Pane::ColorPickerOptionsPane(pane) => pane.ui(ui),
+            Pane::ColorPickerOptionsPane(pane) => {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| pane.ui(ui))
+                    .inner
+            }
             Pane::Previewer(pane) => pane.ui(ui),
             Pane::Log(pane) => pane.ui(ui),
         }

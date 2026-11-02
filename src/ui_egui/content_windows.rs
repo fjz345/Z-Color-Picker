@@ -9,6 +9,7 @@ use crate::egui::Ui;
 use crate::preset::PresetEntity;
 use crate::preset::PresetHandler;
 use crate::ui_egui::app::ZColorPickerOptions;
+use crate::ui_egui::color_picker::format_color_as;
 use crate::ui_egui::ui_common::ContentWindow;
 
 pub struct WindowPresetDrawResult {
@@ -102,34 +103,31 @@ impl WindowZColorPickerOptions {
             } else {
                 "Insert left"
             };
+            let insert_hover = if options.is_insert_right {
+                "New points go right of the selected point (at the end when none is selected)"
+            } else {
+                "New points go left of the selected point (at the start when none is selected)"
+            };
             ui.checkbox(&mut options.is_insert_right, insert_label)
-                .on_hover_text("Direction new points are inserted");
+                .on_hover_text(insert_hover);
             ui.checkbox(&mut options.is_window_lock, "Clamp")
                 .on_hover_text("Clamps the control points so they are contained");
-            ui.checkbox(&mut options.is_show_curvature_comb, "Comb")
-                .on_hover_text("Show curvature comb (Bezier mode)");
+            ui.add_enabled(
+                *spline_mode == SplineMode::Bezier,
+                egui::Checkbox::new(&mut options.is_show_curvature_comb, "Comb"),
+            )
+            .on_hover_text("Show curvature comb")
+            .on_disabled_hover_text("The comb is only drawn in Bezier mode");
         });
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("Copy as");
             egui::ComboBox::new(12312312, "")
                 .selected_text(format!("{:?}", *color_copy_format))
                 .show_ui(ui, |ui| {
                     ui.set_min_width(60.0);
-                    for format in [
-                        ColorStringCopy::HEX,
-                        ColorStringCopy::HEXNOA,
-                        ColorStringCopy::SRGBHEX,
-                        ColorStringCopy::HSV,
-                        ColorStringCopy::HSVA,
-                        ColorStringCopy::INT,
-                        ColorStringCopy::FLOAT,
-                        ColorStringCopy::RGB,
-                        ColorStringCopy::SRGB,
-                        ColorStringCopy::RGBA,
-                        ColorStringCopy::SRGBA,
-                    ] {
-                        ui.selectable_value(color_copy_format, format, format!("{format:?}"));
+                    for format in COPY_FORMATS {
+                        ui.selectable_value(color_copy_format, format, copy_format_label(format));
                     }
                 })
                 .response
@@ -145,7 +143,8 @@ impl WindowZColorPickerOptions {
                         SplineMode::Bezier,
                         SplineMode::HermiteBezier,
                     ] {
-                        ui.selectable_value(spline_mode, mode, spline_mode_label(mode));
+                        ui.selectable_value(spline_mode, mode, spline_mode_label(mode))
+                            .on_hover_text(spline_mode_hover_text(mode));
                     }
                 })
                 .response
@@ -186,11 +185,42 @@ pub struct WindowPreset {
     pending_switch: Option<usize>,
 }
 
+const COPY_FORMATS: [ColorStringCopy; 11] = [
+    ColorStringCopy::HEX,
+    ColorStringCopy::HEXNOA,
+    ColorStringCopy::SRGBHEX,
+    ColorStringCopy::HSV,
+    ColorStringCopy::HSVA,
+    ColorStringCopy::INT,
+    ColorStringCopy::FLOAT,
+    ColorStringCopy::RGB,
+    ColorStringCopy::SRGB,
+    ColorStringCopy::RGBA,
+    ColorStringCopy::SRGBA,
+];
+
+const COPY_FORMAT_SAMPLE: egui::Color32 = egui::Color32::from_rgb(255, 128, 0);
+
+fn copy_format_label(format: ColorStringCopy) -> String {
+    let sample = format_color_as(COPY_FORMAT_SAMPLE, format, None);
+    format!("{format:?}  {sample}")
+}
+
 fn spline_mode_label(mode: SplineMode) -> &'static str {
     match mode {
         SplineMode::Linear => "Linear",
         SplineMode::Bezier => "Bezier",
         SplineMode::HermiteBezier => "Hermite",
+    }
+}
+
+fn spline_mode_hover_text(mode: SplineMode) -> &'static str {
+    match mode {
+        SplineMode::Linear => "Straight segments between points",
+        SplineMode::Bezier => "Curved; select a point to drag its tangent handles",
+        SplineMode::HermiteBezier => {
+            "Smooth curve through every point (Catmull-Rom); tangents are automatic"
+        }
     }
 }
 
@@ -613,6 +643,22 @@ mod tests {
                 window.draw_content(ui, handler, &mut control_points, &mut spline_mode);
             });
         });
+    }
+
+    #[test]
+    fn copy_format_label_shows_a_distinct_sample_after_each_format_name() {
+        let mut samples: Vec<String> = Vec::new();
+        for format in COPY_FORMATS {
+            let label = copy_format_label(format);
+            let sample = label
+                .strip_prefix(&format!("{format:?}"))
+                .unwrap_or_else(|| panic!("{label:?} does not start with {format:?}"))
+                .trim()
+                .to_string();
+            assert!(!sample.is_empty(), "{format:?} has no sample");
+            assert!(!samples.contains(&sample), "{format:?} repeats {sample:?}");
+            samples.push(sample);
+        }
     }
 
     #[test]
