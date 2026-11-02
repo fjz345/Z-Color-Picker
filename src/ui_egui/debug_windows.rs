@@ -1,8 +1,6 @@
+use crate::datatypes::control_point::ControlPoint;
 use crate::ui_egui::ui_common::ContentWindow;
-use crate::{datatypes::control_point::ControlPoint, math::color_lerp_ex};
-use ecolor::HsvaGamma;
-use eframe::egui::color_picker::show_color;
-use eframe::egui::{Slider, Ui, Vec2};
+use eframe::egui::Ui;
 
 #[derive(Default, Debug)]
 pub struct DebugWindowControlPoints {
@@ -61,78 +59,5 @@ impl ContentWindow for DebugWindowControlPoints {
             }
             ui.label(format!(""));
         }
-    }
-}
-
-#[derive(Default, Debug)]
-pub struct DebugWindowTestWindow {
-    open: bool,
-    debug_t: f32,
-    debug_c: f32,
-    debug_alpha: f32,
-    pub source_color: HsvaGamma,
-    pub target_color: HsvaGamma,
-}
-
-impl DebugWindowTestWindow {
-    pub fn new() -> Self {
-        Self {
-            open: false,
-            debug_t: 0.0,
-            debug_c: 0.0,
-            debug_alpha: 0.0,
-            source_color: HsvaGamma::default(),
-            target_color: HsvaGamma::default(),
-        }
-    }
-
-    pub fn update(&mut self, source_color: HsvaGamma, target_color: HsvaGamma) {
-        self.source_color = source_color;
-        self.target_color = target_color;
-    }
-}
-
-impl ContentWindow for DebugWindowTestWindow {
-    fn title(&self) -> &str {
-        "Debug Test Window"
-    }
-
-    fn is_open(&self) -> bool {
-        return self.open;
-    }
-
-    fn close(&mut self) {
-        self.open = false;
-    }
-
-    fn open(&mut self) {
-        self.open = true;
-    }
-
-    fn draw_content(&mut self, ui: &mut Ui) {
-        ui.vertical(|ui| {
-            ui.add(Slider::new(&mut self.debug_t, 0.0..=1.0).text("debug_t"));
-            ui.add(Slider::new(&mut self.debug_c, 0.0..=1.0).text("debug_C"));
-            ui.add(Slider::new(&mut self.debug_alpha, 0.0..=1.0).text("debug_alpha"));
-        });
-
-        ui.add_space(10.0);
-
-        ui.horizontal(|ui| {
-            let src_color = self.source_color;
-            let trg_color = self.target_color;
-            let res_color = color_lerp_ex(
-                src_color.into(),
-                trg_color.into(),
-                self.debug_t,
-                self.debug_c,
-                self.debug_alpha,
-            );
-
-            let show_size = 100.0;
-            show_color(ui, src_color, Vec2::new(show_size, show_size));
-            show_color(ui, trg_color, Vec2::new(show_size, show_size));
-            show_color(ui, res_color, Vec2::new(show_size, show_size));
-        });
     }
 }

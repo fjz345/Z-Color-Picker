@@ -25,7 +25,7 @@ use crate::{
         },
         color_picker::ZColorPickerWrapper,
         content_windows::{WindowPreset, WindowZColorPickerOptions},
-        debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
+        debug_windows::DebugWindowControlPoints,
         panes::{
             ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
             ZAppPane,
@@ -84,8 +84,6 @@ pub struct ZColorPickerAppContext {
     pub color_copy_format: ColorStringCopy,
     #[serde(skip)]
     debug_window_control_points: DebugWindowControlPoints,
-    #[serde(skip)]
-    debug_window_test: DebugWindowTestWindow,
     #[serde(skip)]
     pending_screenshot_target: Option<ScreenshotTarget>,
     #[serde(skip)]
@@ -177,7 +175,6 @@ impl ZColorPickerAppContext {
             previewer: ZPreviewer::default(),
             color_copy_format: ColorStringCopy::default(),
             debug_window_control_points: DebugWindowControlPoints::new(),
-            debug_window_test: DebugWindowTestWindow::new(),
             pending_screenshot_target: None,
             clipboard_event: None,
             clipboard_copy_window: ClipboardPopup::new(
@@ -550,21 +547,11 @@ impl ZApp {
     }
 
     fn update_and_draw_debug_windows(&mut self, ui: &mut Ui) {
-        // TODO: Should clean up this logic for borrowing
-        let mut app_ctx = self.app_ctx.borrow_mut();
-        let control_points = app_ctx.control_points.clone();
-
-        app_ctx.debug_window_control_points.update(&control_points);
-        app_ctx.debug_window_control_points.draw_ui(ui);
-
-        if control_points.len() >= 2 {
-            let src_color = control_points.first().unwrap().val().hsv();
-            let trg_color = control_points.last().unwrap().val().hsv();
-
-            app_ctx.debug_window_test.update(src_color, trg_color);
+        let ctx = &mut *self.app_ctx.borrow_mut();
+        if ctx.debug_window_control_points.is_open() {
+            ctx.debug_window_control_points.update(&ctx.control_points);
         }
-
-        app_ctx.debug_window_test.draw_ui(ui);
+        ctx.debug_window_control_points.draw_ui(ui);
     }
 
     fn is_escape_blocked(&self, ctx: &egui::Context) -> bool {
@@ -599,14 +586,6 @@ impl ZApp {
                         "debug_control_points {}",
                         app_ctx.debug_window_control_points.is_open()
                     );
-                }
-                if r.key_pressed(egui::Key::F11) {
-                    if app_ctx.debug_window_test.is_open() {
-                        app_ctx.debug_window_test.close();
-                    } else {
-                        app_ctx.debug_window_test.open();
-                    }
-                    log::info!("debug_window {}", app_ctx.debug_window_test.is_open());
                 }
             });
         }
@@ -938,5 +917,44 @@ mod tests {
         fields.insert("native_pixel_per_point".to_owned(), serde_json::json!(1.0));
 
         assert!(serde_json::from_value::<ZApp>(json).is_ok());
+    }
+
+    #[test]
+    fn debug_control_points_window_tracks_live_points_only_while_open() {
+        let log_buffer = Arc::new(Mutex::new(Vec::new()));
+        let app_ctx = Rc::new(RefCell::new(<ZColorPickerAppContext as Default>::default()));
+        let mut app = ZApp {
+            state: AppState::Idle,
+            tree: ZApp::create_tree(app_ctx.clone(), log_buffer.clone()),
+            app_ctx,
+            log_buffer,
+            had_keyboard_focus: false,
+        };
+        let ctx = egui::Context::default();
+        let draw_frame = |app: &mut ZApp| {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| app.update_and_draw_debug_windows(ui));
+            });
+        };
+        app.app_ctx
+            .borrow_mut()
+            .control_points
+            .push(ControlPoint::new_simple([0.5, 0.5, 0.2].into(), 0.0));
+
+        draw_frame(&mut app);
+        assert!(app
+            .app_ctx
+            .borrow()
+            .debug_window_control_points
+            .control_points
+            .is_empty());
+
+        app.app_ctx.borrow_mut().debug_window_control_points.open();
+        draw_frame(&mut app);
+        let app_ctx = app.app_ctx.borrow();
+        assert_eq!(
+            app_ctx.debug_window_control_points.control_points,
+            app_ctx.control_points
+        );
     }
 }

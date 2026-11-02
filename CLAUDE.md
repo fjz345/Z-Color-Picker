@@ -26,7 +26,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 - Double-click (M1) on the picker: add a control point.
 - Right-click (M2) on a point: remove it.
 - Middle-click: copy the color under the cursor in the selected format. On the previewer, it copies the image instead.
-- F11/F12: debug windows.
+- F12: debug window with the control point values.
 - Esc: quit.
 
 ## Architecture
