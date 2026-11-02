@@ -39,9 +39,9 @@ To create a new preset, click the preset combo box and select `<NEW>`
 - Auto hue: Select hue for start/end control points, middle control point's hue is interpolated by T (shown as markers on the hue bar)
 - Insert left/right: Side of the selected point where a new control point goes (start/end when none is selected)
 - Clamp: Keep control points inside the S/V square and wrap hue into 0..1
-- Comb: Show the curvature comb (Bezier only)
+- Comb: Show the curvature comb (Bezier and Hermite); the slider next to it scales the spike length
 - Copy as: Text format for a copied color; previewer strips are copied as images
-- Spline: Linear, Bezier (drag the tangent handles) or Hermite (Catmull-Rom, automatic tangents)
+- Spline: Linear, Bezier (drag the tangent handles) or Hermite (Catmull-Rom, automatic tangents, shown dashed on the selected point)
 - Flip: Reverse the control point order (T is mirrored)
 - Auto-save: Rewrite the selected preset file after every edit
 - Levels (previewer): Number of colors in the quantized gradient

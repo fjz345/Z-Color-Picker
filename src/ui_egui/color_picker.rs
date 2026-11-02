@@ -10,6 +10,7 @@ use crate::{
         },
         curvature::draw_curvature_comb,
         gradient::color_function_gradient,
+        tangents::paint_auto_tangents,
         ui_common::contrast_color,
     },
 };
@@ -42,6 +43,7 @@ pub struct MainColorPickerCtx<'a> {
     pub is_curve_locked: bool,
     pub is_window_lock: bool,
     pub is_show_curvature_comb: bool,
+    pub curvature_comb_scale: f32,
 }
 
 pub struct ZColorPicker<'a> {
@@ -181,6 +183,7 @@ impl ZColorPickerWrapper {
                 is_curve_locked: self.options.is_curve_locked,
                 is_window_lock: self.options.is_window_lock,
                 is_show_curvature_comb: self.options.is_show_curvature_comb,
+                curvature_comb_scale: self.options.curvature_comb_scale,
             };
 
             let color_picker_widget: ZColorPicker<'_> = ZColorPicker::new(&mut ctx);
@@ -486,11 +489,14 @@ pub fn main_color_picker(
             paint_empty_picker_hint(ui, slider_2d_response.rect);
         }
 
-        // TODO: Fix for hermite bezier
         if ctx.is_show_curvature_comb {
-            if ctx.spline_mode == SplineMode::Bezier {
-                draw_curvature_comb(ui, slider_2d_response.rect, ctx.control_points);
-            }
+            draw_curvature_comb(
+                ui,
+                slider_2d_response.rect,
+                ctx.control_points,
+                ctx.spline_mode,
+                ctx.curvature_comb_scale,
+            );
         }
 
         let _ = ui_ordered_spline_gradient(
@@ -499,6 +505,9 @@ pub fn main_color_picker(
             ctx.spline_mode,
             &slider_2d_response,
         );
+        if let (SplineMode::HermiteBezier, Some(index)) = (ctx.spline_mode, is_modifying_index) {
+            paint_auto_tangents(ui, slider_2d_response.rect, ctx.control_points, index);
+        }
 
         handle_control_points_ui(ui, ctx, &slider_2d_response, &mut is_modifying_index);
 
@@ -1616,6 +1625,7 @@ mod tests {
                         is_curve_locked: false,
                         is_window_lock: false,
                         is_show_curvature_comb: false,
+                        curvature_comb_scale: 1.0,
                     };
                     let strip = egui::UiBuilder::new().max_rect(STRIP_RECT);
                     ui.scope_builder(strip, |ui| {

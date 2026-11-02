@@ -56,7 +56,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 - `flatten_control_points` unwraps hue across the 0/1 boundary before interpolation.
 - `sample_spline_normalized` maps x in [0,1] onto the real keys (`real_keys` drops the Catmull-Rom phantoms), so x = T. It handles the end of a Catmull-Rom spline, where the `splines` sampler returns `None`. The ribbon (`generate_spline_points`) samples a fixed count per real segment between key T.
 - The previewer (`src/ui_egui/previewer.rs`) gradient, quantized strip and key color bands all follow T, as does the picker's T strip gradient (`gradient_color_at`). Key color bands split halfway between neighbouring T (`key_band_edges`). The previewer edits its own copy of the points (band drag, Space evenly), and `PreviewerPane::ui` writes it back to the context when it changed.
-- Curvature comb drawing lives in `src/ui_egui/curvature.rs` and has its own cubic evaluation. It is toggled via `ZColorPickerOptions::is_show_curvature_comb`.
+- Curvature comb drawing lives in `src/ui_egui/curvature.rs` and has its own cubic evaluation. It is toggled via `ZColorPickerOptions::is_show_curvature_comb`; `curvature_comb_scale` multiplies every spike's length. Linear has no comb. Hermite segments are converted from the spline's Catmull-Rom keys to exact cubic Beziers (`catmull_rom_cubics`, the tangent formula of `HsvKeyValue::cubic_hermite`), so they follow the key times. Their inner control points are the read-only Hermite tangents drawn dashed on the selected point (`paint_auto_tangents`).
 
 ### Presets
 - `src/preset.rs`: one JSON file per `PresetEntity` in `./presets/` (the `presets/` folder is gitignored). The path comes from `std::env::current_dir()`.

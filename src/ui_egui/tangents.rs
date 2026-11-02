@@ -7,7 +7,10 @@ use eframe::{
 
 use crate::{
     datatypes::control_point::ControlPoint,
-    ui_egui::control_points::{bezier_handle, control_point_pos, value_pos},
+    ui_egui::{
+        control_points::{bezier_handle, control_point_pos, value_pos},
+        curvature::catmull_rom_handles,
+    },
 };
 
 pub struct TangentUiResult {
@@ -106,6 +109,29 @@ pub fn ui_control_point_tangents(
         }
     }
     result
+}
+
+pub fn paint_auto_tangents(ui: &Ui, rect: Rect, control_points: &[ControlPoint], index: usize) {
+    const DASH_LENGTH: f32 = 4.0;
+    const GAP_LENGTH: f32 = 3.0;
+    const UNDERLAY: Stroke = Stroke {
+        width: 2.5,
+        color: Color32::from_black_alpha(110),
+    };
+    let line_stroke = Stroke::new(1.0, Color32::WHITE.linear_multiply(0.45));
+
+    let to_screen = RectTransform::from_to(Rect::from_min_size(Pos2::ZERO, Vec2::splat(1.0)), rect);
+    let cp_screen = to_screen.transform_pos(control_point_pos(&control_points[index]));
+    let painter = ui.painter_at(rect);
+    for handle in catmull_rom_handles(control_points, index)
+        .into_iter()
+        .flatten()
+    {
+        let path = [cp_screen, to_screen.transform_pos(handle)];
+        for stroke in [UNDERLAY, line_stroke] {
+            painter.extend(Shape::dashed_line(&path, stroke, DASH_LENGTH, GAP_LENGTH));
+        }
+    }
 }
 
 fn with_min_handle_length(
