@@ -12,6 +12,7 @@ use crate::preset::PresetEntity;
 use crate::preset::PresetHandler;
 use crate::ui_egui::app::ZColorPickerOptions;
 use crate::ui_egui::color_picker::format_color_as;
+use crate::ui_egui::control_points::mirror_t;
 use crate::ui_egui::ui_common::ContentWindow;
 
 pub struct WindowPresetDrawResult {
@@ -153,26 +154,20 @@ impl WindowZColorPickerOptions {
                 .on_hover_text(spline_mode_hover_text(*spline_mode));
 
             ui.button("Flip")
-                .on_hover_text("Reverse the point order (tangents and band widths follow)")
+                .on_hover_text("Reverse the point order (tangents and T follow)")
                 .clicked_by(PointerButton::Primary)
         })
         .inner
     }
 }
 
-pub fn flip_control_points(
-    points: &mut [ControlPoint],
-    selected: &mut Option<usize>,
-    preview_sizes: &mut [f32],
-) {
+pub fn flip_control_points(points: &mut [ControlPoint], selected: &mut Option<usize>) {
     for cp in points.iter_mut() {
         cp.flip_tangents();
     }
     points.reverse();
+    mirror_t(points);
     *selected = selected.and_then(|i| points.len().checked_sub(i + 1));
-    if preview_sizes.len() == points.len() {
-        preview_sizes.reverse();
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -920,12 +915,12 @@ mod tests {
         let original = three_points();
         let mut points = original.clone();
 
-        flip_control_points(&mut points, &mut None, &mut []);
+        flip_control_points(&mut points, &mut None);
 
         assert_eq!(points.len(), original.len());
         for (flipped, orig) in points.iter().zip(original.iter().rev()) {
             assert_eq!(flipped.val(), orig.val());
-            assert_eq!(flipped.t(), orig.t());
+            assert_eq!(*flipped.t(), 1.0 - *orig.t());
             assert_eq!(flipped.tangents()[0], orig.tangents()[1]);
             assert_eq!(flipped.tangents()[1], orig.tangents()[0]);
         }
@@ -943,30 +938,21 @@ mod tests {
             let mut points = three_points();
             let mut selected = before;
 
-            flip_control_points(&mut points, &mut selected, &mut []);
+            flip_control_points(&mut points, &mut selected);
 
             assert_eq!(selected, after, "selected before flip: {before:?}");
         }
     }
 
     #[test]
-    fn flip_reverses_matching_preview_sizes() {
+    fn flip_mirrors_uneven_t_and_keeps_it_increasing() {
         let mut points = three_points();
-        let mut sizes = [10.0, 20.0, 30.0];
+        *points[1].t_mut() = 0.25;
 
-        flip_control_points(&mut points, &mut None, &mut sizes);
+        flip_control_points(&mut points, &mut None);
 
-        assert_eq!(sizes, [30.0, 20.0, 10.0]);
-    }
-
-    #[test]
-    fn flip_leaves_preview_sizes_of_another_length_untouched() {
-        let mut points = three_points();
-        let mut sizes = [10.0, 20.0];
-
-        flip_control_points(&mut points, &mut None, &mut sizes);
-
-        assert_eq!(sizes, [10.0, 20.0]);
+        let ts: Vec<f32> = points.iter().map(|cp| *cp.t()).collect();
+        assert_eq!(ts, [0.0, 0.75, 1.0]);
     }
 
     #[test]
@@ -974,14 +960,12 @@ mod tests {
         let original = three_points();
         let mut points = original.clone();
         let mut selected = Some(0);
-        let mut sizes = [10.0, 20.0, 30.0];
 
-        flip_control_points(&mut points, &mut selected, &mut sizes);
-        flip_control_points(&mut points, &mut selected, &mut sizes);
+        flip_control_points(&mut points, &mut selected);
+        flip_control_points(&mut points, &mut selected);
 
         assert_eq!(points, original);
         assert_eq!(selected, Some(0));
-        assert_eq!(sizes, [10.0, 20.0, 30.0]);
     }
 
     fn handler_with_edited_a_and_distinct_b(tmp: &TempDir) -> (PresetHandler, Vec<ControlPoint>) {

@@ -1,10 +1,8 @@
-use ecolor::HsvaGamma;
 use eframe::{
-    egui::{self, CursorIcon, Layout, PointerButton, Response, Sense, TextStyle, Ui, Vec2},
+    egui::{self, lerp, CursorIcon, Layout, PointerButton, Response, Sense, TextStyle, Ui, Vec2},
     epaint::Rect,
 };
 use serde::{Deserialize, Serialize};
-use splines::Spline;
 
 use crate::{
     common::{ColorStringCopy, SplineMode},
@@ -14,10 +12,11 @@ use crate::{
     },
     ui_egui::{
         control_points::{
-            control_points_to_spline, flatten_control_points, sample_spline_normalized,
+            control_points_to_spline, drag_grab_offset_x, drag_t, flatten_control_points,
+            gradient_color_at, key_ts, sample_spline_normalized, space_t_evenly, t_at_pointer,
         },
         gradient::color_function_gradient,
-        ui_common::color_button,
+        ui_common::{color_button, show_color_at},
     },
 };
 
@@ -73,97 +72,57 @@ fn ui_previewer_colors(
     response
 }
 
+const MIDDLE_KEY_BAND_HINT: &str =
+    "Key color, nearest along the gradient. Drag: move its point's T; \
+     middle-click copies the strip as an image";
+const END_KEY_BAND_HINT: &str =
+    "Key color of an end point, fixed at T 0 or 1; middle-click copies the strip as an image";
+
+fn key_band_edges(control_points: &[ControlPoint]) -> Vec<f32> {
+    let ts = key_ts(control_points);
+    std::iter::once(0.0)
+        .chain(ts.windows(2).map(|pair| 0.5 * (pair[0] + pair[1])))
+        .chain(std::iter::once(1.0))
+        .collect()
+}
+
 fn ui_previewer_control_points_with_drag(
     ui: &mut Ui,
     size: Vec2,
-    control_points: &[ControlPoint],
-    previewer_data: &mut PreviewerData,
-    _color_copy_format: ColorStringCopy,
+    control_points: &mut [ControlPoint],
 ) -> Response {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
-    let mut previewer_ui_control_points = ui.new_child(
-        egui::UiBuilder::default()
-            .max_rect(rect)
-            .layout(Layout::left_to_right(egui::Align::Min)),
-    );
+    let edges = key_band_edges(control_points);
+    let count = control_points.len();
 
-    previewer_ui_control_points.spacing_mut().item_spacing = Vec2::ZERO;
-
-    let ui_size: Vec2 = previewer_ui_control_points.available_size();
-
-    let num_control_points = control_points.len();
-    let size_per_color_x = ui_size.x / (num_control_points as f32);
-    let size_per_color_y = ui_size.y;
-    let previewer_sizes_sum: f32 = previewer_data.points_preview_sizes.iter().sum();
-
-    for (i, cp) in control_points.iter().enumerate() {
-        let size_weight: f32 = previewer_data.points_preview_sizes[i] * num_control_points as f32
-            / previewer_sizes_sum;
-        let response_button: Response = color_button(
-            &mut previewer_ui_control_points,
-            Vec2 {
-                x: size_weight * size_per_color_x,
-                y: size_per_color_y,
-            },
-            cp.val().color(),
-            true,
-        )
-        .on_hover_and_drag_cursor(CursorIcon::ResizeHorizontal);
-        let response_button = on_hover_strip_hint(
-            response_button,
-            "Key colors. Drag a band to resize it; middle-click copies the strip as an image",
+    for i in 0..count {
+        let band = Rect::from_x_y_ranges(
+            lerp(rect.x_range(), edges[i])..=lerp(rect.x_range(), edges[i + 1]),
+            rect.y_range(),
         );
+        show_color_at(ui.painter(), control_points[i].val().color(), band);
 
-        if response_button.dragged_by(PointerButton::Primary) {
-            resize_band(
-                &mut previewer_data.points_preview_sizes,
-                i,
-                response_button.drag_delta().x,
-                ui_size.x,
-            );
+        let id = response.id.with(i);
+        if i == 0 || i + 1 == count {
+            on_hover_strip_hint(ui.interact(band, id, Sense::click()), END_KEY_BAND_HINT);
+            continue;
         }
-
-        let _color_response_rect = response_button.ctx.available_rect();
+        let band_response = ui
+            .interact(band, id, Sense::click_and_drag())
+            .on_hover_and_drag_cursor(CursorIcon::ResizeHorizontal);
+        let band_response = on_hover_strip_hint(band_response, MIDDLE_KEY_BAND_HINT);
+        if band_response.dragged_by(PointerButton::Primary) {
+            let key_x = lerp(rect.x_range(), *control_points[i].t());
+            let grab_offset_x = drag_grab_offset_x(ui, &band_response, key_x);
+            if let Some(pointer) = band_response.interact_pointer_pos() {
+                let target = t_at_pointer(pointer.x, grab_offset_x, rect.left(), rect.width());
+                drag_t(control_points, i, target);
+            }
+        }
     }
 
     response
-}
-
-fn modify_spline_t_to_preview_sizes(
-    spline: Spline<f32, ControlPointValue>,
-    spline_mode: SplineMode,
-    previewer_data: &PreviewerData,
-) -> Spline<f32, ControlPointValue> {
-    let preview_sizes = &previewer_data.points_preview_sizes;
-    let mut keys = spline.keys().to_vec();
-    let real_keys = match spline_mode {
-        SplineMode::Linear | SplineMode::Bezier => 0..keys.len(),
-        SplineMode::HermiteBezier => 1..keys.len().saturating_sub(1),
-    };
-    assert_eq!(
-        real_keys.len(),
-        preview_sizes.len(),
-        "previewer band sizes must match the control points"
-    );
-    if real_keys.len() <= 1 {
-        return spline;
-    }
-
-    let mut accum_size = 0.0;
-    for (key, size) in keys[real_keys.clone()].iter_mut().zip(preview_sizes) {
-        key.t = accum_size + size * 0.5;
-        accum_size += size;
-    }
-
-    if spline_mode == SplineMode::HermiteBezier {
-        // Mirrored like the index keys, so equal sizes only rescale the Catmull-Rom spline.
-        let last = real_keys.end - 1;
-        keys[0].t = 2.0 * keys[1].t - keys[2].t;
-        keys[last + 1].t = 2.0 * keys[last].t - keys[last - 1].t;
-    }
-
-    Spline::from_vec(keys)
 }
 
 fn ui_previewer_curve(
@@ -181,28 +140,11 @@ fn ui_previewer_curve(
     );
     previewer_ui_curve.spacing_mut().item_spacing = Vec2::ZERO;
 
-    let flatten_control_points = flatten_control_points(control_points);
-    let spline = control_points_to_spline(&flatten_control_points[..], spline_mode);
-
-    // forgot what this does
-    // match spline_mode {
-    //     SplineMode::HermiteBezier => {}
-    //     _ => spline = modify_spline_t_to_preview_sizes(spline, spline_mode, previewer_data),
-    // };
-
-    let response = color_function_gradient(&mut previewer_ui_curve, rect.size(), |x| {
-        if flatten_control_points.is_empty() {
-            return HsvaGamma::default().into();
-        } else if flatten_control_points.len() == 1 {
-            return flatten_control_points[0].val().color();
-        }
-
-        let sample: HsvKeyValue =
-            sample_spline_normalized(&spline, spline_mode, x).unwrap_or(HsvKeyValue {
-                val: [1.0, 1.0, 1.0],
-            });
-        sample.color()
-    });
+    let response = color_function_gradient(
+        &mut previewer_ui_curve,
+        rect.size(),
+        gradient_color_at(control_points, spline_mode),
+    );
 
     on_hover_strip_hint(
         response,
@@ -215,12 +157,10 @@ fn ui_previewer_curve_quantized(
     size: Vec2,
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
-    previewer_data: &mut PreviewerData,
     color_copy_format: ColorStringCopy,
     number_levels: usize,
 ) -> Response {
-    let quantized_colors =
-        quantized_colors(control_points, spline_mode, previewer_data, number_levels);
+    let quantized_colors = quantized_colors(control_points, spline_mode, number_levels);
 
     let response = ui_previewer_colors(ui, size, &quantized_colors, color_copy_format);
     response
@@ -229,18 +169,13 @@ fn ui_previewer_curve_quantized(
 fn quantized_colors(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
-    previewer_data: &PreviewerData,
     levels: usize,
 ) -> Vec<HsvKeyValue> {
     if control_points.is_empty() {
         return Vec::new();
     }
     let flatten_control_points = flatten_control_points(control_points);
-    let spline = modify_spline_t_to_preview_sizes(
-        control_points_to_spline(&flatten_control_points[..], spline_mode),
-        spline_mode,
-        previewer_data,
-    );
+    let spline = control_points_to_spline(&flatten_control_points[..], spline_mode);
 
     (0..levels)
         .map(|i| {
@@ -262,34 +197,6 @@ fn quantize_levels(stored: usize) -> usize {
     stored.clamp(MIN_QUANTIZE_LEVELS, MAX_QUANTIZE_LEVELS)
 }
 
-fn resize_band(sizes: &mut [f32], index: usize, dx_px: f32, width_px: f32) {
-    let n = sizes.len();
-    if n <= 1 || width_px <= 0.0 {
-        return;
-    }
-    let sum: f32 = sizes.iter().sum();
-    let others_sum = sum - sizes[index];
-    if sum <= 0.0 || others_sum <= 0.0 {
-        return;
-    }
-
-    let to_px = |size: f32| size / sum * width_px;
-    let px = to_px(sizes[index]);
-    let min_px = width_px / n as f32 / 2.0;
-    let narrowest_other_px = sizes
-        .iter()
-        .enumerate()
-        .filter(|&(j, _)| j != index)
-        .map(|(_, &size)| to_px(size))
-        .fold(f32::INFINITY, f32::min);
-    let max_px = width_px - min_px * (width_px - px) / narrowest_other_px;
-
-    let grow_limit = max_px.max(px);
-    let shrink_limit = min_px.min(px);
-    let new_px = (px + dx_px).min(grow_limit).max(shrink_limit);
-    sizes[index] = new_px * others_sum / (width_px - new_px);
-}
-
 fn ui_previewer_options(ui: &mut Ui, previewer_data: &mut PreviewerData) {
     ui.horizontal(|ui| {
         ui.label("Levels");
@@ -299,11 +206,11 @@ fn ui_previewer_options(ui: &mut Ui, previewer_data: &mut PreviewerData) {
         ))
         .on_hover_text("Number of quantized colors");
         if ui
-            .button("Reset widths")
-            .on_hover_text("Reset the color band widths")
+            .button("Space evenly")
+            .on_hover_text("Spread the points evenly along the gradient (equal T steps)")
             .clicked()
         {
-            previewer_data.reset_preview_sizes();
+            space_t_evenly(&mut previewer_data.control_points);
         }
     });
 }
@@ -340,9 +247,7 @@ pub fn ui_previewer(
     let width = previewer_rect.width();
 
     let inner_response = ui.vertical(|ui| {
-        let control_points = &previewer_data.control_points.clone();
-
-        if control_points.is_empty() {
+        if previewer_data.control_points.is_empty() {
             let gaps_between_strips = 2.0 * ui.spacing().item_spacing.y;
             let strips_height =
                 control_points_height + curve_height + quantized_height + gaps_between_strips;
@@ -359,22 +264,19 @@ pub fn ui_previewer(
         let response_control_points = ui_previewer_control_points_with_drag(
             ui,
             Vec2::new(width, control_points_height),
-            control_points,
-            previewer_data,
-            color_copy_format,
+            &mut previewer_data.control_points,
         );
         let response_curve = ui_previewer_curve(
             ui,
             Vec2::new(width, curve_height),
-            control_points,
+            &previewer_data.control_points,
             spline_mode,
         );
         let response_curve_quantized = ui_previewer_curve_quantized(
             ui,
             Vec2::new(width, quantized_height),
-            control_points,
+            &previewer_data.control_points,
             spline_mode,
-            previewer_data,
             color_copy_format,
             previewer_data.quantize_num_levels,
         );
@@ -425,52 +327,21 @@ impl PreviewerUiResponses {
     }
 }
 
-const PREVIEWER_DEFAULT_VALUE: f32 = 100.0;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreviewerData {
     pub control_points: Vec<ControlPoint>,
     pub spline_mode: SplineMode,
-    pub points_preview_sizes: Vec<f32>,
     pub quantize_num_levels: usize,
 }
 
 impl PreviewerData {
     pub fn new(num: usize) -> Self {
         Self {
-            points_preview_sizes: vec![PREVIEWER_DEFAULT_VALUE; num],
             control_points: vec![ControlPoint::default(); num],
             spline_mode: SplineMode::HermiteBezier,
             quantize_num_levels: 4,
         }
     }
-    pub fn reset_preview_sizes(&mut self) {
-        for val in self.points_preview_sizes.iter_mut() {
-            *val = PREVIEWER_DEFAULT_VALUE;
-        }
-    }
-}
-
-fn reconcile_preview_sizes(old: &[ControlPoint], new: &[ControlPoint], sizes: &[f32]) -> Vec<f32> {
-    let defaults = || vec![PREVIEWER_DEFAULT_VALUE; new.len()];
-    if sizes.len() != old.len() {
-        return defaults();
-    }
-    let first_sv_change = old
-        .iter()
-        .zip(new)
-        .position(|(old, new)| old.val()[0] != new.val()[0] || old.val()[1] != new.val()[1]);
-    let mut sizes = sizes.to_vec();
-    if new.len() == old.len() + 1 {
-        sizes.insert(
-            first_sv_change.unwrap_or(old.len()),
-            PREVIEWER_DEFAULT_VALUE,
-        );
-    } else if new.len() + 1 == old.len() {
-        sizes.remove(first_sv_change.unwrap_or(new.len()));
-    } else if new.len() != old.len() {
-        return defaults();
-    }
-    sizes
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -487,11 +358,6 @@ impl ZPreviewer {
 
     pub fn update(&mut self, control_points: &[ControlPoint], spline_mode: SplineMode) {
         self.data.spline_mode = spline_mode;
-        self.data.points_preview_sizes = reconcile_preview_sizes(
-            &self.data.control_points,
-            control_points,
-            &self.data.points_preview_sizes,
-        );
         self.data.control_points.clear();
         self.data.control_points.extend_from_slice(control_points);
     }
@@ -518,6 +384,7 @@ impl Default for ZPreviewer {
 mod tests {
     use super::*;
     use crate::datatypes::hsv_key_value::test_support::assert_close;
+    use crate::ui_egui::control_points::MIN_T_GAP;
 
     #[test]
     fn strip_heights_plus_controls_fill_total() {
@@ -551,7 +418,7 @@ mod tests {
     #[test]
     fn quantized_colors_two_points_exceed_point_count() {
         let cps = two_points();
-        let colors = quantized_colors(&cps, SplineMode::Linear, &PreviewerData::new(2), 8);
+        let colors = quantized_colors(&cps, SplineMode::Linear, 8);
         assert_eq!(colors.len(), 8);
         assert_close(colors[0], *cps[0].val());
         assert_close(colors[7], *cps[1].val());
@@ -561,176 +428,61 @@ mod tests {
     #[test]
     fn quantized_colors_one_level_is_first_point_and_zero_is_empty() {
         let cps = two_points();
-        let data = PreviewerData::new(2);
-        let one = quantized_colors(&cps, SplineMode::Linear, &data, 1);
+        let one = quantized_colors(&cps, SplineMode::Linear, 1);
         assert_eq!(one.len(), 1);
         assert_close(one[0], *cps[0].val());
-        assert!(quantized_colors(&cps, SplineMode::Linear, &data, 0).is_empty());
+        assert!(quantized_colors(&cps, SplineMode::Linear, 0).is_empty());
+    }
+
+    fn sv_ramp_points(ts: [f32; 3]) -> Vec<ControlPoint> {
+        [0.0, 0.5, 1.0]
+            .into_iter()
+            .zip(ts)
+            .map(|(sv, t)| ControlPoint::new_simple(ControlPointValue::new(sv, sv, 0.2), t))
+            .collect()
     }
 
     #[test]
     fn quantized_colors_levels_equal_to_points_hit_every_key() {
-        let cps = vec![
-            ControlPoint::new_simple(ControlPointValue::new(0.0, 0.0, 0.2), 0.0),
-            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 0.2), 0.5),
-            ControlPoint::new_simple(ControlPointValue::new(1.0, 1.0, 0.2), 1.0),
-        ];
-        let colors = quantized_colors(&cps, SplineMode::Linear, &PreviewerData::new(3), 3);
+        let cps = sv_ramp_points([0.0, 0.5, 1.0]);
+        let colors = quantized_colors(&cps, SplineMode::Linear, 3);
         assert_eq!(colors.len(), 3);
         for (color, cp) in colors.iter().zip(&cps) {
             assert_close(*color, *cp.val());
         }
     }
 
-    fn sv_ramp_points() -> Vec<ControlPoint> {
-        [0.0, 0.5, 1.0]
-            .into_iter()
-            .map(|sv| ControlPoint::new_simple(ControlPointValue::new(sv, sv, 0.2), sv))
-            .collect()
-    }
-
-    fn with_widths(widths: &[f32]) -> PreviewerData {
-        PreviewerData {
-            points_preview_sizes: widths.to_vec(),
-            ..PreviewerData::new(widths.len())
+    #[test]
+    fn quantized_colors_follow_t() {
+        let cps = sv_ramp_points([0.0, 0.25, 1.0]);
+        let colors = quantized_colors(&cps, SplineMode::Linear, 3);
+        for c in 0..2 {
+            assert!((colors[1][c] - 2.0 / 3.0).abs() < 1e-5, "{colors:?}");
         }
     }
 
     #[test]
-    fn quantized_colors_linear_follows_band_widths() {
-        let cps = sv_ramp_points();
-        for (mode, widths, middle_sv, tolerance) in [
-            (SplineMode::Linear, [100.0, 100.0, 300.0], 0.625, 1e-5),
-            (SplineMode::Linear, [100.0, 100.0, 400.0], 0.65, 1e-4),
-            (SplineMode::Bezier, [100.0, 100.0, 400.0], 0.608, 1e-3),
-        ] {
-            let colors = quantized_colors(&cps, mode, &with_widths(&widths), 3);
-            for c in 0..2 {
-                assert!(
-                    (colors[1][c] - middle_sv).abs() < tolerance,
-                    "{mode:?} {widths:?}: {colors:?}"
-                );
+    fn quantized_colors_hit_every_key_at_its_t() {
+        let cps = sv_ramp_points([0.0, 1.0 / 3.0, 1.0]);
+        for mode in SplineMode::ALL {
+            let colors = quantized_colors(&cps, mode, 4);
+            for (level, key) in [(0, 0), (1, 1), (3, 2)] {
+                assert_close(colors[level], *cps[key].val());
             }
         }
     }
 
     #[test]
-    fn quantized_colors_hermite_follows_band_widths() {
-        let cps = sv_ramp_points();
-        let data = with_widths(&[100.0, 100.0, 300.0]);
-        let colors = quantized_colors(&cps, SplineMode::HermiteBezier, &data, 4);
-        for (level, key) in [(0, 0), (1, 1), (3, 2)] {
-            assert_close(colors[level], *cps[key].val());
-        }
+    fn key_band_edges_split_halfway_between_neighbouring_t() {
+        let cps = sv_ramp_points([0.0, 0.4, 1.0]);
+        assert_eq!(key_band_edges(&cps), [0.0, 0.2, 0.7, 1.0]);
+        assert_eq!(key_band_edges(&cps[..1]), [0.0, 1.0]);
     }
 
     #[test]
-    fn quantized_colors_hermite_equal_widths_match_index_keyed_spline() {
-        let cps = sv_ramp_points();
-        let spline = control_points_to_spline(&cps, SplineMode::HermiteBezier);
-        let colors = quantized_colors(&cps, SplineMode::HermiteBezier, &PreviewerData::new(3), 7);
-        for (i, color) in colors.iter().enumerate() {
-            let x = i as f32 / 6.0;
-            let expected = sample_spline_normalized(&spline, SplineMode::HermiteBezier, x);
-            assert_close(*color, expected.unwrap());
-        }
-    }
-
-    fn band_widths(sizes: &[f32], width_px: f32) -> Vec<f32> {
-        let sum: f32 = sizes.iter().sum();
-        sizes.iter().map(|size| size / sum * width_px).collect()
-    }
-
-    const BAND_LAYOUTS: [(f32, usize); 4] = [(800.0, 4), (2000.0, 4), (600.0, 6), (1500.0, 2)];
-
-    #[test]
-    fn band_width_tracks_pointer() {
-        for (width_px, n) in BAND_LAYOUTS {
-            for index in 0..n {
-                for dx in [10.0, -10.0] {
-                    let mut sizes = vec![PREVIEWER_DEFAULT_VALUE; n];
-                    let before = band_widths(&sizes, width_px)[index];
-                    resize_band(&mut sizes, index, dx, width_px);
-                    let after = band_widths(&sizes, width_px)[index];
-                    assert!(
-                        (after - before - dx).abs() < 1e-3,
-                        "W {width_px} n {n} band {index} dx {dx}: {before} -> {after}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn band_never_narrower_than_half_share() {
-        for (width_px, n) in BAND_LAYOUTS {
-            let min_px = width_px / n as f32 / 2.0;
-            for dx in [1e4, -1e4] {
-                let mut sizes = vec![PREVIEWER_DEFAULT_VALUE; n];
-                for index in 0..n {
-                    resize_band(&mut sizes, index, dx, width_px);
-                    let widths = band_widths(&sizes, width_px);
-                    assert!(
-                        widths.iter().all(|&w| w >= min_px - 1e-3),
-                        "W {width_px} n {n} band {index} dx {dx}: {widths:?}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn single_band_zero_sum_zero_width_are_noops() {
-        let mut single = vec![PREVIEWER_DEFAULT_VALUE];
-        resize_band(&mut single, 0, 10.0, 800.0);
-        assert_eq!(single, [PREVIEWER_DEFAULT_VALUE]);
-
-        let mut zero_sum = vec![0.0; 3];
-        resize_band(&mut zero_sum, 1, 10.0, 800.0);
-        assert_eq!(zero_sum, [0.0; 3]);
-
-        let mut zero_width = vec![PREVIEWER_DEFAULT_VALUE; 3];
-        resize_band(&mut zero_width, 1, 10.0, 0.0);
-        assert_eq!(zero_width, [PREVIEWER_DEFAULT_VALUE; 3]);
-    }
-
-    #[test]
-    fn other_bands_keep_their_ratio() {
-        let width_px = 1000.0;
-        let mut sizes = vec![120.0, 80.0, 200.0, 100.0];
-        let before = band_widths(&sizes, width_px);
-        resize_band(&mut sizes, 1, 15.0, width_px);
-        let after = band_widths(&sizes, width_px);
-        let scale = (width_px - after[1]) / (width_px - before[1]);
-        for j in [0, 2, 3] {
-            assert!(
-                (after[j] - before[j] * scale).abs() < 1e-3,
-                "{before:?} -> {after:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn bands_already_past_the_bounds_do_not_jump() {
-        let width_px = 1000.0;
-        let mut sizes = vec![300.0, 150.0, 40.0];
-        let before = band_widths(&sizes, width_px);
-        let assert_unchanged = |sizes: &[f32]| {
-            let after = band_widths(sizes, width_px);
-            assert!(
-                after.iter().zip(&before).all(|(a, b)| (a - b).abs() < 1e-3),
-                "{before:?} -> {after:?}"
-            );
-        };
-        resize_band(&mut sizes, 0, 1.0, width_px);
-        assert_unchanged(&sizes);
-
-        resize_band(&mut sizes, 2, -1.0, width_px);
-        assert_unchanged(&sizes);
-
-        resize_band(&mut sizes, 2, 1.0, width_px);
-        let grown = band_widths(&sizes, width_px)[2];
-        assert!((grown - before[2] - 1.0).abs() < 1e-3, "{grown}");
+    fn key_band_edges_of_invalid_t_match_the_evenly_keyed_gradient() {
+        let cps = sv_ramp_points([0.0, 0.0, 0.0]);
+        assert_eq!(key_band_edges(&cps), [0.0, 0.25, 0.75, 1.0]);
     }
 
     #[test]
@@ -750,7 +502,7 @@ mod tests {
             SplineMode::HermiteBezier,
         ] {
             for levels in [2, 32] {
-                let colors = quantized_colors(&[], spline_mode, &PreviewerData::new(0), levels);
+                let colors = quantized_colors(&[], spline_mode, levels);
                 assert!(colors.is_empty(), "{spline_mode:?} {levels}: {colors:?}");
             }
         }
@@ -853,148 +605,95 @@ mod tests {
         }
     }
 
-    fn point(s: f32, v: f32, h: f32) -> ControlPoint {
-        ControlPoint::new_simple(ControlPointValue::new(s, v, h), 0.0)
+    fn drag_key_band(press_x: f32, dx: f32) -> Vec<ControlPoint> {
+        let ctx = egui::Context::default();
+        let mut data = PreviewerData {
+            control_points: sv_ramp_points([0.0, 0.4, 1.0]),
+            ..PreviewerData::new(0)
+        };
+        let (rects, _) = draw_previewer_pass(&ctx, &mut data, Vec::new());
+        let strip = rects[0];
+        let start = strip.lerp_inside(Vec2::new(press_x, 0.5));
+        let end = start + Vec2::new(dx * strip.width(), 0.0);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        let mut frames = vec![
+            vec![egui::Event::PointerMoved(start)],
+            vec![button(start, true)],
+        ];
+        for step in 1..=3 {
+            frames.push(vec![egui::Event::PointerMoved(
+                start.lerp(end, step as f32 / 3.0),
+            )]);
+        }
+        frames.push(vec![button(end, false)]);
+        for events in frames {
+            draw_previewer_pass(&ctx, &mut data, events);
+        }
+        data.control_points
     }
 
-    fn abc() -> [ControlPoint; 3] {
-        [
-            point(0.1, 0.1, 0.5),
-            point(0.4, 0.5, 0.5),
-            point(0.9, 0.8, 0.5),
-        ]
+    fn ts_of(points: &[ControlPoint]) -> Vec<f32> {
+        points.iter().map(|cp| *cp.t()).collect()
     }
-
-    fn spawned() -> ControlPoint {
-        point(0.6, 0.3, 0.5)
-    }
-
-    const CUSTOM_SIZES: [f32; 3] = [10.0, 20.0, 30.0];
-    const D: f32 = PREVIEWER_DEFAULT_VALUE;
 
     #[test]
-    fn reconcile_insert_gives_new_index_the_default() {
-        let [a, b, c] = abc();
-        let x = spawned();
-        for (new, expected) in [
-            (
-                vec![a.clone(), x.clone(), b.clone(), c.clone()],
-                [10.0, D, 20.0, 30.0],
-            ),
-            (
-                vec![a.clone(), b.clone(), c.clone(), x.clone()],
-                [10.0, 20.0, 30.0, D],
-            ),
-            (
-                vec![x.clone(), a.clone(), b.clone(), c.clone()],
-                [D, 10.0, 20.0, 30.0],
-            ),
-        ] {
-            assert_eq!(
-                reconcile_preview_sizes(&abc(), &new, &CUSTOM_SIZES),
-                expected,
-                "{new:?}"
-            );
+    fn dragging_a_middle_key_band_moves_its_t_by_the_pointer_distance() {
+        let points = drag_key_band(0.45, 0.2);
+        assert!((points[1].t() - 0.6).abs() < 1e-4, "{:?}", ts_of(&points));
+        assert_eq!((*points[0].t(), *points[2].t()), (0.0, 1.0));
+    }
+
+    #[test]
+    fn dragging_a_middle_key_band_stops_at_the_min_gap_to_its_neighbour() {
+        let points = drag_key_band(0.45, 2.0);
+        assert_eq!(*points[1].t(), 1.0 - MIN_T_GAP);
+    }
+
+    #[test]
+    fn end_key_bands_keep_their_t_when_dragged() {
+        for (press_x, dx) in [(0.1, 0.3), (0.9, -0.3)] {
+            assert_eq!(ts_of(&drag_key_band(press_x, dx)), [0.0, 0.4, 1.0]);
         }
     }
 
     #[test]
-    fn reconcile_insert_ignores_hue_changes_before_the_insert_index() {
-        let [a, mut b, c] = abc();
-        b.val_mut()[2] = 0.9;
-        let new = [a, b, spawned(), c];
-        assert_eq!(
-            reconcile_preview_sizes(&abc(), &new, &CUSTOM_SIZES),
-            [10.0, 20.0, D, 30.0]
-        );
-    }
+    fn previewer_data_json_with_removed_band_widths_still_loads() {
+        let json = r#"{
+            "control_points": [],
+            "spline_mode": "Linear",
+            "points_preview_sizes": [100.0, 250.0],
+            "quantize_num_levels": 7
+        }"#;
 
-    #[test]
-    fn reconcile_remove_drops_that_width() {
-        let [a, b, c] = abc();
-        for (new, expected) in [
-            ([b.clone(), c.clone()], [20.0, 30.0]),
-            ([a.clone(), c.clone()], [10.0, 30.0]),
-            ([a.clone(), b.clone()], [10.0, 20.0]),
-        ] {
-            assert_eq!(
-                reconcile_preview_sizes(&abc(), &new, &CUSTOM_SIZES),
-                expected,
-                "{new:?}"
-            );
-        }
-    }
+        let data: PreviewerData = serde_json::from_str(json).unwrap();
 
-    #[test]
-    fn reconcile_two_points_added_or_removed_resets() {
-        let [a, b, c] = abc();
-        let plus_two = [a.clone(), spawned(), point(0.2, 0.9, 0.5), b, c];
-        assert_eq!(
-            reconcile_preview_sizes(&abc(), &plus_two, &CUSTOM_SIZES),
-            [D; 5]
-        );
-        assert_eq!(reconcile_preview_sizes(&abc(), &[a], &CUSTOM_SIZES), [D]);
-    }
-
-    #[test]
-    fn reconcile_same_count_keeps_sizes_of_moved_points() {
-        let moved = abc().map(|mut cp| {
-            cp.val_mut()[0] *= 0.5;
-            cp
-        });
-        assert_eq!(
-            reconcile_preview_sizes(&abc(), &moved, &CUSTOM_SIZES),
-            CUSTOM_SIZES
-        );
-    }
-
-    #[test]
-    fn reconcile_sizes_not_matching_old_reset() {
-        let [a, b, c] = abc();
-        let four = [a, spawned(), b, c];
-        assert_eq!(
-            reconcile_preview_sizes(&abc(), &four, &[10.0, 20.0]),
-            [D; 4]
-        );
-        assert_eq!(
-            reconcile_preview_sizes(&abc(), &abc(), &[10.0, 20.0]),
-            [D; 3]
-        );
-    }
-
-    #[test]
-    fn previewer_update_keeps_sizes_on_insert_until_reset() {
-        let [a, b, c] = abc();
-        let mut previewer = ZPreviewer::default();
-        previewer.update(&abc(), SplineMode::Linear);
-        previewer.data.points_preview_sizes = CUSTOM_SIZES.to_vec();
-
-        previewer.update(&[a, spawned(), b, c], SplineMode::Linear);
-        assert_eq!(previewer.data.points_preview_sizes, [10.0, D, 20.0, 30.0]);
-
-        previewer.data.reset_preview_sizes();
-        assert_eq!(previewer.data.points_preview_sizes, [D; 4]);
+        assert_eq!(data.quantize_num_levels, 7);
+        assert_eq!(data.spline_mode, SplineMode::Linear);
     }
 
     #[test]
     fn quantized_colors_survive_count_transitions() {
         let pool: Vec<ControlPoint> = (0..5)
-            .map(|i| point(i as f32 * 0.2, 1.0 - i as f32 * 0.2, 0.1 * i as f32))
+            .map(|i| {
+                let f = i as f32;
+                ControlPoint::new_simple(
+                    ControlPointValue::new(f * 0.2, 1.0 - f * 0.2, 0.1 * f),
+                    0.0,
+                )
+            })
             .collect();
-        for spline_mode in [
-            SplineMode::Linear,
-            SplineMode::Bezier,
-            SplineMode::HermiteBezier,
-        ] {
+        for spline_mode in SplineMode::ALL {
             for from in 0..=5 {
                 for to in 0..=5 {
                     let mut previewer = ZPreviewer::default();
                     previewer.update(&pool[..from], spline_mode);
-                    for (i, size) in previewer.data.points_preview_sizes.iter_mut().enumerate() {
-                        *size = 10.0 * (i + 1) as f32;
-                    }
                     previewer.update(&pool[..to], spline_mode);
-                    let colors = quantized_colors(&pool[..to], spline_mode, &previewer.data, 8);
+                    let colors = quantized_colors(&previewer.data.control_points, spline_mode, 8);
                     assert_eq!(
                         colors.len(),
                         if to == 0 { 0 } else { 8 },

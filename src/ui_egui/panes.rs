@@ -14,7 +14,7 @@ use crate::{
     preset::PresetHandler,
     ui_egui::{
         app::ZColorPickerAppContext, color_picker::ZColorPickerWrapper,
-        content_windows::flip_control_points, previewer::PreviewerData,
+        content_windows::flip_control_points,
     },
 };
 pub struct TreeBehavior {}
@@ -148,7 +148,6 @@ impl ZAppPane for ColorPickerOptionsPane {
             flip_control_points(
                 &mut control_points,
                 &mut color_picker.last_modifying_point_index,
-                &mut mut_ctx.previewer.data.points_preview_sizes,
             );
             color_picker.dragging_index = None;
         }
@@ -166,7 +165,6 @@ impl ZAppPane for ColorPickerOptionsPane {
                 &mut preset_handler,
                 &mut control_points,
                 spline_mode,
-                &mut mut_ctx.previewer.data,
             );
         }
         mut_ctx.color_copy_format = color_copy_format;
@@ -204,6 +202,9 @@ impl ZAppPane for PreviewerPane {
 
         previewer.update(&control_points, spline_mode);
         let response = previewer.draw_ui(ui, ColorStringCopy::HEXNOA);
+        if previewer.data.control_points != control_points {
+            mut_ctx.control_points = previewer.data.control_points.clone();
+        }
 
         mut_ctx.stored_ui_responses = response;
         mut_ctx.previewer = previewer;
@@ -238,7 +239,6 @@ fn normalize_applied_preset(
     preset_handler: &mut PresetHandler,
     control_points: &mut Vec<ControlPoint>,
     spline_mode: SplineMode,
-    preview: &mut PreviewerData,
 ) {
     color_picker.pre_draw_update(control_points, spline_mode);
     // Twice: the hue lerp runs before the clamp, so one pass lerps from unclamped endpoint hues.
@@ -247,7 +247,6 @@ fn normalize_applied_preset(
     preset_handler.set_selected_data_in_memory(control_points, spline_mode);
     color_picker.last_modifying_point_index = None;
     color_picker.dragging_index = None;
-    preview.reset_preview_sizes();
 }
 
 #[cfg(test)]
@@ -287,11 +286,15 @@ mod tests {
     }
 
     fn select_preset_with_auto_save() -> SelectedPreset {
+        select_preset_with_auto_save_from(unconstrained_points())
+    }
+
+    fn select_preset_with_auto_save_from(preset_points: Vec<ControlPoint>) -> SelectedPreset {
         let tmp = TempDir::new().unwrap();
         let mut handler = PresetHandler::new(tmp.path().into());
         handler.auto_save_presets = true;
         handler
-            .create_preset(&"A".to_string(), &unconstrained_points(), &MODE)
+            .create_preset(&"A".to_string(), &preset_points, &MODE)
             .unwrap();
         handler.preset_selected_index = Some(0);
         let mut points = Vec::new();
@@ -299,14 +302,7 @@ mod tests {
         handler.apply_selected_preset(&mut points, &mut spline_mode);
         assert_eq!(spline_mode, MODE);
         let mut color_picker = ZColorPickerWrapper::default();
-        let mut preview = PreviewerData::new(points.len());
-        normalize_applied_preset(
-            &mut color_picker,
-            &mut handler,
-            &mut points,
-            spline_mode,
-            &mut preview,
-        );
+        normalize_applied_preset(&mut color_picker, &mut handler, &mut points, spline_mode);
         SelectedPreset {
             tmp,
             handler,
@@ -339,27 +335,87 @@ mod tests {
     }
 
     #[test]
-    fn applying_a_preset_clears_the_selection_and_band_widths() {
+    fn applying_a_preset_clears_the_selection() {
         let mut selected = select_preset_with_auto_save();
         selected.color_picker.last_modifying_point_index = Some(2);
         selected.color_picker.dragging_index = Some(1);
-        let mut preview = PreviewerData::new(4);
-        preview.points_preview_sizes = vec![300.0, 50.0, 100.0, 100.0];
 
         normalize_applied_preset(
             &mut selected.color_picker,
             &mut selected.handler,
             &mut selected.points,
             MODE,
-            &mut preview,
         );
 
         assert_eq!(selected.color_picker.last_modifying_point_index, None);
         assert_eq!(selected.color_picker.dragging_index, None);
-        assert_eq!(
-            preview.points_preview_sizes,
-            PreviewerData::new(4).points_preview_sizes
-        );
+    }
+
+    #[test]
+    fn applying_a_preset_with_old_t_spaces_it_evenly_without_rewriting_it() {
+        let mut all_zero_t = unconstrained_points();
+        for cp in &mut all_zero_t {
+            *cp.t_mut() = 0.0;
+        }
+        for preset_points in [unconstrained_points(), all_zero_t] {
+            let mut selected = select_preset_with_auto_save_from(preset_points);
+            let ts: Vec<f32> = selected.points.iter().map(|cp| *cp.t()).collect();
+            assert_eq!(ts, [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0]);
+            assert!(!selected.handler.is_selected_dirty(&selected.points, MODE));
+            let before = selected.file_bytes();
+
+            next_picker_frame(&mut selected.color_picker, &mut selected.points);
+            assert!(!selected.handler.auto_save(&selected.points, MODE).unwrap());
+            assert_eq!(selected.file_bytes(), before);
+        }
+    }
+
+    #[test]
+    fn dragging_a_previewer_band_writes_its_t_back_to_the_points() {
+        let ctx = Rc::new(RefCell::new(<ZColorPickerAppContext as Default>::default()));
+        ctx.borrow_mut().control_points = [0.0, 0.4, 1.0]
+            .into_iter()
+            .map(|t| ControlPoint::new_simple(ControlPointValue::new(t, 0.5, 0.2), t))
+            .collect();
+        let mut pane = PreviewerPane {
+            title: None,
+            ctx: ctx.clone(),
+        };
+        let egui_ctx = egui::Context::default();
+        let mut run = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let _ = egui_ctx.run(input, |egui_ctx| {
+                egui::CentralPanel::default().show(egui_ctx, |ui| pane.ui(ui));
+            });
+        };
+        run(Vec::new());
+        let band_strip = ctx.borrow().stored_ui_responses.get_rects()[0];
+        let start = band_strip.lerp_inside(egui::vec2(0.45, 0.5));
+        let end = start + egui::vec2(0.2 * band_strip.width(), 0.0);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        run(vec![egui::Event::PointerMoved(start)]);
+        run(vec![button(start, true)]);
+        for step in 1..=3 {
+            run(vec![egui::Event::PointerMoved(
+                start.lerp(end, step as f32 / 3.0),
+            )]);
+        }
+        run(vec![button(end, false)]);
+
+        let t = *ctx.borrow().control_points[1].t();
+        assert!((t - 0.6).abs() < 1e-4, "{t}");
     }
 
     #[test]

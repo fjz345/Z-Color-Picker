@@ -3,7 +3,7 @@
 use crate::common::SplineMode;
 use crate::datatypes::control_point::{ControlPoint, ControlPointValue};
 use crate::ui_egui::control_points::{
-    bezier_handle, control_points_to_spline, find_spline_max_t, flatten_control_points,
+    bezier_handle, control_points_to_spline, flatten_control_points, real_keys,
 };
 use crate::ui_egui::ui_common::contrast_color;
 use eframe::egui::{self, Sense, Ui};
@@ -68,10 +68,16 @@ pub fn generate_spline_points(
     }
 
     let spline = control_points_to_spline(control_points, spline_mode);
-    let steps = find_spline_max_t(&spline).round() as usize * samples_per_segment;
-    let mut spline_samples: Vec<ControlPointValue> = (0..steps)
-        .filter_map(|i| spline.clamped_sample(i as f32 / samples_per_segment as f32))
-        .chain(spline.keys().last().map(|key| key.value))
+    let keys = real_keys(&spline, spline_mode);
+    let mut spline_samples: Vec<ControlPointValue> = keys
+        .windows(2)
+        .flat_map(|pair| {
+            (0..samples_per_segment).map(move |i| {
+                emath::lerp(pair[0].t..=pair[1].t, i as f32 / samples_per_segment as f32)
+            })
+        })
+        .filter_map(|t| spline.clamped_sample(t))
+        .chain(keys.last().map(|key| key.value))
         .collect();
     spline_samples.dedup();
     spline_samples
@@ -249,6 +255,17 @@ mod tests {
     fn linear_spline_points_take_samples_per_segment() {
         let samples = generate_spline_points(&zigzag_points(3), SplineMode::Linear, 2);
         assert_eq!(samples.len(), 5);
+    }
+
+    #[test]
+    fn spline_points_take_samples_per_segment_with_uneven_t() {
+        let mut points = zigzag_points(3);
+        *points[1].t_mut() = 0.1;
+        for mode in SplineMode::ALL {
+            let samples = generate_spline_points(&points, mode, 2);
+            assert_eq!(samples.len(), 5, "{mode:?}");
+            assert_eq!(samples[2], *points[1].val(), "{mode:?}");
+        }
     }
 
     #[test]

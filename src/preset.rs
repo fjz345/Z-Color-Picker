@@ -10,7 +10,7 @@ use crate::{
     common::SplineMode,
     datatypes::control_point::ControlPoint,
     error::{Result, ZError},
-    ui_egui::app::AppDataCtx,
+    ui_egui::{app::AppDataCtx, control_points::normalize_t},
 };
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 
@@ -95,9 +95,15 @@ fn load_preset_from_disk(path: &Path) -> Result<PresetEntity> {
         .and_then(OsStr::to_str)
         .ok_or_else(|| ZError::Message("file name is not valid UTF-8".to_string()))?;
     let string = fs::read_to_string(path)?;
-    let preset_data = serde_json::from_str(&string)?;
+    let mut preset_data: AppDataCtx = serde_json::from_str(&string)?;
     if let Some(i) = first_non_finite_point(&preset_data) {
         return Err(ZError::Message(format!("non-finite value in point {i}")));
+    }
+    if normalize_t(&mut preset_data.control_points) {
+        log::warn!(
+            "Preset {}: T was not increasing from 0 to 1; spaced the points evenly",
+            path.display()
+        );
     }
     Ok(PresetEntity::new(name, preset_data))
 }
@@ -877,6 +883,24 @@ mod tests {
             control_points: sample_points(),
         };
         assert_eq!(handler.presets[0].data, expected);
+    }
+
+    #[test]
+    fn init_presets_spaces_old_t_evenly_without_rewriting_the_file() {
+        let (_tmp, mut handler) = temp_handler();
+        fs::create_dir_all(&handler.presets_dir).unwrap();
+        let old_t = SAMPLE_PRESET_JSON.replace("\"t\": 1.0", "\"t\": 0.0");
+        let path = handler.presets_dir.join("Old.json");
+        fs::write(&path, &old_t).unwrap();
+        handler.init_presets();
+        let ts: Vec<f32> = handler.presets[0]
+            .data
+            .control_points
+            .iter()
+            .map(|cp| *cp.t())
+            .collect();
+        assert_eq!(ts, [0.0, 1.0]);
+        assert_eq!(fs::read_to_string(&path).unwrap(), old_t);
     }
 
     #[test]
