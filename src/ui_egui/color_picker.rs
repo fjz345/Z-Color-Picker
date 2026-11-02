@@ -771,6 +771,20 @@ fn main_color_picker_color_at_function(hue: f32, alpha: f32) -> impl Fn(f32, f32
     return move |s, v| HsvaGamma { s, v, ..color }.into();
 }
 
+const HUE_DRAG_MAX_FRACTION: f32 = 1.0 - 1e-4;
+
+fn hue_after_drag(
+    stored_hue: f32,
+    pointer_x: f32,
+    grab_offset_x: f32,
+    strip_left: f32,
+    strip_width: f32,
+) -> f32 {
+    let fraction =
+        ((pointer_x - grab_offset_x - strip_left) / strip_width).clamp(0.0, HUE_DRAG_MAX_FRACTION);
+    stored_hue.floor() + fraction
+}
+
 pub fn ui_hue_control_points_overlay(
     ui: &mut Ui,
     parent_response: &Response,
@@ -886,8 +900,23 @@ pub fn ui_hue_control_points_overlay(
             selected_key_frame = Some(i);
         }
         if response.dragged_by(PointerButton::Primary) {
-            control_points[i].val_mut()[2] +=
-                response.drag_delta().x / container_response.rect.width();
+            let grab_offset_id = response.id.with("grab_offset");
+            if response.drag_started_by(PointerButton::Primary) {
+                let press_origin = ui
+                    .input(|i| i.pointer.press_origin())
+                    .or(response.interact_pointer_pos());
+                if let Some(press_origin) = press_origin {
+                    ui.data_mut(|d| d.insert_temp(grab_offset_id, press_origin.x - x));
+                }
+            }
+            let grab_offset_x = ui
+                .data(|d| d.get_temp::<f32>(grab_offset_id))
+                .unwrap_or_default();
+            if let Some(pointer) = response.interact_pointer_pos() {
+                let strip = container_response.rect;
+                let hue = &mut control_points[i].val_mut()[2];
+                *hue = hue_after_drag(*hue, pointer.x, grab_offset_x, strip.left(), strip.width());
+            }
         }
 
         ui.painter().add(Shape::convex_polygon(
@@ -1417,6 +1446,77 @@ mod tests {
         };
         assert_eq!(click(false), Some(1));
         assert_eq!(click(true), None);
+    }
+
+    #[test]
+    fn hue_after_drag_clamps_the_pointer_to_the_strip_and_keeps_the_turn() {
+        let (left, width) = (100.0, 200.0);
+        let cases = [
+            (0.0, 50.0, 0.0, 0.0),
+            (2.4, 50.0, 0.0, 2.0),
+            (0.0, 350.0, 0.0, HUE_DRAG_MAX_FRACTION),
+            (0.0, 200.0, 0.0, 0.5),
+            (1.3, 150.0, 0.0, 1.25),
+            (-0.25, 250.0, 0.0, -0.25),
+            (0.0, 210.0, 10.0, 0.5),
+        ];
+        for (stored, pointer_x, grab_offset_x, expected) in cases {
+            let hue = hue_after_drag(stored, pointer_x, grab_offset_x, left, width);
+            assert!(
+                (hue - expected).abs() < 1e-6,
+                "{stored} at {pointer_x} - {grab_offset_x}: {hue}"
+            );
+        }
+        for stored in [0.0, 2.4, -0.25] {
+            let hue = hue_after_drag(stored, 350.0, 0.0, left, width);
+            assert!(hue_strip_x_fraction(hue) > 0.99, "{stored}: {hue}");
+        }
+    }
+
+    fn primary_drag_frames(start: Pos2, end: Pos2) -> Vec<Vec<egui::Event>> {
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        let mut frames = vec![
+            Vec::new(),
+            vec![egui::Event::PointerMoved(start)],
+            vec![button(start, true)],
+        ];
+        for step in 1..=3 {
+            let pos = start.lerp(end, step as f32 / 3.0);
+            frames.push(vec![egui::Event::PointerMoved(pos)]);
+        }
+        frames.push(vec![button(end, false)]);
+        frames
+    }
+
+    fn drag_first_hue_gizmo(first_hue: f32, press_x: f32, dx: f32) -> f32 {
+        let mut points = two_strip_points();
+        points[0].val_mut()[2] = first_hue;
+        let r = STRIP_RECT.height() / 4.0;
+        let start = pos2(press_x, STRIP_RECT.top() + 3.0 * r + 5.0);
+        run_strip_overlay(
+            &mut points,
+            primary_drag_frames(start, start + vec2(dx, 0.0)),
+            |ui, strip, points| ui_hue_control_points_overlay(ui, strip, points, Some(1), false).1,
+        );
+        points[0].val().h()
+    }
+
+    #[test]
+    fn dragging_hue_gizmo_left_past_the_strip_start_does_not_wrap() {
+        let hue = drag_first_hue_gizmo(0.0, STRIP_RECT.left() + 4.0, -20.0);
+        assert_eq!(hue, 0.0);
+    }
+
+    #[test]
+    fn dragging_hue_gizmo_moves_its_hue_by_the_pointer_distance() {
+        let width = STRIP_RECT.width();
+        let hue = drag_first_hue_gizmo(0.25, STRIP_RECT.left() + 0.25 * width, 0.25 * width);
+        assert!((hue - 0.5).abs() < 1e-4, "{hue}");
     }
 
     fn t_strip_pos(t: f32) -> Pos2 {
