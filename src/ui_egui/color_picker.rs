@@ -255,7 +255,7 @@ impl ZColorPickerWrapper {
         for cp in control_points.iter_mut() {
             cp.val_mut()[0] = cp.val()[0].clamp(0.0, 1.0);
             cp.val_mut()[1] = cp.val()[1].clamp(0.0, 1.0);
-            cp.val_mut()[2] = cp.val()[2].clamp(0.0, 1.0);
+            cp.val_mut()[2] = cp.val()[2].rem_euclid(1.0);
         }
     }
 
@@ -1475,6 +1475,43 @@ mod tests {
         };
         wrapper.remove_control_point(&mut points, 0);
         assert_eq!(wrapper.last_modifying_point_index, Some(0));
+    }
+
+    #[test]
+    fn window_lock_wraps_hue_and_clamps_saturation_and_value() {
+        let mut points: Vec<ControlPoint> = [
+            [0.5, 0.5, 1.05],
+            [0.5, 0.5, -0.1],
+            [0.5, 0.5, 1.0],
+            [1.2, -0.2, 0.3],
+        ]
+        .into_iter()
+        .map(|val| ControlPoint::new_simple(val.into(), 0.0))
+        .collect();
+        let mut wrapper = ZColorPickerWrapper {
+            options: ZColorPickerOptions {
+                is_window_lock: true,
+                is_hue_middle_interpolated: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        wrapper.apply_control_point_constraints(&mut points);
+        let expected = [
+            [0.5, 0.5, 0.05],
+            [0.5, 0.5, 0.9],
+            [0.5, 0.5, 0.0],
+            [1.0, 0.0, 0.3],
+        ];
+        for (cp, expected) in points.iter().zip(expected) {
+            for i in 0..3 {
+                assert!(
+                    (cp.val()[i] - expected[i]).abs() < 1e-5,
+                    "{:?} vs {expected:?}",
+                    cp.val()
+                );
+            }
+        }
     }
 
     #[test]

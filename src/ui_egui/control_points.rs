@@ -9,6 +9,7 @@ use splines::{Interpolation, Key, Spline};
 use crate::{
     common::SplineMode,
     datatypes::control_point::{ControlPoint, ControlPointValue},
+    math::shortest_hue_delta,
     ui_egui::tangents::ui_control_point_tangents,
 };
 
@@ -197,30 +198,13 @@ pub fn ui_ordered_control_points(
 }
 
 pub fn flatten_control_points(control_points: &[ControlPoint]) -> Vec<ControlPoint> {
-    let mut flattened: Vec<ControlPoint> = Vec::with_capacity(control_points.len());
-
-    for (i, cp) in control_points.iter().enumerate() {
-        if i == 0 {
-            flattened.push(cp.clone());
-            continue;
-        }
-
-        let prev_hue = flattened[i - 1].val()[2];
-        let hue_diff = cp.val()[2] - prev_hue;
-
-        let cp_clone = cp.clone();
-
-        if hue_diff.abs() > 0.5 {
-            // Adjust all previous hues by ±1 to smooth wraparound
-            let adjustment = if hue_diff > 0.0 { 1.0 } else { -1.0 };
-            for prev_cp in &mut flattened {
-                prev_cp.val_mut()[2] += adjustment;
-            }
-        }
-
-        flattened.push(cp_clone);
+    let mut flattened = control_points.to_vec();
+    for i in 1..flattened.len() {
+        let prev_raw_hue = control_points[i - 1].val()[2];
+        let raw_hue = control_points[i].val()[2];
+        let target = flattened[i - 1].val()[2] + shortest_hue_delta(prev_raw_hue, raw_hue);
+        flattened[i].val_mut()[2] = raw_hue + (target - raw_hue).round();
     }
-
     flattened
 }
 
@@ -313,6 +297,7 @@ pub fn control_points_to_spline(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::math::hue_abs_distance;
 
     fn three_points() -> Vec<ControlPoint> {
         vec![
@@ -387,6 +372,67 @@ mod tests {
         assert_eq!(flattened.len(), cps.len());
         for (flat, cp) in flattened.iter().zip(&cps) {
             assert_eq!(flat.val(), cp.val());
+        }
+    }
+
+    #[test]
+    fn flatten_control_points_unwraps_any_hue_sequence() {
+        let sequences: [&[f32]; 4] = [
+            &[2.3, 0.2, 0.4],
+            &[-1.4, 0.3],
+            &[0.9, 0.1, 0.9, 0.1],
+            &[0.0, 0.4, 0.8, 0.2, 0.6, 0.0],
+        ];
+        for hues in sequences {
+            let flattened = flatten_control_points(&points_with_hues(hues));
+            assert_eq!(flattened.len(), hues.len());
+            for pair in flattened.windows(2) {
+                let step = pair[1].val()[2] - pair[0].val()[2];
+                assert!(step.abs() <= 0.5 + 1e-5, "{hues:?}: step {step}");
+            }
+            for (cp, hue) in flattened.iter().zip(hues) {
+                let flat_hue = cp.val()[2];
+                assert!(
+                    hue_abs_distance(flat_hue, *hue) < 1e-5,
+                    "{hues:?}: {flat_hue} vs {hue}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn two_point_hue_route_is_mode_independent() {
+        let sample_hue = |mode, from: f32, to: f32, x: f32| {
+            let flattened = flatten_control_points(&points_with_hues(&[from, to]));
+            let spline = control_points_to_spline(&flattened, mode);
+            sample_spline_normalized(&spline, mode, x).unwrap()[2]
+        };
+        let grid: Vec<f32> = (0..20).map(|i| i as f32 / 20.0).collect();
+        for &a in &grid {
+            for &b in &grid {
+                let arc = shortest_hue_delta(a, b);
+                let linear_mid = sample_hue(SplineMode::Linear, a, b, 0.5);
+                for mode in SAMPLED_MODES {
+                    for x in [0.25, 0.5, 0.75] {
+                        let hue = sample_hue(mode, a, b, x);
+                        let progress = shortest_hue_delta(a, hue) * arc.signum();
+                        assert!(
+                            (-1e-4..=arc.abs() + 1e-4).contains(&progress),
+                            "{mode:?} ({a}, {b}) at {x}: {hue} is off the arc {arc}"
+                        );
+                        let reversed = sample_hue(mode, b, a, 1.0 - x);
+                        assert!(
+                            hue_abs_distance(hue, reversed) < 1e-4,
+                            "{mode:?} ({a}, {b}) at {x}: {hue} vs reversed {reversed}"
+                        );
+                    }
+                    let mid = sample_hue(mode, a, b, 0.5);
+                    assert!(
+                        hue_abs_distance(mid, linear_mid) < 1e-4,
+                        "{mode:?} ({a}, {b}): mid {mid} vs linear {linear_mid}"
+                    );
+                }
+            }
         }
     }
 

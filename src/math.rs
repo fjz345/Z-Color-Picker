@@ -2,7 +2,6 @@ use std::f32::consts::TAU;
 
 use bspline::Interpolate;
 use ecolor::Color32;
-use eframe::egui::lerp;
 use palette::{FromColor, LabHue, Lch, LinSrgb};
 
 pub fn hue_abs_distance(hue0: f32, hue1: f32) -> f32 {
@@ -10,22 +9,29 @@ pub fn hue_abs_distance(hue0: f32, hue1: f32) -> f32 {
     d.min(1.0 - d)
 }
 
+const HALF_TURN_TIE_EPSILON: f32 = 1e-5;
+
+pub fn shortest_hue_delta(from: f32, to: f32) -> f32 {
+    let raw = to - from;
+    let forward = raw.rem_euclid(1.0);
+    let is_half_turn = (forward - 0.5).abs() <= HALF_TURN_TIE_EPSILON;
+    let goes_up = if is_half_turn {
+        raw > 0.0
+    } else {
+        forward < 0.5
+    };
+    if goes_up {
+        forward
+    } else {
+        forward - 1.0
+    }
+}
+
 pub fn hue_lerp(hue0: f32, hue1: f32, t: f32) -> f32 {
-    let hue_dist = hue_abs_distance(hue0, hue1);
-    if hue_dist <= 0.0001 {
+    if hue_abs_distance(hue0, hue1) <= 0.0001 {
         return hue0;
     }
-    let dist_right = (hue1 - hue0).rem_euclid(1.0);
-    let dist_left = (hue0 - hue1).rem_euclid(1.0);
-    let closest_right = dist_right <= dist_left;
-
-    let to_right = closest_right as i8 * 2 - 1;
-    let hue_diff = hue_dist * to_right as f32;
-
-    let target_hue = hue0 + hue_diff;
-    let hue = lerp(hue0..=target_hue, t);
-
-    hue.rem_euclid(1.0)
+    (hue0 + t * shortest_hue_delta(hue0, hue1)).rem_euclid(1.0)
 }
 
 pub fn color_lerp_ex(
@@ -124,5 +130,39 @@ mod tests {
     fn hue_lerp_hits_endpoints() {
         assert_eq!(hue_lerp(0.2, 0.6, 0.0), 0.2);
         assert!((hue_lerp(0.2, 0.6, 1.0) - 0.6).abs() < 1e-5);
+    }
+
+    #[test]
+    fn shortest_hue_delta_takes_signed_shortest_step() {
+        let cases = [
+            (0.9, 0.1, 0.2),
+            (0.1, 0.9, -0.2),
+            (0.0, 0.5, 0.5),
+            (0.5, 0.0, -0.5),
+            (0.1, 2.3, 0.2),
+        ];
+        for (from, to, expected) in cases {
+            let delta = shortest_hue_delta(from, to);
+            assert!((delta - expected).abs() < 1e-5, "{from} -> {to}: {delta}");
+        }
+    }
+
+    #[test]
+    fn hue_lerp_is_mirror_symmetric() {
+        let grid: Vec<f32> = (0..20).map(|i| i as f32 / 20.0).collect();
+        let pairs = grid
+            .iter()
+            .flat_map(|&a| grid.iter().map(move |&b| (a, b)))
+            .chain([(0.0, 0.5), (0.5, 0.0), (0.1, 0.6), (0.6, 0.1)]);
+        for (a, b) in pairs {
+            for t in [0.25, 0.5, 0.75] {
+                let forward = hue_lerp(a, b, t);
+                let backward = hue_lerp(b, a, 1.0 - t);
+                assert!(
+                    hue_abs_distance(forward, backward) < 1e-4,
+                    "({a}, {b}) at {t}: {forward} vs {backward}"
+                );
+            }
+        }
     }
 }
