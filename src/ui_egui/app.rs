@@ -182,9 +182,7 @@ impl ZColorPickerAppContext {
     pub fn default() -> Self {
         let z_color_picker_wrapper = ZColorPickerWrapper::default();
         let mut preset_handler = PresetHandler::default();
-        if let Err(e) = preset_handler.init_presets() {
-            log::error!("{e}");
-        }
+        preset_handler.init_presets();
         Self {
             control_points: Self::DEFAULT_STARTUP_CONTROL_POINTS.to_vec(),
             spline_mode: SplineMode::HermiteBezier,

@@ -8,7 +8,6 @@ use crate::egui::InnerResponse;
 use crate::egui::PointerButton;
 use crate::egui::Ui;
 use crate::egui::Window;
-use crate::preset::delete_preset_from_disk;
 use crate::preset::PresetEntity;
 use crate::preset::PresetHandler;
 use crate::ui_egui::app::AppDataCtx;
@@ -329,22 +328,9 @@ impl WindowPreset {
                 && (was_text_box_enter || rename_button.clicked_by(egui::PointerButton::Primary))
             {
                 if let Some(s) = preset_handler.preset_selected_index {
-                    // Write-through: a rename onto an existing name would overwrite that preset's file.
-                    if preset_handler
-                        .presets
-                        .iter()
-                        .any(|p| p.name == rename_text_field)
-                    {
-                        log::error!("Preset already exists with name {}", rename_text_field);
-                    } else {
-                        if let Err(e) = delete_preset_from_disk(&preset_handler.presets[s]) {
-                            log::error!("{e}");
-                        }
-                        preset_handler.presets[s].name = rename_text_field.clone();
-                        if let Err(e) = preset_handler.save_selected_preset() {
-                            log::error!("{e}");
-                        }
-                        rename_text_field = "".to_string();
+                    match preset_handler.rename_preset(s, &rename_text_field) {
+                        Ok(()) => rename_text_field.clear(),
+                        Err(e) => log::error!("{e}"),
                     }
                 } else {
                     log::error!("Could not rename preset");
