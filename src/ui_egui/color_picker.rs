@@ -672,6 +672,7 @@ fn handle_control_points_ui(
         dragged_point,
         selected_tangent,
         dragged_tangent,
+        dragged_tangent_offset,
     } = control_point_ui_result;
 
     // Right click
@@ -731,13 +732,10 @@ fn handle_control_points_ui(
     if let Some(r) = dragged_tangent {
         if r.dragged_by(PointerButton::Primary) {
             if let Some(index) = *ctx.last_modifying_point_index {
-                if let Some(tang_idx) = selected_tangent {
+                if let (Some(tang_idx), Some(offset)) = (selected_tangent, dragged_tangent_offset) {
                     if let Some(tang) = &mut ctx.control_points[index].tangents_mut()[tang_idx] {
-                        apply_drag_delta_3(
-                            &mut tang.val,
-                            r.drag_delta(),
-                            slider_2d_response.rect.size(),
-                        );
+                        tang.val[0] = offset.x;
+                        tang.val[1] = offset.y;
                     }
                 }
             }

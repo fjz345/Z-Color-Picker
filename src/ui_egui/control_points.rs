@@ -23,6 +23,7 @@ pub struct ControlPointUiResult {
     pub hovering_control_point: Option<(egui::Response, usize)>,
     pub selected_tangent: Option<usize>,
     pub dragged_tangent: Option<egui::Response>,
+    pub dragged_tangent_offset: Option<Vec2>,
 }
 
 pub fn control_point_pos(cp: &ControlPoint) -> Pos2 {
@@ -68,6 +69,39 @@ pub fn ui_ordered_control_points(
     let mut hovering_control_point = None;
     let mut dragged_point_response = None;
     let mut dragged_tangent_response = None;
+    let mut dragged_tangent_offset = None;
+
+    let mut tangent_shapes = Vec::new();
+    let mut tangent_paths = Vec::new();
+    if show_bezier_tangents {
+        for (i, cp) in control_points.iter().enumerate() {
+            let result = ui_control_point_tangents(
+                ui,
+                i,
+                cp,
+                i == 0,
+                i == control_points.len() - 1,
+                marked_control_point_index == Some(i),
+                &to_screen,
+                parent_response,
+                control_point_draw_size,
+                control_point_radius,
+                inactive_stroke,
+                &mut tangent_shapes,
+                &mut tangent_paths,
+            );
+
+            if dragged_tangent_response.is_none() {
+                dragged_tangent_response = result.dragged_tangent;
+                tangent_selected_index = result.selected_tangent;
+                dragged_tangent_offset = result.dragged_tangent_offset;
+            }
+
+            if result.selected_by_tangent {
+                selected_index = Some(i);
+            }
+        }
+    }
 
     let control_point_shapes_fill: Vec<Shape> = control_points
         .iter()
@@ -103,37 +137,6 @@ pub fn ui_ordered_control_points(
             )
         })
         .collect();
-
-    let mut tangent_shapes = Vec::new();
-    let mut tangent_paths = Vec::new();
-    if show_bezier_tangents {
-        for (i, cp) in control_points.iter().enumerate() {
-            let result = ui_control_point_tangents(
-                ui,
-                i,
-                cp,
-                i == 0,
-                i == control_points.len() - 1,
-                selected_index == Some(i),
-                &to_screen,
-                parent_response,
-                control_point_draw_size,
-                control_point_radius,
-                inactive_stroke,
-                &mut tangent_shapes,
-                &mut tangent_paths,
-            );
-
-            if dragged_tangent_response.is_none() {
-                dragged_tangent_response = result.dragged_tangent;
-                tangent_selected_index = result.selected_tangent;
-            }
-
-            if result.selected_by_tangent {
-                selected_index = Some(i);
-            }
-        }
-    }
 
     let control_point_shapes: Vec<Shape> = control_points
         .iter()
@@ -188,6 +191,7 @@ pub fn ui_ordered_control_points(
         hovering_control_point,
         selected_tangent: tangent_selected_index,
         dragged_tangent: dragged_tangent_response,
+        dragged_tangent_offset,
     }
 }
 
@@ -478,5 +482,92 @@ mod tests {
         assert_eq!(find_spline_max_t(&hermite), 4.0);
         let empty = control_points_to_spline(&[], SplineMode::Linear);
         assert_eq!(find_spline_max_t(&empty), 0.0);
+    }
+
+    const PICKER_RECT: Rect = Rect {
+        min: Pos2::new(100.0, 100.0),
+        max: Pos2::new(300.0, 300.0),
+    };
+    const MIDDLE_CENTER: Pos2 = Pos2::new(200.0, 200.0);
+
+    fn three_points_with_zero_middle_tangents() -> Vec<ControlPoint> {
+        let mut cps = three_points();
+        *cps[1].tangents_mut() = [Some(ControlPointValue::new(0.0, 0.0, 0.0)); 2];
+        cps
+    }
+
+    fn run_frames(frames: Vec<Vec<egui::Event>>) -> ControlPointUiResult {
+        let ctx = egui::Context::default();
+        let points = three_points_with_zero_middle_tangents();
+        let mut result = ControlPointUiResult::default();
+        for events in std::iter::once(Vec::new()).chain(frames) {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0))),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let parent = ui.allocate_rect(PICKER_RECT, Sense::click_and_drag());
+                    result = ui_ordered_control_points(ui, &points, Some(1), false, &parent, true);
+                });
+            });
+        }
+        result
+    }
+
+    fn button(pos: Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        }
+    }
+
+    fn primary_drag(start: Pos2, dx: f32) -> Vec<Vec<egui::Event>> {
+        let mut frames = vec![
+            vec![egui::Event::PointerMoved(start)],
+            vec![button(start, egui::PointerButton::Primary, true)],
+        ];
+        for step in 1..=3 {
+            let x = dx * step as f32 / 3.0;
+            frames.push(vec![egui::Event::PointerMoved(start + Vec2::new(x, 0.0))]);
+        }
+        frames
+    }
+
+    #[test]
+    fn dragging_selected_bezier_point_center_drags_the_point() {
+        let result = run_frames(primary_drag(MIDDLE_CENTER, 20.0));
+        assert!(result.dragged_point.is_some());
+        assert!(result.dragged_tangent.is_none());
+    }
+
+    #[test]
+    fn zero_bezier_tangent_is_grabbed_at_min_handle_length() {
+        let drawn_handle = MIDDLE_CENTER - Vec2::new(2.0 * CONTROL_POINT_RADIUS, 0.0);
+        let result = run_frames(primary_drag(drawn_handle, -21.0));
+        assert!(result.dragged_point.is_none());
+        assert!(result.dragged_tangent.is_some());
+        assert_eq!(result.selected_tangent, Some(0));
+        let offset = result.dragged_tangent_offset.unwrap();
+        let min_length_sv = 2.0 * CONTROL_POINT_RADIUS / PICKER_RECT.width();
+        assert!(
+            offset.x < -min_length_sv && offset.y.abs() < 1e-6,
+            "{offset:?}"
+        );
+    }
+
+    #[test]
+    fn right_clicking_selected_bezier_point_clicks_the_point() {
+        let result = run_frames(vec![
+            vec![egui::Event::PointerMoved(MIDDLE_CENTER)],
+            vec![button(MIDDLE_CENTER, egui::PointerButton::Secondary, true)],
+            vec![button(MIDDLE_CENTER, egui::PointerButton::Secondary, false)],
+        ]);
+        let (response, index) = result.hovering_control_point.expect("point hovered");
+        assert_eq!(index, 1);
+        assert!(response.clicked_by(egui::PointerButton::Secondary));
     }
 }
