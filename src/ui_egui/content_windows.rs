@@ -93,12 +93,14 @@ impl WindowZColorPickerOptions {
         ui: &mut Ui,
         options: &mut ZColorPickerOptions,
         spline_mode: &mut SplineMode,
-        color_copy_format: &mut ColorStringCopy,
         auto_comb_unsolved: usize,
     ) -> bool {
         ui.horizontal_wrapped(|ui| {
+            ui.strong("Points");
             ui.checkbox(&mut options.is_curve_locked, "Lock")
                 .on_hover_text("Move all control points together");
+            ui.checkbox(&mut options.is_window_lock, "Clamp")
+                .on_hover_text("Keep points inside the S/V square and wrap hue into 0..1");
             ui.checkbox(&mut options.is_hue_middle_interpolated, "Auto hue")
                 .on_hover_text(
                     "Only the first and last hue are editable; middle hues are interpolated",
@@ -116,88 +118,114 @@ impl WindowZColorPickerOptions {
                          (at the end when none is selected)",
                     );
             });
-            ui.checkbox(&mut options.is_window_lock, "Clamp")
-                .on_hover_text("Keep points inside the S/V square and wrap hue into 0..1");
-            let is_curved = *spline_mode != SplineMode::Linear;
-            let straight_hint = "Linear segments are straight: there is no curvature to show";
-            ui.horizontal(|ui| {
+        });
+
+        let enabled = comb_controls_enabled(*spline_mode, options.is_show_curvature_comb);
+        let is_flip_clicked = ui
+            .horizontal_wrapped(|ui| {
+                ui.strong("Curve");
+                ui.label("Spline");
+                egui::ComboBox::from_id_salt("spline_mode")
+                    .selected_text(spline_mode_label(*spline_mode))
+                    .show_ui(ui, |ui| {
+                        ui.set_min_width(60.0);
+                        for mode in SplineMode::ALL {
+                            ui.selectable_value(spline_mode, mode, spline_mode_label(mode))
+                                .on_hover_text(spline_mode_hover_text(mode));
+                        }
+                    })
+                    .response
+                    .on_hover_text(spline_mode_hover_text(*spline_mode));
+
+                let is_flip_clicked = ui
+                    .button("Flip")
+                    .on_hover_text("Reverse the point order (tangents and T follow)")
+                    .clicked_by(PointerButton::Primary);
+
                 ui.add_enabled(
-                    is_curved,
-                    egui::Checkbox::new(&mut options.is_show_curvature_comb, "Comb"),
+                    enabled.auto,
+                    egui::Checkbox::new(&mut options.is_auto_comb, "Auto comb"),
                 )
-                .on_hover_text("Curvature comb: spikes show how sharply the curve bends")
-                .on_disabled_hover_text(straight_hint);
-                ui.add_enabled(
-                    is_curved && options.is_show_curvature_comb,
+                .on_hover_text(
+                    "Line up each point's two handles and solve their lengths so the comb is \
+                     continuous; drag a handle to turn it",
+                )
+                .on_disabled_hover_text("Auto comb only runs in Bezier mode");
+                if enabled.auto && options.is_auto_comb && auto_comb_unsolved > 0 {
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        format!("{auto_comb_unsolved} unsolved"),
+                    )
+                    .on_hover_text(
+                        "Points where no handle lengths make the comb continuous with the current \
+                         handle directions; turn a handle there",
+                    );
+                }
+                is_flip_clicked
+            })
+            .inner;
+
+        let straight_hint = "Linear segments are straight: there is no curvature to show";
+        ui.horizontal_wrapped(|ui| {
+            ui.strong("Comb");
+            ui.add_enabled(
+                enabled.show,
+                egui::Checkbox::new(&mut options.is_show_curvature_comb, "Show"),
+            )
+            .on_hover_text("Curvature comb: spikes show how sharply the curve bends")
+            .on_disabled_hover_text(straight_hint);
+            ui.add_enabled_ui(enabled.scale, |ui| {
+                ui.label("Scale");
+                ui.add(
                     egui::Slider::new(&mut options.curvature_comb_scale, COMB_SCALE_RANGE)
                         .logarithmic(true)
                         .fixed_decimals(2)
                         .suffix("×"),
                 )
-                .on_hover_text("Comb spike length")
-                .on_disabled_hover_text(if is_curved {
-                    "Turn on Comb first"
+                .on_hover_text("Length of the comb spikes")
+                .on_disabled_hover_text(if enabled.show {
+                    "Turn on Show first"
                 } else {
                     straight_hint
                 });
             });
-            let is_bezier = *spline_mode == SplineMode::Bezier;
-            ui.add_enabled(
-                is_bezier,
-                egui::Checkbox::new(&mut options.is_auto_comb, "Auto comb"),
-            )
-            .on_hover_text(
-                "Line up each point's two handles and solve their lengths so the comb is \
-                 continuous; drag a handle to turn it",
-            )
-            .on_disabled_hover_text("Auto comb only runs in Bezier mode");
-            if is_bezier && options.is_auto_comb && auto_comb_unsolved > 0 {
-                ui.colored_label(
-                    ui.visuals().warn_fg_color,
-                    format!("{auto_comb_unsolved} unsolved"),
-                )
-                .on_hover_text(
-                    "Points where no handle lengths make the comb continuous with the current \
-                     handle directions; turn a handle there",
-                );
-            }
         });
 
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Copy as");
-            egui::ComboBox::new(12312312, "")
-                .selected_text(copy_format_label(*color_copy_format))
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(60.0);
-                    for format in COPY_FORMATS {
-                        ui.selectable_value(color_copy_format, format, copy_format_label(format));
-                    }
-                })
-                .response
-                .on_hover_text(
-                    "Text format used when copying a color (readout click, Ctrl+C or \
-                     middle-click); the previewer strips are copied as images",
-                );
-
-            ui.label("Spline");
-            egui::ComboBox::new(12312313, "")
-                .selected_text(spline_mode_label(*spline_mode))
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(60.0);
-                    for mode in SplineMode::ALL {
-                        ui.selectable_value(spline_mode, mode, spline_mode_label(mode))
-                            .on_hover_text(spline_mode_hover_text(mode));
-                    }
-                })
-                .response
-                .on_hover_text(spline_mode_hover_text(*spline_mode));
-
-            ui.button("Flip")
-                .on_hover_text("Reverse the point order (tangents and T follow)")
-                .clicked_by(PointerButton::Primary)
-        })
-        .inner
+        is_flip_clicked
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CombControlsEnabled {
+    pub show: bool,
+    pub scale: bool,
+    pub auto: bool,
+}
+
+pub fn comb_controls_enabled(spline_mode: SplineMode, is_shown: bool) -> CombControlsEnabled {
+    let is_curved = spline_mode != SplineMode::Linear;
+    CombControlsEnabled {
+        show: is_curved,
+        scale: is_curved && is_shown,
+        auto: spline_mode == SplineMode::Bezier,
+    }
+}
+
+pub fn copy_format_combo(ui: &mut Ui, color_copy_format: &mut ColorStringCopy) {
+    ui.label("Copy as");
+    egui::ComboBox::from_id_salt("copy_format")
+        .selected_text(copy_format_label(*color_copy_format))
+        .show_ui(ui, |ui| {
+            ui.set_min_width(60.0);
+            for format in COPY_FORMATS {
+                ui.selectable_value(color_copy_format, format, copy_format_label(format));
+            }
+        })
+        .response
+        .on_hover_text(
+            "Text format used when copying a color (readout click, Ctrl+C or \
+             middle-click); the previewer strips are copied as images",
+        );
 }
 
 pub fn flip_control_points(points: &mut [ControlPoint], selected: &mut Option<usize>) {
@@ -238,6 +266,9 @@ const COPY_FORMATS: [ColorStringCopy; 11] = [
 ];
 
 const COPY_FORMAT_SAMPLE: egui::Color32 = egui::Color32::from_rgb(255, 128, 0);
+
+const RENAME_POPUP_ID: &str = "rename_preset_popup";
+const SAVE_ERROR_MAX_WIDTH: f32 = 320.0;
 
 fn copy_format_label(format: ColorStringCopy) -> String {
     let sample = format_color_as(COPY_FORMAT_SAMPLE, format, None);
@@ -481,7 +512,14 @@ impl WindowPreset {
     ) -> WindowPresetDrawResult {
         let mut draw_result = WindowPresetDrawResult::default();
 
-        ui.horizontal_wrapped(|ui| {
+        let rename_text_field_id = egui::Id::new(819181);
+        let mut rename_text_field: String = ui.memory(|mem| {
+            mem.data
+                .get_temp::<String>(rename_text_field_id)
+                .unwrap_or_default()
+        });
+
+        ui.horizontal(|ui| {
             let dirty = has_unsaved_changes(preset_handler, control_points, *spline_mode);
             let combobox_selected_text_to_show = combo_selected_text(
                 selected_preset(preset_handler).map(|p| p.name.as_str()),
@@ -531,9 +569,15 @@ impl WindowPreset {
                 None => {}
             }
 
+            let selected = preset_handler.preset_selected_index;
+            if selected != self.last_selection {
+                rename_text_field.clear();
+                self.rename_error = None;
+                self.save_error = None;
+                self.last_selection = selected;
+            }
+
             let has_selection = selected_preset(preset_handler).is_some();
-            ui.checkbox(&mut preset_handler.auto_save_presets, "Auto-save")
-                .on_hover_text(auto_save_hint(has_selection));
             let save_hover_text = if !has_selection {
                 "Save the current points as a new preset"
             } else if dirty {
@@ -548,6 +592,31 @@ impl WindowPreset {
             {
                 self.on_save_clicked(preset_handler, control_points, *spline_mode);
             }
+
+            let rename_button = ui
+                .add_enabled(has_selection, egui::Button::new("Rename..."))
+                .on_hover_text("Rename the selected preset")
+                .on_disabled_hover_text("Select a preset first");
+            let rename_popup_id = egui::Id::new(RENAME_POPUP_ID);
+            let is_rename_opening = rename_button.clicked_by(PointerButton::Primary);
+            if is_rename_opening {
+                ui.memory_mut(|mem| mem.toggle_popup(rename_popup_id));
+            }
+            egui::popup_below_widget(
+                ui,
+                rename_popup_id,
+                &rename_button,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                |ui| {
+                    self.draw_rename_popup(
+                        ui,
+                        preset_handler,
+                        &mut rename_text_field,
+                        is_rename_opening,
+                    )
+                },
+            );
+
             if ui
                 .add_enabled(has_selection, egui::Button::new("Delete"))
                 .on_hover_text("Delete the selected preset from disk")
@@ -557,77 +626,18 @@ impl WindowPreset {
                 self.delete_confirm_open = true;
                 self.delete_error = None;
             }
-        });
+            ui.checkbox(&mut preset_handler.auto_save_presets, "Auto-save")
+                .on_hover_text(auto_save_hint(has_selection));
 
-        let rename_text_field_id = egui::Id::new(819181);
-        let mut rename_text_field: String = ui.memory(|mem| {
-            mem.data
-                .get_temp::<String>(rename_text_field_id)
-                .unwrap_or_default()
-        });
-        let selected = preset_handler.preset_selected_index;
-        if selected != self.last_selection {
-            rename_text_field.clear();
-            self.rename_error = None;
-            self.save_error = None;
-            self.last_selection = selected;
-        }
-        if let Some(error) = &self.save_error {
-            ui.colored_label(ui.visuals().error_fg_color, error);
-        }
-        let rename_check = selected.map(|s| preset_handler.check_name(&rename_text_field, Some(s)));
-        let rename_reason = match rename_check {
-            Some(Err(reason)) if !rename_text_field.is_empty() => Some(reason),
-            _ => None,
-        };
-
-        ui.horizontal_wrapped(|ui| {
-            let rename_button = ui.add_enabled(
-                matches!(rename_check, Some(Ok(()))),
-                egui::Button::new("Rename"),
-            );
-
-            let mut was_text_box_enter = false;
-            ui.push_id(rename_text_field_id, |ui| {
-                let rename_hint = if selected.is_some() {
-                    "New name"
-                } else {
-                    "Select a preset to rename"
-                };
-                let text_widget = TextEdit::singleline(&mut rename_text_field)
-                    .hint_text(rename_hint)
-                    .desired_width(200.0);
-                let text_response = ui.add_enabled(selected.is_some(), text_widget);
-                if text_response.changed() {
-                    self.rename_error = None;
-                }
-                if text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    was_text_box_enter = true;
-                }
-            });
-
-            if let (Some(s), Some(Ok(()))) = (selected, rename_check) {
-                if was_text_box_enter || rename_button.clicked_by(PointerButton::Primary) {
-                    match preset_handler.rename_preset(s, &rename_text_field) {
-                        Ok(()) => {
-                            rename_text_field.clear();
-                            self.rename_error = None;
-                        }
-                        Err(e) => {
-                            log::error!("{e}");
-                            self.rename_error = Some(e.to_string());
-                        }
-                    }
-                }
+            if let Some(error) = &self.save_error {
+                let text = egui::RichText::new(error).color(ui.visuals().error_fg_color);
+                ui.scope(|ui| {
+                    ui.set_max_width(SAVE_ERROR_MAX_WIDTH);
+                    ui.add(egui::Label::new(text).truncate());
+                });
             }
         });
 
-        if let Some(reason) = rename_reason {
-            ui.colored_label(ui.visuals().error_fg_color, reason.to_string());
-        }
-        if let Some(error) = &self.rename_error {
-            ui.colored_label(ui.visuals().error_fg_color, error);
-        }
         ui.memory_mut(|mem| {
             *mem.data.get_temp_mut_or_default(rename_text_field_id) = rename_text_field
         });
@@ -644,6 +654,67 @@ impl WindowPreset {
         }
 
         draw_result
+    }
+
+    fn draw_rename_popup(
+        &mut self,
+        ui: &mut Ui,
+        preset_handler: &mut PresetHandler,
+        rename_text_field: &mut String,
+        is_opening: bool,
+    ) {
+        let selected = preset_handler.preset_selected_index;
+        let rename_reason = ui
+            .horizontal(|ui| {
+                let text_response = ui.add_enabled(
+                    selected.is_some(),
+                    TextEdit::singleline(rename_text_field)
+                        .hint_text("New name")
+                        .desired_width(200.0),
+                );
+                if is_opening {
+                    text_response.request_focus();
+                }
+                if text_response.changed() {
+                    self.rename_error = None;
+                }
+                let was_enter =
+                    text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                let rename_check =
+                    selected.map(|s| preset_handler.check_name(rename_text_field, Some(s)));
+                let rename_button = ui.add_enabled(
+                    matches!(rename_check, Some(Ok(()))),
+                    egui::Button::new("Rename"),
+                );
+                let should_rename = was_enter || rename_button.clicked_by(PointerButton::Primary);
+                match (selected, rename_check) {
+                    (Some(s), Some(Ok(()))) if should_rename => {
+                        match preset_handler.rename_preset(s, rename_text_field) {
+                            Ok(()) => {
+                                rename_text_field.clear();
+                                self.rename_error = None;
+                                ui.memory_mut(|mem| mem.close_popup());
+                            }
+                            Err(e) => {
+                                log::error!("{e}");
+                                self.rename_error = Some(e.to_string());
+                            }
+                        }
+                        None
+                    }
+                    (_, Some(Err(reason))) if !rename_text_field.is_empty() => Some(reason),
+                    _ => None,
+                }
+            })
+            .inner;
+
+        if let Some(reason) = rename_reason {
+            ui.colored_label(ui.visuals().error_fg_color, reason.to_string());
+        }
+        if let Some(error) = &self.rename_error {
+            ui.colored_label(ui.visuals().error_fg_color, error);
+        }
     }
 
     fn draw_pending_switch_modal(
@@ -747,13 +818,116 @@ mod tests {
     }
 
     fn draw_frame(ctx: &egui::Context, window: &mut WindowPreset, handler: &mut PresetHandler) {
+        draw_preset_frame(ctx, window, handler, Vec::new());
+    }
+
+    fn draw_preset_frame(
+        ctx: &egui::Context,
+        window: &mut WindowPreset,
+        handler: &mut PresetHandler,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
         let mut control_points = Vec::new();
         let mut spline_mode = SplineMode::Linear;
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 window.draw_content(ui, handler, &mut control_points, &mut spline_mode);
             });
-        });
+        })
+    }
+
+    fn primary_click(pos: egui::Pos2) -> [Vec<egui::Event>; 2] {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        [
+            vec![egui::Event::PointerMoved(pos), button(true)],
+            vec![button(false)],
+        ]
+    }
+
+    fn click_preset_bar_text(
+        ctx: &egui::Context,
+        window: &mut WindowPreset,
+        handler: &mut PresetHandler,
+        text: &str,
+    ) {
+        let output = draw_preset_frame(ctx, window, handler, Vec::new());
+        for events in primary_click(painted_text_center(&output, text)) {
+            draw_preset_frame(ctx, window, handler, events);
+        }
+    }
+
+    fn is_rename_popup_open(ctx: &egui::Context) -> bool {
+        ctx.memory(|m| m.is_popup_open(egui::Id::new(RENAME_POPUP_ID)))
+    }
+
+    #[test]
+    fn rename_popup_needs_a_selection() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = handler_with_presets(&tmp, &["A"]);
+        let mut window = WindowPreset::new();
+        let ctx = egui::Context::default();
+
+        click_preset_bar_text(&ctx, &mut window, &mut handler, "Rename...");
+        draw_frame(&ctx, &mut window, &mut handler);
+
+        assert!(!ctx.memory(|m| m.any_popup_open()));
+    }
+
+    #[test]
+    fn open_rename_popup_counts_as_a_popup() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = handler_with_presets(&tmp, &["A"]);
+        handler.preset_selected_index = Some(0);
+        let mut window = WindowPreset::new();
+        let ctx = egui::Context::default();
+
+        click_preset_bar_text(&ctx, &mut window, &mut handler, "Rename...");
+        draw_frame(&ctx, &mut window, &mut handler);
+
+        assert!(is_rename_popup_open(&ctx));
+        assert!(ctx.memory(|m| m.any_popup_open()));
+    }
+
+    #[test]
+    fn rename_popup_renames_on_enter_and_closes() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = PresetHandler::new(tmp.path().to_path_buf());
+        handler
+            .create_preset(&"A".to_string(), &Vec::new(), &SplineMode::Linear)
+            .unwrap();
+        handler.preset_selected_index = Some(0);
+        let mut window = WindowPreset::new();
+        let ctx = egui::Context::default();
+        let enter = egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        };
+
+        click_preset_bar_text(&ctx, &mut window, &mut handler, "Rename...");
+        draw_preset_frame(
+            &ctx,
+            &mut window,
+            &mut handler,
+            vec![egui::Event::Text("B".into())],
+        );
+        draw_preset_frame(&ctx, &mut window, &mut handler, vec![enter]);
+        draw_frame(&ctx, &mut window, &mut handler);
+
+        assert_eq!(handler.presets[0].name, "B");
+        assert!(tmp.path().join("B.json").is_file());
+        assert!(!is_rename_popup_open(&ctx));
     }
 
     #[test]
@@ -832,16 +1006,9 @@ mod tests {
     ) -> Vec<String> {
         let ctx = egui::Context::default();
         let mut window = WindowZColorPickerOptions::new();
-        let mut color_copy_format = ColorStringCopy::HEXNOA;
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                window.draw_content(
-                    ui,
-                    &mut options,
-                    &mut spline_mode,
-                    &mut color_copy_format,
-                    auto_comb_unsolved,
-                );
+                window.draw_content(ui, &mut options, &mut spline_mode, auto_comb_unsolved);
             });
         });
         output
@@ -861,14 +1028,13 @@ mod tests {
         mut spline_mode: SplineMode,
     ) -> egui::FullOutput {
         let mut window = WindowZColorPickerOptions::new();
-        let mut color_copy_format = ColorStringCopy::HEXNOA;
         let input = egui::RawInput {
             events,
             ..Default::default()
         };
         ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                window.draw_content(ui, options, &mut spline_mode, &mut color_copy_format, 0);
+                window.draw_content(ui, options, &mut spline_mode, 0);
             });
         })
     }
@@ -890,17 +1056,43 @@ mod tests {
         let ctx = egui::Context::default();
         let mut options = ZColorPickerOptions::default();
         let output = draw_options_frame(&ctx, Vec::new(), &mut options, spline_mode);
-        let pos = painted_text_center(&output, "Comb");
-        let button = |pressed| egui::Event::PointerButton {
-            pos,
-            button: PointerButton::Primary,
-            pressed,
-            modifiers: Default::default(),
-        };
-        let press = vec![egui::Event::PointerMoved(pos), button(true)];
-        draw_options_frame(&ctx, press, &mut options, spline_mode);
-        draw_options_frame(&ctx, vec![button(false)], &mut options, spline_mode);
+        for events in primary_click(painted_text_center(&output, "Show")) {
+            draw_options_frame(&ctx, events, &mut options, spline_mode);
+        }
         options
+    }
+
+    #[test]
+    fn comb_controls_follow_spline_mode() {
+        let enabled = |show, scale, auto| CombControlsEnabled { show, scale, auto };
+        let hermite = SplineMode::HermiteBezier;
+        let cases = [
+            (SplineMode::Linear, true, enabled(false, false, false)),
+            (SplineMode::Linear, false, enabled(false, false, false)),
+            (hermite, true, enabled(true, true, false)),
+            (hermite, false, enabled(true, false, false)),
+            (SplineMode::Bezier, true, enabled(true, true, true)),
+            (SplineMode::Bezier, false, enabled(true, false, true)),
+        ];
+        for (mode, is_shown, expected) in cases {
+            assert_eq!(
+                comb_controls_enabled(mode, is_shown),
+                expected,
+                "{mode:?} show={is_shown}"
+            );
+        }
+    }
+
+    #[test]
+    fn options_rows_start_with_their_group_labels() {
+        let texts = options_painted_texts(true);
+        for label in ["Points", "Curve", "Comb"] {
+            assert!(
+                texts.iter().any(|text| text == label),
+                "{label:?}: {texts:?}"
+            );
+        }
+        assert!(!texts.iter().any(|text| text == "Copy as"), "{texts:?}");
     }
 
     #[test]

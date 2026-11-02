@@ -29,15 +29,15 @@ use crate::{
         control_points::normalize_t,
         debug_windows::DebugWindowControlPoints,
         panes::{
-            ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
-            ZAppPane,
+            copy_format_bar_ui, preset_bar_ui, ColorPickerOptionsPane, ColorPickerPane, LogPane,
+            Pane, PreviewerPane, TreeBehavior, ZAppPane,
         },
         previewer::{PreviewerUiResponses, ZPreviewer},
         ui_common::ContentWindow,
     },
 };
 use eframe::epaint::{Pos2, Vec2};
-use egui_tiles::Tile;
+use egui_tiles::{Tile, TileId};
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 enum AppState {
@@ -336,8 +336,9 @@ impl ZApp {
         let tile_options = tiles.insert_pane(Pane::ColorPickerOptionsPane(pane_options));
         let tile_previewer = tiles.insert_pane(Pane::Previewer(pane_previewer));
         let tile_console = tiles.insert_pane(Pane::Log(pane_log));
+        tiles.set_visible(tile_console, false);
 
-        const PICKER_FRACTION: f32 = 0.75;
+        const PICKER_FRACTION: f32 = 0.85;
         const MASTER_FRACTION: f32 = 0.8;
         const PICKER_COLUMN_FRACTION: f32 = 0.3;
         let vertical_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
@@ -451,9 +452,35 @@ impl ZApp {
         }
     }
 
+    fn draw_toolbar(&mut self, ctx: &egui::Context) {
+        let log_id = log_tile_id(&self.tree);
+        let mut is_log_visible = log_id.map(|id| self.tree.is_visible(id));
+        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                preset_bar_ui(&self.app_ctx, ui);
+                ui.separator();
+                copy_format_bar_ui(&self.app_ctx, ui);
+                if let Some(is_visible) = &mut is_log_visible {
+                    ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                        let hint = if *is_visible {
+                            "Hide the log"
+                        } else {
+                            "Show the log"
+                        };
+                        ui.toggle_value(is_visible, "Log").on_hover_text(hint);
+                    });
+                }
+            });
+        });
+        if let (Some(id), Some(is_visible)) = (log_id, is_log_visible) {
+            self.tree.set_visible(id, is_visible);
+        }
+    }
+
     fn draw_ui_tree(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Windows needs to be drawn before the tree
         self.show_create_preset_window(ctx);
+        self.draw_toolbar(ctx);
         self.app_ctx.borrow_mut().stored_ui_responses = PreviewerUiResponses::default();
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -618,6 +645,13 @@ impl ZApp {
             self.request_shutdown();
         }
     }
+}
+
+fn log_tile_id(tree: &egui_tiles::Tree<Pane>) -> Option<TileId> {
+    tree.tiles
+        .iter()
+        .find(|(_, tile)| matches!(tile, Tile::Pane(Pane::Log(_))))
+        .map(|(id, _)| *id)
 }
 
 fn should_quit_on_escape(events: &[egui::Event], esc_blocked: bool) -> bool {
@@ -924,39 +958,80 @@ mod tests {
         );
     }
 
-    #[test]
-    fn default_layout_fits_the_picker_widens_the_previewer_and_keeps_the_log_small() {
-        const MIN_PICKER_PANE_HEIGHT: f32 = 323.0;
-        const MIN_PICKER_PANE_WIDTH: f32 = 383.0;
-        const MIN_OPTIONS_PANE_HEIGHT: f32 = 150.0;
-        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1040.0));
-        let mut tree = ZApp::create_tree(
-            Rc::new(RefCell::new(<ZColorPickerAppContext as Default>::default())),
-            Arc::new(Mutex::new(Vec::new())),
-        );
+    const DEFAULT_SCREEN: Rect = Rect {
+        min: Pos2::ZERO,
+        max: Pos2::new(1920.0, 1040.0),
+    };
+
+    fn test_app() -> ZApp {
+        let log_buffer = Arc::new(Mutex::new(Vec::new()));
+        let app_ctx = Rc::new(RefCell::new(<ZColorPickerAppContext as Default>::default()));
+        ZApp {
+            state: AppState::Idle,
+            tree: ZApp::create_tree(app_ctx.clone(), log_buffer.clone()),
+            app_ctx,
+            log_buffer,
+            had_keyboard_focus: false,
+        }
+    }
+
+    fn draw_toolbar_and_tree(
+        app: &mut ZApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        let input = egui::RawInput {
+            screen_rect: Some(DEFAULT_SCREEN),
+            events,
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| {
+            app.draw_toolbar(ctx);
+            egui::CentralPanel::default().show(ctx, |ui| app.tree.ui(&mut TreeBehavior {}, ui));
+        })
+    }
+
+    fn lay_out(app: &mut ZApp) {
         let ctx = egui::Context::default();
         for _ in 0..3 {
-            let input = egui::RawInput {
-                screen_rect: Some(screen),
-                ..Default::default()
-            };
-            let _ = ctx.run(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| tree.ui(&mut TreeBehavior {}, ui));
-            });
+            draw_toolbar_and_tree(app, &ctx, Vec::new());
         }
-        let pane_rect = |is_pane: fn(&Pane) -> bool| {
-            let (id, _) = tree
-                .tiles
-                .iter()
-                .find(|(_, tile)| matches!(tile, Tile::Pane(pane) if is_pane(pane)))
-                .unwrap();
-            tree.tiles.rect(*id).unwrap()
-        };
+    }
 
-        let picker = pane_rect(|pane| matches!(pane, Pane::ColorPicker(_)));
-        let options = pane_rect(|pane| matches!(pane, Pane::ColorPickerOptionsPane(_))).height();
-        let previewer = pane_rect(|pane| matches!(pane, Pane::Previewer(_))).width();
-        let log = pane_rect(|pane| matches!(pane, Pane::Log(_))).height();
+    fn pane_rect(tree: &egui_tiles::Tree<Pane>, is_pane: fn(&Pane) -> bool) -> Option<Rect> {
+        let (id, _) = tree
+            .tiles
+            .iter()
+            .find(|(_, tile)| matches!(tile, Tile::Pane(pane) if is_pane(pane)))
+            .unwrap();
+        tree.tiles.rect(*id)
+    }
+
+    fn is_picker_pane(pane: &Pane) -> bool {
+        matches!(pane, Pane::ColorPicker(_))
+    }
+
+    fn is_log_pane(pane: &Pane) -> bool {
+        matches!(pane, Pane::Log(_))
+    }
+
+    #[test]
+    fn default_layout_fits_the_picker_and_widens_the_previewer() {
+        const MIN_PICKER_PANE_HEIGHT: f32 = 323.0;
+        const MIN_PICKER_PANE_WIDTH: f32 = 383.0;
+        const MIN_OPTIONS_PANE_HEIGHT: f32 = 70.0;
+        let mut app = test_app();
+        lay_out(&mut app);
+
+        let picker = pane_rect(&app.tree, is_picker_pane).unwrap();
+        let options = pane_rect(&app.tree, |pane| {
+            matches!(pane, Pane::ColorPickerOptionsPane(_))
+        })
+        .unwrap()
+        .height();
+        let previewer = pane_rect(&app.tree, |pane| matches!(pane, Pane::Previewer(_)))
+            .unwrap()
+            .width();
         assert!(
             picker.height() >= MIN_PICKER_PANE_HEIGHT,
             "picker pane {picker:?}"
@@ -966,11 +1041,83 @@ mod tests {
             "picker pane {picker:?}"
         );
         assert!(
-            previewer >= 0.6 * screen.width(),
+            previewer >= 0.6 * DEFAULT_SCREEN.width(),
             "previewer pane {previewer}"
         );
-        assert!(log < 0.25 * screen.height(), "log pane {log}");
         assert!(options >= MIN_OPTIONS_PANE_HEIGHT, "options pane {options}");
+    }
+
+    #[test]
+    fn default_tree_hides_the_log_and_gives_its_height_to_the_panes() {
+        let mut app = test_app();
+        let log_id = log_tile_id(&app.tree).unwrap();
+        assert!(!app.tree.is_visible(log_id));
+        lay_out(&mut app);
+        let hidden_log_picker = pane_rect(&app.tree, is_picker_pane).unwrap().height();
+        assert_eq!(pane_rect(&app.tree, is_log_pane), None);
+
+        app.tree.set_visible(log_id, true);
+        lay_out(&mut app);
+
+        let picker = pane_rect(&app.tree, is_picker_pane).unwrap().height();
+        let log = pane_rect(&app.tree, is_log_pane).unwrap().height();
+        assert!(
+            hidden_log_picker > picker,
+            "{hidden_log_picker} vs {picker}"
+        );
+        assert!(log < 0.25 * DEFAULT_SCREEN.height(), "log pane {log}");
+    }
+
+    fn round_trip(app: &ZApp) -> ZApp {
+        serde_json::from_str(&serde_json::to_string(app).unwrap()).unwrap()
+    }
+
+    fn is_log_visible(app: &ZApp) -> bool {
+        app.tree.is_visible(log_tile_id(&app.tree).unwrap())
+    }
+
+    #[test]
+    fn log_toggle_shows_the_log_and_survives_a_save_round_trip() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        assert!(!is_log_visible(&round_trip(&app)));
+
+        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
+        let log_toggle = output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Log" => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                }
+                _ => None,
+            })
+            .unwrap();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: log_toggle,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let press = vec![egui::Event::PointerMoved(log_toggle), button(true)];
+        draw_toolbar_and_tree(&mut app, &ctx, press);
+        draw_toolbar_and_tree(&mut app, &ctx, vec![button(false)]);
+
+        assert!(is_log_visible(&app));
+        assert!(is_log_visible(&round_trip(&app)));
+    }
+
+    #[test]
+    fn zapp_json_with_a_visible_log_still_loads() {
+        let app = test_app();
+        let mut json = serde_json::to_value(&app).unwrap();
+        let invisible = &mut json["tree"]["tiles"]["invisible"];
+        assert_eq!(invisible.as_array().map(Vec::len), Some(1), "{invisible}");
+        *invisible = serde_json::json!([]);
+
+        let restored: ZApp = serde_json::from_value(json).unwrap();
+
+        assert!(is_log_visible(&restored));
     }
 
     #[test]

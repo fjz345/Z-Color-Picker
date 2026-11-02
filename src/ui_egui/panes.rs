@@ -13,8 +13,9 @@ use crate::{
     logger::ui_log_window,
     preset::PresetHandler,
     ui_egui::{
-        app::ZColorPickerAppContext, color_picker::ZColorPickerWrapper,
-        content_windows::flip_control_points,
+        app::ZColorPickerAppContext,
+        color_picker::ZColorPickerWrapper,
+        content_windows::{copy_format_combo, flip_control_points},
     },
 };
 pub struct TreeBehavior {}
@@ -129,24 +130,18 @@ impl ZAppPane for ColorPickerOptionsPane {
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
         // TODO: FIX BORROWING HERE
         let mut color_picker = self.ctx.borrow().z_color_picker.borrow().clone();
-        let mut preset_handler = self.ctx.borrow().preset_handler.clone();
         let mut mut_ctx = self.ctx.borrow_mut();
         let mut control_points = mut_ctx.control_points.clone();
         let mut spline_mode = mut_ctx.spline_mode;
-        let color_copy_format = mut_ctx.color_copy_format;
 
         let mut options = color_picker.options.clone();
         let mut options_window = mut_ctx.options_window.clone();
-        let mut presets_window = mut_ctx.presets_window.clone();
         options_window.update();
-        presets_window.update();
-        let mut color_copy_format = color_copy_format;
 
         let is_flip_clicked = options_window.draw_content(
             ui,
             &mut options,
             &mut spline_mode,
-            &mut color_copy_format,
             color_picker.auto_comb_unsolved,
         );
         if is_flip_clicked {
@@ -156,28 +151,11 @@ impl ZAppPane for ColorPickerOptionsPane {
             );
             color_picker.dragging_index = None;
         }
-        let presets_result = presets_window.draw_content(
-            ui,
-            &mut preset_handler,
-            &mut control_points,
-            &mut spline_mode,
-        );
 
         color_picker.options = options;
-        if presets_result.preset_result.should_apply.is_some() {
-            normalize_applied_preset(
-                &mut color_picker,
-                &mut preset_handler,
-                &mut control_points,
-                spline_mode,
-            );
-        }
-        mut_ctx.color_copy_format = color_copy_format;
         mut_ctx.options_window = options_window;
-        mut_ctx.presets_window = presets_window;
         mut_ctx.control_points = control_points;
         mut_ctx.spline_mode = spline_mode;
-        mut_ctx.preset_handler = preset_handler;
 
         *mut_ctx.z_color_picker.borrow_mut() = color_picker;
 
@@ -237,6 +215,41 @@ impl ZAppPane for LogPane {
     }
 
     fn update_ctx(&mut self, _new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {}
+}
+
+pub fn preset_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egui::Ui) {
+    let mut mut_ctx = app_ctx.borrow_mut();
+    let mut preset_handler = mut_ctx.preset_handler.clone();
+    let mut control_points = mut_ctx.control_points.clone();
+    let mut spline_mode = mut_ctx.spline_mode;
+    let mut presets_window = mut_ctx.presets_window.clone();
+    presets_window.update();
+
+    let presets_result = presets_window.draw_content(
+        ui,
+        &mut preset_handler,
+        &mut control_points,
+        &mut spline_mode,
+    );
+    if presets_result.preset_result.should_apply.is_some() {
+        normalize_applied_preset(
+            &mut mut_ctx.z_color_picker.borrow_mut(),
+            &mut preset_handler,
+            &mut control_points,
+            spline_mode,
+        );
+    }
+
+    mut_ctx.presets_window = presets_window;
+    mut_ctx.control_points = control_points;
+    mut_ctx.spline_mode = spline_mode;
+    mut_ctx.preset_handler = preset_handler;
+}
+
+pub fn copy_format_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egui::Ui) {
+    let mut color_copy_format = app_ctx.borrow().color_copy_format;
+    copy_format_combo(ui, &mut color_copy_format);
+    app_ctx.borrow_mut().color_copy_format = color_copy_format;
 }
 
 fn normalize_applied_preset(

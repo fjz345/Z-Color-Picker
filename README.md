@@ -33,20 +33,32 @@ To create a new preset, click the preset combo box and select `<NEW>`
 - F12: debug window with the control point values
 - Esc: quit (ignored while typing, or while a popup, dialog or the Create Preset window is open)
 
+## Toolbar
+
+- Preset: Pick a preset, then Save, Rename... (opens a name field; Enter renames), Delete, Auto-save (rewrite the selected preset file after every edit). A failed save shows its error at the end of the row
+- Copy as: Text format for a copied color; previewer strips are copied as images
+- Log (right end): Show or hide the log pane; hidden by default
+
 ## Options
 
+Points row:
 - Lock: Apply any control point coordinate translation to all control points
+- Clamp: Keep control points inside the S/V square and wrap hue into 0..1
 - Auto hue: Select hue for start/end control points, middle control point's hue is interpolated by T (shown as markers on the hue bar)
 - Insert left/right: Side of the selected point where a new control point goes (start/end when none is selected)
-- Clamp: Keep control points inside the S/V square and wrap hue into 0..1
-- Comb: Show the curvature comb (Bezier and Hermite); the slider next to it scales the spike length
-- Auto comb: Line up each point's two handles and solve their lengths so the comb is continuous (Bezier only); dragging a handle then only turns it. `N unsolved` counts points where the handle directions allow no solution
-- Copy as: Text format for a copied color; previewer strips are copied as images
+
+Curve row:
 - Spline: Linear, Bezier (drag the tangent handles) or Hermite (Catmull-Rom, automatic tangents, shown dashed on the selected point)
 - Flip: Reverse the control point order (T is mirrored)
-- Auto-save: Rewrite the selected preset file after every edit
-- Levels (previewer): Number of colors in the quantized gradient
-- Space evenly (previewer): Spread the points evenly along the gradient (equal T steps)
+- Auto comb: Line up each point's two handles and solve their lengths so the comb is continuous (Bezier only); dragging a handle then only turns it. `N unsolved` counts points where the handle directions allow no solution
+
+Comb row:
+- Show: Show the curvature comb (Bezier and Hermite)
+- Scale: Length of the comb spikes
+
+Previewer:
+- Levels: Number of colors in the quantized gradient
+- Space evenly: Spread the points evenly along the gradient (equal T steps)
 
 ## Presets
 
