@@ -25,6 +25,7 @@ To create a new preset, click the preset combo box and select NEW
 
 - Double-click-M1: Add control-point
 - Right-click-M2: Remove control-point
+- Click the color readout or Ctrl+C: copy the selected point's color in the Copy-as format
 - Middle-click: Copy screen color as the selected format, on previewer, copies image to clipboard
 - F12: debug window with the control point values
 

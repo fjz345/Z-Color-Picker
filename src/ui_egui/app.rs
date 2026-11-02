@@ -20,8 +20,9 @@ use crate::{
     ui_egui::{
         clipboard::{
             clipboard_payload, copy_popup_seconds, copy_status_text, crop_screenshot,
-            write_pixels_to_clipboard, write_string_to_clipboard, ClipboardCopyEvent,
-            ClipboardPayload, ClipboardPopup, ScreenshotTarget, FAILED_COPY_POPUP_SECONDS,
+            selected_color_payload, write_pixels_to_clipboard, write_string_to_clipboard,
+            ClipboardCopyEvent, ClipboardPayload, ClipboardPopup, ScreenshotTarget,
+            FAILED_COPY_POPUP_SECONDS,
         },
         color_picker::ZColorPickerWrapper,
         content_windows::{WindowPreset, WindowZColorPickerOptions},
@@ -501,45 +502,52 @@ impl ZApp {
         };
 
         let (status_text, popup_seconds) =
-            match clipboard_payload(&event.image, app_ctx.color_copy_format) {
-                None => {
-                    let text = "Nothing to copy";
-                    log::warn!("{text}");
-                    (text.to_string(), FAILED_COPY_POPUP_SECONDS)
-                }
-                Some(payload) => {
-                    let (result, success_text) = match payload {
-                        ClipboardPayload::Text(text) => {
-                            let success_text = format!("Copied {text}");
-                            (write_string_to_clipboard(text), success_text)
-                        }
-                        ClipboardPayload::Image {
-                            width,
-                            height,
-                            rgba,
-                        } => (
-                            write_pixels_to_clipboard(ImageData {
-                                width,
-                                height,
-                                bytes: Cow::Owned(rgba),
-                            }),
-                            "Copied img to clipboard".to_string(),
-                        ),
-                    };
-                    if let Err(e) = &result {
-                        log::error!("{e}");
-                    }
-                    (
-                        copy_status_text(&result, &success_text),
-                        copy_popup_seconds(&result),
-                    )
-                }
-            };
+            write_payload_to_clipboard(clipboard_payload(&event.image, app_ctx.color_copy_format));
 
         app_ctx.clipboard_copy_window.set_text(&status_text);
         app_ctx
             .clipboard_copy_window
             .open(event.frame_rect.min, popup_seconds);
+    }
+
+    fn handle_selected_color_copy(&mut self, ctx: &egui::Context, esc_blocked: bool) {
+        let clicked_anchor = self
+            .app_ctx
+            .borrow()
+            .z_color_picker
+            .borrow_mut()
+            .copy_request
+            .take();
+        let shortcut_blocked =
+            esc_blocked || egui::text_selection::LabelSelectionState::load(ctx).has_selection();
+        let shortcut_anchor = ctx
+            .input(|i| is_copy_shortcut(&i.events, shortcut_blocked))
+            .then(|| {
+                ctx.input(|i| i.pointer.hover_pos())
+                    .unwrap_or(ctx.screen_rect().center())
+            });
+        let Some(anchor) = clicked_anchor.or(shortcut_anchor) else {
+            return;
+        };
+
+        let payload = {
+            let app_ctx = self.app_ctx.borrow();
+            let picker = app_ctx.z_color_picker.borrow();
+            selected_color_payload(
+                &app_ctx.control_points,
+                picker.dragging_index.or(picker.last_modifying_point_index),
+                app_ctx.color_copy_format,
+            )
+        };
+        let Some(payload) = payload else {
+            return;
+        };
+
+        let (status_text, popup_seconds) = write_payload_to_clipboard(Some(payload));
+        let mut app_ctx = self.app_ctx.borrow_mut();
+        app_ctx.clipboard_copy_window.set_text(&status_text);
+        app_ctx.clipboard_copy_window.open(anchor, popup_seconds);
+        ctx.request_repaint();
     }
 
     fn request_shutdown(&mut self) {
@@ -611,6 +619,13 @@ fn should_quit_on_escape(events: &[egui::Event], esc_blocked: bool) -> bool {
     esc_first_press && !esc_blocked
 }
 
+fn is_copy_shortcut(events: &[egui::Event], blocked: bool) -> bool {
+    !blocked
+        && events
+            .iter()
+            .any(|event| matches!(event, egui::Event::Copy))
+}
+
 fn visible_name_error(text: &str, check: Result<(), PresetNameError>) -> Option<String> {
     if text.is_empty() {
         return None;
@@ -659,6 +674,39 @@ fn receive_screenshot(app_ctx: &mut ZColorPickerAppContext, ui: &egui::Ui) {
     }
 }
 
+fn write_payload_to_clipboard(payload: Option<ClipboardPayload>) -> (String, f32) {
+    let Some(payload) = payload else {
+        let text = "Nothing to copy";
+        log::warn!("{text}");
+        return (text.to_string(), FAILED_COPY_POPUP_SECONDS);
+    };
+    let (result, success_text) = match payload {
+        ClipboardPayload::Text(text) => {
+            let success_text = format!("Copied {text}");
+            (write_string_to_clipboard(text), success_text)
+        }
+        ClipboardPayload::Image {
+            width,
+            height,
+            rgba,
+        } => (
+            write_pixels_to_clipboard(ImageData {
+                width,
+                height,
+                bytes: Cow::Owned(rgba),
+            }),
+            "Copied img to clipboard".to_string(),
+        ),
+    };
+    if let Err(e) = &result {
+        log::error!("{e}");
+    }
+    (
+        copy_status_text(&result, &success_text),
+        copy_popup_seconds(&result),
+    )
+}
+
 impl eframe::App for ZApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         match serde_json::to_string(self) {
@@ -681,6 +729,7 @@ impl eframe::App for ZApp {
                 let esc_blocked = self.is_escape_blocked(ctx);
                 self.handle_clipboardcopy_event();
                 self.draw_ui_tree(ctx, frame);
+                self.handle_selected_color_copy(ctx, esc_blocked);
                 self.process_ctx_inputs(ctx, frame, esc_blocked);
                 self.had_keyboard_focus = ctx.wants_keyboard_input();
             }
@@ -719,6 +768,17 @@ mod tests {
         assert!(!should_quit_on_escape(&release, false));
         assert!(!should_quit_on_escape(&other_key, false));
         assert!(!should_quit_on_escape(&[], false));
+    }
+
+    #[test]
+    fn copy_shortcut_needs_a_copy_event_and_nothing_blocking_it() {
+        assert!(is_copy_shortcut(&[egui::Event::Copy], false));
+        assert!(!is_copy_shortcut(&[egui::Event::Copy], true));
+        assert!(!is_copy_shortcut(
+            &[key_event(egui::Key::C, true, false)],
+            false
+        ));
+        assert!(!is_copy_shortcut(&[], false));
     }
 
     #[test]

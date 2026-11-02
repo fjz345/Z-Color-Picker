@@ -25,6 +25,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 ## Controls (from README)
 - Double-click (M1) on the picker: add a control point.
 - Right-click (M2) on a point: remove it.
+- Click the color readout or Ctrl+C: copy the selected point's color in the Copy-as format.
 - Middle-click: copy the color under the cursor in the selected format. On the previewer, it copies the image instead.
 - F12: debug window with the control point values.
 - Esc: quit.
@@ -66,6 +67,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 ### Clipboard / screen capture
 Pressing the middle button stores a `ScreenshotTarget` in `pending_screenshot_target` and requests one `ViewportCommand::Screenshot`. It closes the copy popup first, because eframe captures the frame painted in that same update. The target is the previewer rect under the cursor (rects come from `stored_ui_responses`), or else the pixel under the cursor. The screenshot event arrives in a later frame. `handle_screenshot_event` crops it with `crop_screenshot` (`src/ui_egui/clipboard.rs`) and turns it into a `ClipboardCopyEvent`. A pixel target takes the physical pixel at `floor(cursor * ppp)`, clamped to the screenshot; a previewer crop is clamped too. That event is consumed at the start of the next `Idle` frame (`handle_clipboardcopy_event`). Nothing in the app requests that frame: egui repaints right after any pass whose input has events, and the Screenshot event counts. A single pixel is copied as text in `color_copy_format`; a larger region is copied as an image via `arboard`. A failed write shows `Copy failed: <error>` in the popup.
 - `format_color_as` supports all 11 `ColorStringCopy` formats, from unmultiplied sRGB; `RGB`/`RGBA` are linear.
+- A readout click or Ctrl+C skips the screenshot: `selected_color_payload` formats the selected point and `write_payload_to_clipboard` (shared with middle-click) writes it. Ctrl+C is left to egui while a widget had keyboard focus, a popup or modal is open, or label text is selected.
 
 ### Misc
 - The log filter defaults to `info,z_color_picker=debug` (`DEFAULT_LOG_FILTER` in `src/logger.rs`); a set `RUST_LOG` replaces it, e.g. `RUST_LOG=debug` shows dependency debug output too.

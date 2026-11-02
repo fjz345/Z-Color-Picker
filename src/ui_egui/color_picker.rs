@@ -35,6 +35,7 @@ pub struct MainColorPickerCtx<'a> {
     pub last_modifying_point_index: &'a mut Option<usize>,
     pub dragging_index: &'a mut Option<usize>,
     pub control_point_right_clicked: &'a mut Option<usize>,
+    pub copy_request: &'a mut Option<Pos2>,
     pub is_hue_middle_interpolated: bool,
     pub is_curve_locked: bool,
     pub is_window_lock: bool,
@@ -119,6 +120,8 @@ pub struct ZColorPickerWrapper {
     pub dragging_index: Option<usize>,
     pub right_clicked_on_index: Option<usize>,
     pub options: ZColorPickerOptions,
+    #[serde(skip)]
+    pub copy_request: Option<Pos2>,
 }
 
 impl Default for ZColorPickerWrapper {
@@ -128,6 +131,7 @@ impl Default for ZColorPickerWrapper {
             dragging_index: None,
             right_clicked_on_index: None,
             options: ZColorPickerOptions::default(),
+            copy_request: None,
         };
 
         new_color_picker
@@ -169,6 +173,7 @@ impl ZColorPickerWrapper {
                 last_modifying_point_index: &mut self.last_modifying_point_index,
                 dragging_index: &mut self.dragging_index,
                 control_point_right_clicked: &mut self.right_clicked_on_index,
+                copy_request: &mut self.copy_request,
                 is_hue_middle_interpolated: self.options.is_hue_middle_interpolated,
                 is_curve_locked: self.options.is_curve_locked,
                 is_window_lock: self.options.is_window_lock,
@@ -429,7 +434,11 @@ pub fn main_color_picker(
             .map(|cp| cp.val().hsv());
 
         selected_color_swatch(ui, selected_color, slider_2d_rect_size);
-        selected_color_readout(ui, selected_color.map(Color32::from), ctx.color_copy_format);
+        if let Some(anchor) =
+            selected_color_readout(ui, selected_color.map(Color32::from), ctx.color_copy_format)
+        {
+            *ctx.copy_request = Some(anchor);
+        }
 
         let mut color_to_show = selected_color.unwrap_or(HsvaGamma {
             h: 0.0,
@@ -549,13 +558,33 @@ fn selected_color_swatch(ui: &mut Ui, color: Option<HsvaGamma>, size: Vec2) {
     }
 }
 
-fn selected_color_readout(ui: &mut Ui, color: Option<Color32>, format: ColorStringCopy) {
+fn selected_color_readout(
+    ui: &mut Ui,
+    color: Option<Color32>,
+    format: ColorStringCopy,
+) -> Option<Pos2> {
     let text = RichText::new(readout_text(color, format));
-    let text = if color.is_some() { text } else { text.weak() };
+    let hover_text = format!("Selected color as {format:?}");
     ui.horizontal(|ui| {
-        ui.add(Label::new(text).truncate())
-            .on_hover_text(format!("Selected color as {format:?}"));
-    });
+        if color.is_none() {
+            ui.add(Label::new(text.weak()).truncate())
+                .on_hover_text(hover_text);
+            return None;
+        }
+        let response = ui
+            .add(
+                Label::new(text)
+                    .truncate()
+                    .selectable(false)
+                    .sense(Sense::click()),
+            )
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .on_hover_text(format!("{hover_text}. Click or Ctrl+C: copy"));
+        response
+            .clicked_by(PointerButton::Primary)
+            .then(|| response.rect.left_bottom())
+    })
+    .inner
 }
 
 const EMPTY_PICKER_HINT: &str = "Double-click to add a control point";
@@ -1550,6 +1579,7 @@ mod tests {
         let mut last_modifying_point_index = Some(0);
         let mut dragging_index = None;
         let mut control_point_right_clicked = None;
+        let mut copy_request = None;
         let egui_ctx = egui::Context::default();
         for events in frames {
             let input = egui::RawInput {
@@ -1566,6 +1596,7 @@ mod tests {
                         last_modifying_point_index: &mut last_modifying_point_index,
                         dragging_index: &mut dragging_index,
                         control_point_right_clicked: &mut control_point_right_clicked,
+                        copy_request: &mut copy_request,
                         is_hue_middle_interpolated: false,
                         is_curve_locked: false,
                         is_window_lock: false,
@@ -1721,6 +1752,7 @@ mod tests {
         let mut last_modifying_point_index = None;
         let mut dragging_index = None;
         let mut control_point_right_clicked = None;
+        let mut copy_request = None;
         let egui_ctx = egui::Context::default();
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0))),
@@ -1735,6 +1767,7 @@ mod tests {
                     last_modifying_point_index: &mut last_modifying_point_index,
                     dragging_index: &mut dragging_index,
                     control_point_right_clicked: &mut control_point_right_clicked,
+                    copy_request: &mut copy_request,
                     is_hue_middle_interpolated: false,
                     is_curve_locked: false,
                     is_window_lock: false,
@@ -1847,6 +1880,36 @@ mod tests {
             readout_text(Some(orange()), ColorStringCopy::HSV),
             format_orange(ColorStringCopy::HSV)
         );
+    }
+
+    fn hover_then_click_frames(pos: Pos2) -> Vec<Vec<egui::Event>> {
+        let mut frames = primary_click_frames(pos);
+        frames.splice(2..2, [Vec::new(), Vec::new()]);
+        frames
+    }
+
+    fn click_readout(color: Option<Color32>) -> Option<Pos2> {
+        let ctx = egui::Context::default();
+        let mut anchor = None;
+        for events in hover_then_click_frames(pos2(14.0, 14.0)) {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0))),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    anchor = anchor.or(selected_color_readout(ui, color, ColorStringCopy::HEXNOA));
+                });
+            });
+        }
+        anchor
+    }
+
+    #[test]
+    fn clicking_the_readout_requests_a_copy_only_with_a_selection() {
+        assert!(click_readout(Some(orange())).is_some());
+        assert_eq!(click_readout(None), None);
     }
 
     fn paints_text(
