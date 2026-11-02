@@ -144,8 +144,7 @@ pub fn draw_curvature_comb(ui: &mut Ui, rect: egui::Rect, control_points: &[Cont
 
     let tooth_color = Color32::from_rgba_unmultiplied(255, 255, 255, COMB_ALPHA);
     let outline_color = Color32::from_rgba_unmultiplied(255, 255, 255, COMB_OUTLINE_ALPHA);
-    let mut shapes =
-        Vec::with_capacity((control_points.len() - 1) * (SAMPLES_PER_SEGMENT + 1) * 2);
+    let mut shapes = Vec::with_capacity((control_points.len() - 1) * (SAMPLES_PER_SEGMENT + 1) * 2);
     // Index order, not t order: spline keys are placed at t = index (see control_points_to_spline).
     for (segment_index, pair) in control_points.windows(2).enumerate() {
         let start = &pair[0];
