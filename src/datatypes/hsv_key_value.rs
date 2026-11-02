@@ -50,8 +50,8 @@ impl HsvKeyValue {
     pub fn hsv(&self) -> HsvaGamma {
         HsvaGamma {
             h: self[2].rem_euclid(1.0),
-            s: self[0],
-            v: self[1],
+            s: self[0].clamp(0.0, 1.0),
+            v: self[1].clamp(0.0, 1.0),
             a: 1.0,
         }
     }
@@ -340,5 +340,36 @@ mod tests {
         assert!((mixed.s() - 0.5).abs() < 1e-5);
         assert!((mixed.v() - 0.5).abs() < 1e-5);
         assert!(mixed.h() < 1e-5 || mixed.h() > 1.0 - 1e-5);
+    }
+
+    #[test]
+    fn color_of_out_of_range_sv_matches_clamped_value() {
+        for s in [-0.2, 0.5, 1.3] {
+            for v in [-0.2, 0.5, 1.3] {
+                let raw = HsvKeyValue::new(s, v, 0.1);
+                let clamped = HsvKeyValue::new(s.clamp(0.0, 1.0), v.clamp(0.0, 1.0), 0.1);
+                assert_eq!(raw.color(), clamped.color(), "s = {s}, v = {v}");
+            }
+        }
+    }
+
+    #[test]
+    fn hsv_passes_in_range_values_through() {
+        let hsv = HsvKeyValue::new(0.3, 0.7, 0.1).hsv();
+        assert_eq!(
+            hsv,
+            HsvaGamma {
+                h: 0.1,
+                s: 0.3,
+                v: 0.7,
+                a: 1.0
+            }
+        );
+    }
+
+    #[test]
+    fn hsv_wraps_negative_hue() {
+        let hsv = HsvKeyValue::new(0.3, 0.7, -0.1).hsv();
+        assert!((hsv.h - 0.9).abs() < 1e-6, "{hsv:?}");
     }
 }

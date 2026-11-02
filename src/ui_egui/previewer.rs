@@ -43,24 +43,7 @@ fn ui_previewer_colors(
     let size_per_color_x = ui_size.x / (num_control_points as f32);
     let size_per_color_y = ui_size.y;
 
-    let mut points: Vec<Vec2> = Vec::with_capacity(num_control_points);
     for cp in control_points {
-        points.push(Vec2::new(cp[0], cp[1]));
-    }
-
-    for i in 0..num_control_points {
-        if points.len() <= i {
-            break;
-        }
-        let color_data = &points[i];
-        let color_data_hue = control_points[i][2];
-        let color_at_point: HsvaGamma = HsvaGamma {
-            h: color_data_hue,
-            s: color_data.x,
-            v: color_data.y,
-            a: 1.0,
-        };
-
         let size_weight: f32 = 1.0;
         color_button(
             &mut previewer_ui_control_points,
@@ -68,7 +51,7 @@ fn ui_previewer_colors(
                 x: size_weight * size_per_color_x,
                 y: size_per_color_y,
             },
-            color_at_point.into(),
+            cp.color(),
             true,
         );
     }
@@ -100,24 +83,7 @@ fn ui_previewer_control_points_with_drag(
     let size_per_color_y = ui_size.y;
     let previewer_sizes_sum: f32 = previewer_data.points_preview_sizes.iter().sum();
 
-    let mut points: Vec<Vec2> = Vec::with_capacity(num_control_points);
-    for cp in control_points {
-        points.push(Vec2::new(cp.val()[0], cp.val()[1]));
-    }
-
-    for i in 0..num_control_points {
-        if points.len() <= i {
-            break;
-        }
-        let color_data = &points[i];
-        let color_data_hue = control_points[i].val().h();
-        let color_at_point: HsvaGamma = HsvaGamma {
-            h: color_data_hue,
-            s: color_data.x,
-            v: color_data.y,
-            a: 1.0,
-        };
-
+    for (i, cp) in control_points.iter().enumerate() {
         let size_weight: f32 = previewer_data.points_preview_sizes[i] * num_control_points as f32
             / previewer_sizes_sum;
         let response_button: Response = color_button(
@@ -126,7 +92,7 @@ fn ui_previewer_control_points_with_drag(
                 x: size_weight * size_per_color_x,
                 y: size_per_color_y,
             },
-            color_at_point.into(),
+            cp.val().color(),
             true,
         );
 
