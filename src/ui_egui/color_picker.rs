@@ -785,6 +785,10 @@ fn hue_after_drag(
     stored_hue.floor() + fraction
 }
 
+fn t_after_drag(pointer_y: f32, grab_offset_y: f32, strip_bottom: f32, strip_height: f32) -> f32 {
+    ((strip_bottom - (pointer_y - grab_offset_y)) / strip_height).clamp(0.0, 1.0)
+}
+
 pub fn ui_hue_control_points_overlay(
     ui: &mut Ui,
     parent_response: &Response,
@@ -1086,9 +1090,23 @@ pub fn ui_t_control_points_overlay(
             selected_key_frame = Some(i);
         }
         if response.dragged_by(PointerButton::Primary) {
-            *control_points[i].t_mut() -=
-                response.drag_delta().y / container_response.rect.height();
-            *control_points[i].t_mut() = control_points[i].t().clamp(0.0, 1.0);
+            let grab_offset_id = response.id.with("grab_offset");
+            if response.drag_started_by(PointerButton::Primary) {
+                let press_origin = ui
+                    .input(|i| i.pointer.press_origin())
+                    .or(response.interact_pointer_pos());
+                if let Some(press_origin) = press_origin {
+                    ui.data_mut(|d| d.insert_temp(grab_offset_id, press_origin.y - y));
+                }
+            }
+            let grab_offset_y = ui
+                .data(|d| d.get_temp::<f32>(grab_offset_id))
+                .unwrap_or_default();
+            if let Some(pointer) = response.interact_pointer_pos() {
+                let strip = container_response.rect;
+                *control_points[i].t_mut() =
+                    t_after_drag(pointer.y, grab_offset_y, strip.bottom(), strip.height());
+            }
         }
 
         ui.painter().add(Shape::convex_polygon(
@@ -1607,6 +1625,90 @@ mod tests {
         let frames = primary_click_frames(t_strip_pos(0.125));
         let points = run_t_slider_with_first_point_selected(frames);
         assert!((*points[0].t() - 0.125).abs() < 1e-5, "{}", points[0].t());
+    }
+
+    #[test]
+    fn t_after_drag_follows_the_pointer_clamped_to_the_strip() {
+        let (bottom, height) = (STRIP_RECT.bottom(), STRIP_RECT.height());
+        let cases = [
+            (124.0, 0.0, 0.4),
+            (bottom, 0.0, 0.0),
+            (bottom + 100.0, 0.0, 0.0),
+            (STRIP_RECT.top() - 100.0, 0.0, 1.0),
+            (130.0, 6.0, 0.4),
+            (118.0, -6.0, 0.4),
+        ];
+        for (pointer_y, grab_offset_y, expected) in cases {
+            let t = t_after_drag(pointer_y, grab_offset_y, bottom, height);
+            assert!(
+                (t - expected).abs() < 1e-6,
+                "{pointer_y} - {grab_offset_y}: {t}"
+            );
+        }
+    }
+
+    fn primary_drag_path(path: &[Pos2]) -> Vec<Vec<egui::Event>> {
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        let (start, end) = (path[0], path[path.len() - 1]);
+        let mut frames = vec![
+            Vec::new(),
+            vec![egui::Event::PointerMoved(start)],
+            vec![button(start, true)],
+        ];
+        frames.extend(
+            path[1..]
+                .iter()
+                .map(|&pos| vec![egui::Event::PointerMoved(pos)]),
+        );
+        frames.push(vec![button(end, false)]);
+        frames
+    }
+
+    fn drag_first_t_gizmo(path: &[Pos2]) -> f32 {
+        let mut points = two_strip_points();
+        run_strip_overlay(&mut points, primary_drag_path(path), |ui, strip, points| {
+            ui_t_control_points_overlay(ui, strip, points).1
+        });
+        *points[0].t()
+    }
+
+    fn first_t_gizmo_center() -> Pos2 {
+        pos2(
+            STRIP_RECT.left(),
+            lerp(STRIP_RECT.bottom()..=STRIP_RECT.top(), 0.4),
+        )
+    }
+
+    #[test]
+    fn dragging_t_gizmo_past_the_strip_bottom_and_back_keeps_it_at_the_bottom() {
+        let start = first_t_gizmo_center();
+        let path = [
+            start,
+            pos2(start.x, STRIP_RECT.bottom() + 20.0),
+            pos2(start.x, STRIP_RECT.bottom() + 60.0),
+            pos2(start.x, STRIP_RECT.bottom() + 100.0),
+            pos2(start.x, STRIP_RECT.bottom() + 70.0),
+        ];
+        assert_eq!(drag_first_t_gizmo(&path), 0.0);
+    }
+
+    #[test]
+    fn dragging_t_gizmo_off_centre_moves_its_t_by_the_pointer_distance() {
+        let start = first_t_gizmo_center() + vec2(0.0, -3.0);
+        let quarter = 0.25 * STRIP_RECT.height();
+        let path = [
+            start,
+            start + vec2(0.0, -quarter / 3.0),
+            start + vec2(0.0, -2.0 * quarter / 3.0),
+            start + vec2(0.0, -quarter),
+        ];
+        let t = drag_first_t_gizmo(&path);
+        assert!((t - 0.65).abs() < 1e-4, "{t}");
     }
 
     #[test]
