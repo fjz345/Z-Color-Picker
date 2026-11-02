@@ -218,12 +218,8 @@ pub fn flatten_control_points(control_points: &[ControlPoint]) -> Vec<ControlPoi
 }
 
 pub fn find_spline_max_t(spline: &Spline<f32, ControlPointValue>) -> f32 {
-    let vec_of_t_values: Vec<f32> = spline.into_iter().map(|k| k.t).collect();
-    let max_t = vec_of_t_values
-        .into_iter()
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap_or(0.0);
-    max_t
+    // Spline::from_vec sorts keys by t.
+    spline.keys().last().map_or(0.0, |k| k.t)
 }
 
 /// Samples `spline` (built by `control_points_to_spline`) at `x` in [0, 1] across the real control points.
@@ -245,7 +241,11 @@ pub fn sample_spline_normalized(
                 .clamped_sample(t)
                 .or_else(|| (t >= n as f32).then(|| spline.keys()[n].value))
         }
-        _ => spline.clamped_sample(x * find_spline_max_t(spline)),
+        _ => {
+            let first = spline.keys().first()?.t;
+            let last = spline.keys().last()?.t;
+            spline.clamped_sample(first + x * (last - first))
+        }
     }
 }
 
@@ -435,5 +435,46 @@ mod tests {
         let spline = control_points_to_spline(&cps, SplineMode::Linear);
         let mid = sample_spline_normalized(&spline, SplineMode::Linear, 0.5).unwrap();
         assert!((mid[0] - 0.5).abs() < 1e-6 && (mid[1] - 0.5).abs() < 1e-6);
+    }
+
+    fn with_key_t(
+        spline: &Spline<f32, ControlPointValue>,
+        key_t: &[f32],
+    ) -> Spline<f32, ControlPointValue> {
+        let mut keys = spline.keys().to_vec();
+        for (key, t) in keys.iter_mut().zip(key_t) {
+            key.t = *t;
+        }
+        Spline::from_vec(keys)
+    }
+
+    #[test]
+    fn sample_with_preview_key_t_hits_every_key() {
+        let cps = three_points();
+        for mode in [SplineMode::Linear, SplineMode::Bezier] {
+            for key_t in [[50.0, 150.0, 250.0], [50.0, 200.0, 350.0]] {
+                let spline = with_key_t(&control_points_to_spline(&cps, mode), &key_t);
+                for (x, cp) in [0.0, 0.5, 1.0].into_iter().zip(&cps) {
+                    let sample = sample_spline_normalized(&spline, mode, x).unwrap();
+                    for c in 0..3 {
+                        assert!(
+                            (sample[c] - cp.val()[c]).abs() < 1e-5,
+                            "{mode:?} {key_t:?} at {x}: {sample:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn find_spline_max_t_is_last_key_t() {
+        let cps = three_points();
+        let linear = control_points_to_spline(&cps, SplineMode::Linear);
+        assert_eq!(find_spline_max_t(&linear), 2.0);
+        let hermite = control_points_to_spline(&cps, SplineMode::HermiteBezier);
+        assert_eq!(find_spline_max_t(&hermite), 4.0);
+        let empty = control_points_to_spline(&[], SplineMode::Linear);
+        assert_eq!(find_spline_max_t(&empty), 0.0);
     }
 }
