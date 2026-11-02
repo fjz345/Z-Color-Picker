@@ -18,6 +18,7 @@ use eframe::{
     epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 
 use crate::{
     math::hue_lerp,
@@ -34,6 +35,7 @@ pub struct MainColorPickerCtx<'a> {
     pub control_point_right_clicked: &'a mut Option<usize>,
     pub is_hue_middle_interpolated: bool,
     pub is_curve_locked: bool,
+    pub is_window_lock: bool,
     pub is_show_curvature_comb: bool,
 }
 
@@ -164,6 +166,7 @@ impl ZColorPickerWrapper {
                 control_point_right_clicked: &mut self.right_clicked_on_index,
                 is_hue_middle_interpolated: self.options.is_hue_middle_interpolated,
                 is_curve_locked: self.options.is_curve_locked,
+                is_window_lock: self.options.is_window_lock,
                 is_show_curvature_comb: self.options.is_show_curvature_comb,
             };
 
@@ -182,13 +185,9 @@ impl ZColorPickerWrapper {
     pub fn remove_control_point(&mut self, control_points: &mut Vec<ControlPoint>, index: usize) {
         control_points.remove(index);
         log::info!("CP {} removed, new len {}", index, control_points.len());
-        if control_points.len() > 1 {
-            self.last_modifying_point_index = Some(index.max(1) - 1);
-            self.dragging_index = Some(index.max(1) - 1);
-        } else {
-            self.dragging_index = None;
-            self.last_modifying_point_index = None;
-        }
+        self.last_modifying_point_index =
+            selection_after_removal(self.last_modifying_point_index, index, control_points.len());
+        self.dragging_index = None;
     }
 
     // TODO: THIS TOO
@@ -371,6 +370,21 @@ impl ZColorPickerWrapper {
 
         false
     }
+}
+
+fn selection_after_removal(
+    selected: Option<usize>,
+    removed: usize,
+    new_len: usize,
+) -> Option<usize> {
+    let last = new_len.checked_sub(1)?;
+    let selected = selected?;
+    let kept = match selected.cmp(&removed) {
+        Ordering::Less => selected,
+        Ordering::Greater => selected - 1,
+        Ordering::Equal => removed.saturating_sub(1),
+    };
+    Some(kept.min(last))
 }
 
 pub fn format_color_as(
@@ -628,9 +642,35 @@ fn handle_hue_slider(
     delta_hue
 }
 
+fn drag_delta_sv(delta: Vec2, rect_size: Vec2) -> Vec2 {
+    vec2(delta.x / rect_size.x, -delta.y / rect_size.y)
+}
+
 fn apply_drag_delta_3(point: &mut [f32; 3], delta: Vec2, rect_size: Vec2) {
-    point[0] += delta.x / rect_size.x;
-    point[1] -= delta.y / rect_size.y;
+    let delta_sv = drag_delta_sv(delta, rect_size);
+    point[0] += delta_sv.x;
+    point[1] += delta_sv.y;
+}
+
+fn limit_group_delta(points: &[ControlPoint], delta_sv: Vec2) -> Vec2 {
+    let mut min_sv = Vec2::splat(f32::INFINITY);
+    let mut max_sv = Vec2::splat(f32::NEG_INFINITY);
+    for cp in points {
+        let sv = vec2(cp.val()[0], cp.val()[1]);
+        min_sv = min_sv.min(sv);
+        max_sv = max_sv.max(sv);
+    }
+    let lo = (-min_sv).min(Vec2::ZERO);
+    let hi = (Vec2::splat(1.0) - max_sv).max(Vec2::ZERO);
+    delta_sv.clamp(lo, hi)
+}
+
+fn apply_group_delta_sv(points: &mut [ControlPoint], delta_sv: Vec2) {
+    for cp in points {
+        let val = &mut cp.val_mut().val;
+        val[0] += delta_sv.x;
+        val[1] += delta_sv.y;
+    }
 }
 
 fn handle_control_points_ui(
@@ -677,25 +717,33 @@ fn handle_control_points_ui(
     if let Some(r) = dragged_point {
         if r.dragged_by(PointerButton::Primary) {
             *ctx.dragging_index = selected_index;
-            if let Some(index) = selected_index {
-                let cp = &mut ctx.control_points[index];
-                apply_drag_delta_3(
-                    &mut cp.val_mut().val,
-                    r.drag_delta(),
-                    slider_2d_response.rect.size(),
+            if ctx.is_curve_locked && ctx.is_window_lock {
+                let delta_sv = limit_group_delta(
+                    ctx.control_points,
+                    drag_delta_sv(r.drag_delta(), slider_2d_response.rect.size()),
                 );
-            }
-
-            if ctx.is_curve_locked {
-                for (i, cp) in ctx.control_points.iter_mut().enumerate() {
-                    if i == selected_index.unwrap_or(0) {
-                        continue;
-                    }
+                apply_group_delta_sv(ctx.control_points, delta_sv);
+            } else {
+                if let Some(index) = selected_index {
+                    let cp = &mut ctx.control_points[index];
                     apply_drag_delta_3(
                         &mut cp.val_mut().val,
                         r.drag_delta(),
                         slider_2d_response.rect.size(),
                     );
+                }
+
+                if ctx.is_curve_locked {
+                    for (i, cp) in ctx.control_points.iter_mut().enumerate() {
+                        if i == selected_index.unwrap_or(0) {
+                            continue;
+                        }
+                        apply_drag_delta_3(
+                            &mut cp.val_mut().val,
+                            r.drag_delta(),
+                            slider_2d_response.rect.size(),
+                        );
+                    }
                 }
             }
         }
@@ -1118,5 +1166,98 @@ mod tests {
             format_color_as(Color32::from_rgb(128, 128, 128), ColorStringCopy::HSV, None),
             "hsv(0, 0%, 50%)"
         );
+    }
+
+    fn points_sv(values: &[(f32, f32)]) -> Vec<ControlPoint> {
+        values
+            .iter()
+            .map(|&(s, v)| ControlPoint::new_simple([s, v, 0.0].into(), 0.0))
+            .collect()
+    }
+
+    #[test]
+    fn selection_after_removal_keeps_unremoved_selection() {
+        assert_eq!(selection_after_removal(Some(4), 1, 4), Some(3));
+        assert_eq!(selection_after_removal(Some(0), 3, 4), Some(0));
+    }
+
+    #[test]
+    fn selection_after_removal_of_selected_moves_to_left_neighbour() {
+        assert_eq!(selection_after_removal(Some(1), 1, 4), Some(0));
+        assert_eq!(selection_after_removal(Some(0), 0, 4), Some(0));
+        assert_eq!(selection_after_removal(Some(4), 4, 4), Some(3));
+    }
+
+    #[test]
+    fn selection_after_removal_none_when_empty_or_unselected() {
+        assert_eq!(selection_after_removal(Some(0), 0, 0), None);
+        assert_eq!(selection_after_removal(None, 2, 4), None);
+    }
+
+    #[test]
+    fn remove_control_point_keeps_selected_point_and_ends_drag() {
+        let mut points = points_sv(&[(0.0, 0.0), (0.1, 0.1), (0.2, 0.2), (0.3, 0.3), (0.4, 0.4)]);
+        let mut wrapper = ZColorPickerWrapper {
+            last_modifying_point_index: Some(4),
+            dragging_index: Some(4),
+            ..Default::default()
+        };
+        wrapper.remove_control_point(&mut points, 1);
+        assert_eq!(wrapper.last_modifying_point_index, Some(3));
+        assert_eq!(wrapper.dragging_index, None);
+    }
+
+    #[test]
+    fn remove_control_point_down_to_one_keeps_selection() {
+        let mut points = points_sv(&[(0.0, 0.0), (0.5, 0.5)]);
+        let mut wrapper = ZColorPickerWrapper {
+            last_modifying_point_index: Some(1),
+            ..Default::default()
+        };
+        wrapper.remove_control_point(&mut points, 0);
+        assert_eq!(wrapper.last_modifying_point_index, Some(0));
+    }
+
+    #[test]
+    fn limit_group_delta_in_range_unchanged() {
+        let points = points_sv(&[(0.25, 0.5), (0.9, 0.3)]);
+        let delta = vec2(0.05, -0.1);
+        assert_eq!(limit_group_delta(&points, delta), delta);
+    }
+
+    #[test]
+    fn limit_group_delta_stops_exactly_on_border() {
+        let mut points = points_sv(&[(0.25, 0.5), (0.9, 0.3)]);
+        let delta = limit_group_delta(&points, vec2(0.2, -0.7));
+        apply_group_delta_sv(&mut points, delta);
+        assert_eq!(points[1].val()[0], 1.0);
+        assert_eq!(points[1].val()[1], 0.0);
+    }
+
+    #[test]
+    fn limit_group_delta_push_past_border_and_back_keeps_offsets() {
+        let mut points = points_sv(&[(0.25, 0.5), (0.9, 0.3)]);
+        let mut wrapper = ZColorPickerWrapper::default();
+        for push in [vec2(0.2, 0.0), vec2(-0.2, 0.0)] {
+            let delta = limit_group_delta(&points, push);
+            apply_group_delta_sv(&mut points, delta);
+            wrapper.clamp_control_points(&mut points);
+        }
+        let ds = points[1].val()[0] - points[0].val()[0];
+        let dv = points[1].val()[1] - points[0].val()[1];
+        assert!((ds - 0.65).abs() < 1e-6, "ds {ds}");
+        assert!((dv - -0.2).abs() < 1e-6, "dv {dv}");
+    }
+
+    #[test]
+    fn limit_group_delta_empty_unchanged() {
+        let delta = vec2(0.3, -2.0);
+        assert_eq!(limit_group_delta(&[], delta), delta);
+    }
+
+    #[test]
+    fn limit_group_delta_wider_than_range_does_not_move() {
+        let points = points_sv(&[(-0.1, 0.5), (1.1, 0.5)]);
+        assert_eq!(limit_group_delta(&points, vec2(0.2, 0.0)).x, 0.0);
     }
 }
