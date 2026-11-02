@@ -235,8 +235,8 @@ fn has_unsaved_changes(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
 ) -> bool {
-    !preset_handler.auto_save_presets
-        && preset_handler.is_selected_dirty(control_points, spline_mode)
+    preset_handler.is_selected_dirty(control_points, spline_mode)
+        && (!preset_handler.auto_save_presets || preset_handler.has_failed_auto_save())
 }
 
 fn combo_selected_text(name: Option<&str>, dirty: bool) -> String {
@@ -352,17 +352,11 @@ impl WindowPreset {
         control_points: &[ControlPoint],
         spline_mode: SplineMode,
     ) {
-        let Some(preset) = preset_handler
-            .preset_selected_index
-            .and_then(|s| preset_handler.presets.get_mut(s))
-        else {
+        let Some(name) = selected_preset(preset_handler).map(|p| p.name.clone()) else {
             self.save_error = Some("No preset selected".to_string());
             return;
         };
-        preset.data.spline_mode = spline_mode;
-        preset.data.control_points = control_points.to_vec();
-        let name = preset.name.clone();
-        match preset_handler.save_selected_preset() {
+        match preset_handler.save_selected_preset(control_points, spline_mode) {
             Ok(()) => {
                 log::info!("Saved preset [{name}]");
                 self.save_error = None;
@@ -975,9 +969,7 @@ mod tests {
         assert_eq!(window.pending_switch, None);
     }
 
-    #[test]
-    fn failed_save_and_switch_keeps_the_modal_open() {
-        let tmp = TempDir::new().unwrap();
+    fn unwritable_handler_with_a_and_b(tmp: &TempDir) -> PresetHandler {
         let not_a_dir = tmp.path().join("presets");
         std::fs::write(&not_a_dir, "").unwrap();
         let mut handler = PresetHandler::new(not_a_dir);
@@ -991,6 +983,13 @@ mod tests {
             ));
         }
         handler.preset_selected_index = Some(0);
+        handler
+    }
+
+    #[test]
+    fn failed_save_and_switch_keeps_the_modal_open() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = unwritable_handler_with_a_and_b(&tmp);
         let mut window = WindowPreset::new();
         let edited = three_points();
         let mut points = edited.clone();
@@ -1011,6 +1010,44 @@ mod tests {
         assert_eq!(window.pending_switch, Some(1));
         assert_eq!(handler.preset_selected_index, Some(0));
         assert_eq!(points, edited);
+        assert!(has_unsaved_changes(&handler, &points, mode));
+    }
+
+    #[test]
+    fn failed_auto_save_keeps_the_switch_confirm() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = unwritable_handler_with_a_and_b(&tmp);
+        handler.auto_save_presets = true;
+        let mut window = WindowPreset::new();
+        let edited = three_points();
+        let mut points = edited.clone();
+        let mut mode = SplineMode::Linear;
+        assert!(handler.auto_save(&points, mode).is_err());
+
+        assert!(has_unsaved_changes(&handler, &points, mode));
+        assert!(window
+            .choose_preset(1, &mut handler, &mut points, &mut mode)
+            .is_none());
+        assert_eq!(window.pending_switch, Some(1));
+        assert_eq!(points, edited);
+    }
+
+    #[test]
+    fn failed_manual_save_keeps_the_preset_dirty() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = unwritable_handler_with_a_and_b(&tmp);
+        let before = handler.presets[0].data.clone();
+        let mut window = WindowPreset::new();
+
+        window.save_selected(&mut handler, &three_points(), SplineMode::Linear);
+
+        assert!(window.save_error.is_some());
+        assert_eq!(handler.presets[0].data, before);
+        assert!(has_unsaved_changes(
+            &handler,
+            &three_points(),
+            SplineMode::Linear
+        ));
     }
 
     #[test]

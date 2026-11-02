@@ -255,6 +255,7 @@ impl PresetHandler {
             let (preset_control_points, preset_spline_mode) = preset.clone().into();
             *control_points = preset_control_points;
             *spline_mode = preset_spline_mode;
+            self.failed_auto_save = None;
             log::info!("Preset Applied!");
         } else {
             log::info!("No preset selected");
@@ -283,17 +284,25 @@ impl PresetHandler {
         }
     }
 
-    pub fn save_selected_preset(&mut self) -> Result<()> {
-        if let Some(s) = self.preset_selected_index {
-            let preset = &mut self.presets[s];
-            save_preset_to_disk(&self.presets_dir, &preset.clone())?;
-
-            return Ok(());
-        }
-
-        Err(ZError::Message(
-            "Preset Save failed, No preset selected".to_string(),
-        ))
+    pub fn save_selected_preset(
+        &mut self,
+        control_points: &[ControlPoint],
+        spline_mode: SplineMode,
+    ) -> Result<()> {
+        let Some(preset) = self
+            .preset_selected_index
+            .and_then(|s| self.presets.get_mut(s))
+        else {
+            return Err(ZError::Message(
+                "Preset Save failed, No preset selected".to_string(),
+            ));
+        };
+        let attempt =
+            PresetEntity::new(&preset.name, (control_points.to_vec(), spline_mode).into());
+        save_preset_to_disk(&self.presets_dir, &attempt)?;
+        preset.data = attempt.data;
+        self.failed_auto_save = None;
+        Ok(())
     }
 
     pub fn create_preset(
@@ -384,6 +393,10 @@ impl PresetHandler {
                 Err(e)
             }
         }
+    }
+
+    pub fn has_failed_auto_save(&self) -> bool {
+        self.failed_auto_save.is_some()
     }
 }
 
@@ -882,14 +895,19 @@ mod tests {
             .unwrap());
     }
 
-    #[test]
-    fn auto_save_failure_keeps_dirty_and_retries_only_new_data() {
-        let tmp = TempDir::new().unwrap();
+    fn unwritable_handler_with_a(tmp: &TempDir) -> PresetHandler {
         let regular_file = tmp.path().join(PRESETS_FOLDER_NAME);
         fs::write(&regular_file, "").unwrap();
         let mut handler = PresetHandler::new(regular_file);
         handler.presets = vec![PresetEntity::new("A", data(SplineMode::Linear))];
         handler.preset_selected_index = Some(0);
+        handler
+    }
+
+    #[test]
+    fn auto_save_failure_keeps_dirty_and_retries_only_new_data() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = unwritable_handler_with_a(&tmp);
         handler.auto_save_presets = true;
 
         assert!(handler
@@ -902,5 +920,74 @@ mod tests {
         assert!(handler
             .auto_save(&moved_points(0.8), SplineMode::Linear)
             .is_err());
+    }
+
+    #[test]
+    fn save_selected_preset_writes_the_points_and_updates_data() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+
+        handler
+            .save_selected_preset(&moved_points(0.9), SplineMode::Linear)
+            .unwrap();
+
+        let expected: AppDataCtx = (moved_points(0.9), SplineMode::Linear).into();
+        let on_disk: AppDataCtx = serde_json::from_str(&read_preset_file(&handler)).unwrap();
+        assert_eq!(on_disk, expected);
+        assert_eq!(handler.presets[0].data, expected);
+    }
+
+    #[test]
+    fn save_selected_preset_failure_keeps_data() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = unwritable_handler_with_a(&tmp);
+
+        assert!(handler
+            .save_selected_preset(&moved_points(0.9), SplineMode::Bezier)
+            .is_err());
+        assert_eq!(handler.presets[0].data, data(SplineMode::Linear));
+    }
+
+    #[test]
+    fn save_selected_preset_with_stale_index_errs() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        handler.preset_selected_index = Some(5);
+
+        assert!(handler
+            .save_selected_preset(&moved_points(0.9), SplineMode::Linear)
+            .is_err());
+    }
+
+    #[test]
+    fn save_selected_preset_success_clears_failed_auto_save() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = unwritable_handler_with_a(&tmp);
+        handler.auto_save_presets = true;
+        assert!(handler
+            .auto_save(&moved_points(0.9), SplineMode::Linear)
+            .is_err());
+        assert!(handler.has_failed_auto_save());
+        handler.presets_dir = tmp.path().join("writable");
+
+        handler
+            .save_selected_preset(&moved_points(0.9), SplineMode::Linear)
+            .unwrap();
+
+        assert!(!handler.has_failed_auto_save());
+    }
+
+    #[test]
+    fn apply_selected_preset_clears_failed_auto_save() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = unwritable_handler_with_a(&tmp);
+        handler.auto_save_presets = true;
+        let mut points = moved_points(0.9);
+        let mut mode = SplineMode::Linear;
+        assert!(handler.auto_save(&points, mode).is_err());
+
+        handler.apply_selected_preset(&mut points, &mut mode);
+
+        assert!(!handler.has_failed_auto_save());
     }
 }
