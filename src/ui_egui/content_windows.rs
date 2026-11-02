@@ -178,6 +178,7 @@ pub struct WindowPreset {
     pub delete_error: Option<String>,
     pub create_error: Option<String>,
     pub rename_error: Option<String>,
+    last_selection: Option<usize>,
 }
 
 impl WindowPreset {
@@ -190,6 +191,7 @@ impl WindowPreset {
             delete_error: None,
             create_error: None,
             rename_error: None,
+            last_selection: None,
         }
     }
 
@@ -296,6 +298,10 @@ impl WindowPreset {
                 .unwrap_or_default()
         });
         let selected = preset_handler.preset_selected_index;
+        if selected != self.last_selection {
+            self.rename_error = None;
+            self.last_selection = selected;
+        }
         let rename_check = selected.map(|s| preset_handler.check_name(&rename_text_field, Some(s)));
         let rename_reason = match rename_check {
             Some(Err(reason)) if !rename_text_field.is_empty() => Some(reason),
@@ -389,5 +395,52 @@ impl WindowPreset {
     fn close_delete_confirm(&mut self) {
         self.delete_confirm_open = false;
         self.delete_error = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui_egui::app::AppDataCtx;
+    use tempfile::TempDir;
+
+    fn handler_with_presets(tmp: &TempDir, names: &[&str]) -> PresetHandler {
+        let mut handler = PresetHandler::new(tmp.path().to_path_buf());
+        for name in names {
+            let data = AppDataCtx {
+                spline_mode: SplineMode::Linear,
+                control_points: Vec::new(),
+            };
+            handler.presets.push(PresetEntity::new(name, data));
+        }
+        handler
+    }
+
+    fn draw_frame(ctx: &egui::Context, window: &mut WindowPreset, handler: &mut PresetHandler) {
+        let mut control_points = Vec::new();
+        let mut spline_mode = SplineMode::Linear;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                window.draw_content(ui, handler, &mut control_points, &mut spline_mode);
+            });
+        });
+    }
+
+    #[test]
+    fn rename_error_cleared_when_selection_changes() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = handler_with_presets(&tmp, &["A", "C"]);
+        let mut window = WindowPreset::new();
+        let ctx = egui::Context::default();
+
+        handler.preset_selected_index = Some(0);
+        draw_frame(&ctx, &mut window, &mut handler);
+        window.rename_error = Some("not found".to_string());
+        draw_frame(&ctx, &mut window, &mut handler);
+        assert!(window.rename_error.is_some());
+
+        handler.preset_selected_index = Some(1);
+        draw_frame(&ctx, &mut window, &mut handler);
+        assert_eq!(window.rename_error, None);
     }
 }

@@ -61,7 +61,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 - Create writes the file, then adds it to the list. Rename uses `fs::rename`. Delete removes the file first, behind a confirm `Modal`.
 - Name rules, enforced by `validate_preset_name` / `PresetHandler::check_name`: not empty or whitespace; no `< > : " / \ | ? *` or control chars; no trailing dot or space; no reserved device name (CON, NUL, COM1..); at most 64 chars; no case-insensitive duplicate. The UI disables Create/Rename and shows the reason in red.
 - When `auto_save_presets` is enabled, the selected preset is rewritten only when the current control points or spline mode differ from it.
-- `PresetHandler.presets` is `#[serde(skip)]`: presets are not in eframe storage, disk is the truth. At startup `init_presets` loads them from `presets_dir` (default `./presets`), skips non-`.json` or malformed files with `log::warn`, and clamps the selection.
+- `PresetHandler.presets` is `#[serde(skip)]`: presets are not in eframe storage, disk is the truth. At startup `init_presets` loads them from `presets_dir` (default `./presets`), skips non-`.json` or malformed files with `log::warn`, and keeps the selection only if it is still in range (otherwise `None`).
 
 ### Clipboard / screen capture
 Pressing the middle button stores a `ScreenshotTarget` in `pending_screenshot_target` and requests one `ViewportCommand::Screenshot`. The target is the previewer rect under the cursor (rects come from `stored_ui_responses`), or else the pixel under the cursor. The screenshot event arrives in a later frame. `handle_screenshot_event` crops it with `crop_screenshot` (`src/ui_egui/clipboard.rs`) and turns it into a `ClipboardCopyEvent`. A pixel target takes the physical pixel at `floor(cursor * ppp)`, clamped to the screenshot; a previewer crop is clamped too. That event is consumed at the start of the next `Idle` frame (`handle_clipboardcopy_event`). A single pixel is copied as text in `color_copy_format`; a larger region is copied as an image via `arboard`. A failed write shows `Copy failed: <error>` in the popup.
@@ -72,4 +72,3 @@ Pressing the middle button stores a `ScreenshotTarget` in `pending_screenshot_ta
 - `LogCollector` (`src/logger.rs`) captures log lines into a shared `Arc<Mutex<Vec<String>>>`, capped at 2000 lines, which the Log pane displays. Never call `log::*` while holding that mutex; `LogCollector::log` locks it too, so it would deadlock.
 - The UI scale is derived from a hardcoded 2560x1440 monitor size (`HARDCODED_MONITOR_SIZE`) because the monitor size is not available at creation time.
 - The debug windows live in `src/ui_egui/debug_windows.rs`.
-- Windows-only dependency: `winapi`.
