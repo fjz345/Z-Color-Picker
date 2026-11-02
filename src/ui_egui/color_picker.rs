@@ -791,11 +791,14 @@ pub fn ui_hue_control_points_overlay(
 
     let mut selected_key_frame = None;
     for i in 0..control_points.len() {
-        if is_hue_middle_interpolated {
-            if i != 0 && i != control_points.len() - 1 {
-                continue;
-            }
-        }
+        let Some(gizmo) = hue_gizmo(
+            i,
+            control_points.len(),
+            modifying_control_point_index,
+            is_hue_middle_interpolated,
+        ) else {
+            continue;
+        };
 
         let val = hue_strip_x_fraction(control_points[i].val().h());
         let picked_color = control_points[i].val().color();
@@ -804,6 +807,26 @@ pub fn ui_hue_control_points_overlay(
             container_response.rect.left()..=container_response.rect.right(),
             val,
         );
+
+        if gizmo == HueGizmo::Marker {
+            let marker_half_width = r / 4.0;
+            let marker_rect = Rect::from_x_y_ranges(
+                x - marker_half_width..=x + marker_half_width,
+                Y_OFFSET_SELECTED + container_response.rect.center().y
+                    ..=Y_OFFSET_SELECTED + container_response.rect.bottom(),
+            );
+            ui.painter().add(Shape::convex_polygon(
+                vec![
+                    marker_rect.left_top(),
+                    marker_rect.right_top(),
+                    marker_rect.right_bottom(),
+                    marker_rect.left_bottom(),
+                ],
+                picked_color,
+                Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
+            ));
+            continue;
+        }
 
         let y_offset_to_use = if let Some(index) = modifying_control_point_index {
             if i == index {
@@ -928,6 +951,28 @@ fn t_slider_x_fraction(index: usize, count: usize) -> f32 {
 
 fn hue_strip_x_fraction(hue: f32) -> f32 {
     hue.rem_euclid(1.0)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum HueGizmo {
+    Editable,
+    Marker,
+}
+
+fn hue_gizmo(
+    index: usize,
+    count: usize,
+    selected: Option<usize>,
+    auto_hue: bool,
+) -> Option<HueGizmo> {
+    let is_middle = index != 0 && index + 1 != count;
+    if !auto_hue || !is_middle {
+        Some(HueGizmo::Editable)
+    } else if selected == Some(index) {
+        Some(HueGizmo::Marker)
+    } else {
+        None
+    }
 }
 
 /// Draw a line representing the t values of control points across the slider
@@ -1321,6 +1366,59 @@ mod tests {
         );
         assert_eq!(selected, Some(0));
         assert_eq!(points[0].val().h(), -0.75);
+    }
+
+    #[test]
+    fn hue_gizmo_marks_only_the_selected_middle_point_under_auto_hue() {
+        use HueGizmo::{Editable, Marker};
+        let cases = [
+            (0, 3, Some(1), true, Some(Editable)),
+            (1, 3, Some(1), true, Some(Marker)),
+            (1, 3, Some(0), true, None),
+            (1, 3, None, true, None),
+            (2, 3, Some(1), true, Some(Editable)),
+            (0, 3, Some(1), false, Some(Editable)),
+            (1, 3, Some(1), false, Some(Editable)),
+            (1, 3, None, false, Some(Editable)),
+            (2, 3, Some(1), false, Some(Editable)),
+            (0, 2, Some(0), true, Some(Editable)),
+            (1, 2, Some(1), true, Some(Editable)),
+            (0, 2, None, false, Some(Editable)),
+            (0, 1, Some(0), true, Some(Editable)),
+            (0, 1, None, false, Some(Editable)),
+        ];
+        for (index, count, selected, auto_hue, expected) in cases {
+            assert_eq!(
+                hue_gizmo(index, count, selected, auto_hue),
+                expected,
+                "index {index} of {count}, selected {selected:?}, auto hue {auto_hue}"
+            );
+        }
+    }
+
+    #[test]
+    fn hue_marker_of_selected_middle_point_is_not_clickable() {
+        let three_strip_points = || {
+            let mut points = two_strip_points();
+            points.insert(
+                1,
+                ControlPoint::new_simple(ControlPointValue::new(0.5, 0.6, 0.5), 0.5),
+            );
+            points
+        };
+        let r = STRIP_RECT.height() / 4.0;
+        let raised_middle_center = pos2(STRIP_RECT.center().x, STRIP_RECT.center().y + r - 14.0);
+        let click = |auto_hue| {
+            run_strip_overlay(
+                &mut three_strip_points(),
+                primary_click_frames(raised_middle_center),
+                move |ui, strip, points| {
+                    ui_hue_control_points_overlay(ui, strip, points, Some(1), auto_hue).1
+                },
+            )
+        };
+        assert_eq!(click(false), Some(1));
+        assert_eq!(click(true), None);
     }
 
     fn t_strip_pos(t: f32) -> Pos2 {
