@@ -424,23 +424,20 @@ impl ZApp {
             });
 
             // auto-save-preset
-            {
+            if !ctx.input(|i| i.pointer.any_down()) {
                 let mut app_ctx = self.app_ctx.borrow_mut();
                 let app_ctx = &mut *app_ctx;
-                let preset_handler = &mut app_ctx.preset_handler;
-                if let (true, Some(s)) = (
-                    preset_handler.auto_save_presets,
-                    preset_handler.preset_selected_index,
-                ) {
-                    let current = AppDataCtx {
-                        spline_mode: app_ctx.spline_mode,
-                        control_points: app_ctx.control_points.clone(),
-                    };
-                    if preset_handler.presets[s].data != current {
-                        preset_handler.presets[s].data = current;
-                        preset_handler
-                            .save_selected_preset()
-                            .unwrap_or_else(|e| log::error!("{e}"));
+                match app_ctx
+                    .preset_handler
+                    .auto_save(&app_ctx.control_points, app_ctx.spline_mode)
+                {
+                    Ok(true) => app_ctx.presets_window.save_error = None,
+                    Ok(false) => {}
+                    Err(e) => {
+                        let message = format!("Auto-save failed: {e}");
+                        log::error!("{message}");
+                        app_ctx.presets_window.save_error = Some(message);
+                        ctx.request_repaint();
                     }
                 }
             }

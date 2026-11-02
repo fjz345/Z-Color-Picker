@@ -211,6 +211,8 @@ pub struct PresetHandler {
     pub auto_save_presets: bool,
     #[serde(skip, default = "get_presets_path")]
     presets_dir: PathBuf,
+    #[serde(skip)]
+    failed_auto_save: Option<AppDataCtx>,
 }
 
 impl Default for PresetHandler {
@@ -226,6 +228,7 @@ impl PresetHandler {
             preset_selected_index: None,
             auto_save_presets: false,
             presets_dir,
+            failed_auto_save: None,
         }
     }
 
@@ -326,6 +329,58 @@ impl PresetHandler {
         self.presets[index].name = new_name.to_string();
         save_preset_to_disk(&self.presets_dir, &self.presets[index])
     }
+
+    pub fn is_selected_dirty(
+        &self,
+        control_points: &[ControlPoint],
+        spline_mode: SplineMode,
+    ) -> bool {
+        self.preset_selected_index
+            .and_then(|s| self.presets.get(s))
+            .is_some_and(|preset| !data_matches(&preset.data, control_points, spline_mode))
+    }
+
+    pub fn auto_save(
+        &mut self,
+        control_points: &[ControlPoint],
+        spline_mode: SplineMode,
+    ) -> Result<bool> {
+        let already_failed = self
+            .failed_auto_save
+            .as_ref()
+            .is_some_and(|failed| data_matches(failed, control_points, spline_mode));
+        if !self.auto_save_presets
+            || already_failed
+            || !self.is_selected_dirty(control_points, spline_mode)
+        {
+            return Ok(false);
+        }
+        let preset = self
+            .preset_selected_index
+            .and_then(|s| self.presets.get_mut(s))
+            .expect("is_selected_dirty implies a valid selection");
+        let attempt =
+            PresetEntity::new(&preset.name, (control_points.to_vec(), spline_mode).into());
+        match save_preset_to_disk(&self.presets_dir, &attempt) {
+            Ok(()) => {
+                preset.data = attempt.data;
+                self.failed_auto_save = None;
+                Ok(true)
+            }
+            Err(e) => {
+                self.failed_auto_save = Some(attempt.data);
+                Err(e)
+            }
+        }
+    }
+}
+
+fn data_matches(
+    data: &AppDataCtx,
+    control_points: &[ControlPoint],
+    spline_mode: SplineMode,
+) -> bool {
+    data.spline_mode == spline_mode && data.control_points == control_points
 }
 
 #[cfg(test)]
@@ -728,5 +783,112 @@ mod tests {
         let loaded: PresetHandler = serde_json::from_value(saved).unwrap();
         assert!(loaded.presets.is_empty());
         assert!(loaded.auto_save_presets);
+    }
+
+    fn create_sample(handler: &mut PresetHandler) {
+        handler
+            .create_preset(&"A".to_string(), &sample_points(), &SplineMode::Bezier)
+            .unwrap();
+    }
+
+    fn moved_points(s: f32) -> Vec<ControlPoint> {
+        let mut points = sample_points();
+        *points[0].val_mut() = ControlPointValue::new(s, 0.5, 0.75);
+        points
+    }
+
+    fn read_preset_file(handler: &PresetHandler) -> String {
+        fs::read_to_string(handler.presets_dir.join("A.json")).unwrap()
+    }
+
+    #[test]
+    fn is_selected_dirty_false_right_after_create() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        assert!(!handler.is_selected_dirty(&sample_points(), SplineMode::Bezier));
+    }
+
+    #[test]
+    fn is_selected_dirty_true_after_point_or_mode_change() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        assert!(handler.is_selected_dirty(&moved_points(0.9), SplineMode::Bezier));
+        assert!(handler.is_selected_dirty(&sample_points(), SplineMode::Linear));
+    }
+
+    #[test]
+    fn is_selected_dirty_false_without_valid_selection() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        handler.preset_selected_index = None;
+        assert!(!handler.is_selected_dirty(&moved_points(0.9), SplineMode::Linear));
+        handler.preset_selected_index = Some(5);
+        assert!(!handler.is_selected_dirty(&moved_points(0.9), SplineMode::Linear));
+    }
+
+    #[test]
+    fn auto_save_off_does_not_write() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        let before = read_preset_file(&handler);
+        let saved = handler.auto_save(&moved_points(0.9), SplineMode::Linear);
+        assert!(!saved.unwrap());
+        assert_eq!(read_preset_file(&handler), before);
+    }
+
+    #[test]
+    fn auto_save_clean_preset_does_not_write() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        handler.auto_save_presets = true;
+        assert!(!handler
+            .auto_save(&sample_points(), SplineMode::Bezier)
+            .unwrap());
+    }
+
+    #[test]
+    fn auto_save_dirty_preset_writes_and_marks_clean() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        handler.auto_save_presets = true;
+        assert!(handler
+            .auto_save(&moved_points(0.9), SplineMode::Linear)
+            .unwrap());
+        let on_disk: AppDataCtx = serde_json::from_str(&read_preset_file(&handler)).unwrap();
+        assert_eq!(on_disk, (moved_points(0.9), SplineMode::Linear).into());
+        assert!(!handler.is_selected_dirty(&moved_points(0.9), SplineMode::Linear));
+    }
+
+    #[test]
+    fn auto_save_with_stale_index_does_nothing() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        handler.auto_save_presets = true;
+        handler.preset_selected_index = Some(5);
+        assert!(!handler
+            .auto_save(&moved_points(0.9), SplineMode::Linear)
+            .unwrap());
+    }
+
+    #[test]
+    fn auto_save_failure_keeps_dirty_and_retries_only_new_data() {
+        let tmp = TempDir::new().unwrap();
+        let regular_file = tmp.path().join(PRESETS_FOLDER_NAME);
+        fs::write(&regular_file, "").unwrap();
+        let mut handler = PresetHandler::new(regular_file);
+        handler.presets = vec![PresetEntity::new("A", data(SplineMode::Linear))];
+        handler.preset_selected_index = Some(0);
+        handler.auto_save_presets = true;
+
+        assert!(handler
+            .auto_save(&moved_points(0.9), SplineMode::Linear)
+            .is_err());
+        assert!(handler.is_selected_dirty(&moved_points(0.9), SplineMode::Linear));
+        assert!(!handler
+            .auto_save(&moved_points(0.9), SplineMode::Linear)
+            .unwrap());
+        assert!(handler
+            .auto_save(&moved_points(0.8), SplineMode::Linear)
+            .is_err());
     }
 }

@@ -60,7 +60,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 - Presets are written through to disk: Create, Save, Rename and Delete in the preset bar (`WindowPreset::draw_content`, `ZApp::show_create_preset_window`) hit disk immediately via `PresetHandler`. Nothing is synced at exit.
 - Create writes the file, then adds it to the list. Rename uses `fs::rename`. Delete removes the file first, behind a confirm `Modal`.
 - Name rules, enforced by `validate_preset_name` / `PresetHandler::check_name`: not empty or whitespace; no `< > : " / \ | ? *` or control chars; no trailing dot or space; no reserved device name (CON, NUL, COM1..); at most 64 chars; no case-insensitive duplicate. The UI disables Create/Rename and shows the reason in red.
-- When `auto_save_presets` is enabled, the selected preset is rewritten only when the current control points or spline mode differ from it.
+- When `auto_save_presets` is enabled, the selected preset is rewritten only when the current control points or spline mode differ from it (`PresetHandler::auto_save`), and only once no pointer button is held, so a drag writes once, on release. A failed write keeps the preset dirty, shows the error in the preset bar, and is not retried until the content changes again.
 - `PresetHandler.presets` is `#[serde(skip)]`: presets are not in eframe storage, disk is the truth. At startup `init_presets` loads them from `presets_dir` (default `./presets`), skips non-`.json` or malformed files with `log::warn`, and keeps the selection only if it is still in range (otherwise `None`).
 
 ### Clipboard / screen capture
