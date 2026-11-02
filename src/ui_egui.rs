@@ -8,6 +8,7 @@ pub mod curvature;
 pub mod curves;
 pub mod debug_windows;
 pub mod gradient;
+pub mod inspector;
 pub mod panes;
 pub mod previewer;
 pub mod tangents;

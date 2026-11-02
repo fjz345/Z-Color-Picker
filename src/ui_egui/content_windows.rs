@@ -98,7 +98,9 @@ impl WindowZColorPickerOptions {
         ui.horizontal_wrapped(|ui| {
             ui.strong("Points");
             ui.checkbox(&mut options.is_curve_locked, "Lock")
-                .on_hover_text("Move all control points together");
+                .on_hover_text(
+                    "Move all control points together, also for S/V edits in the inspector",
+                );
             ui.checkbox(&mut options.is_window_lock, "Clamp")
                 .on_hover_text("Keep points inside the S/V square and wrap hue into 0..1");
             ui.checkbox(&mut options.is_hue_middle_interpolated, "Auto hue")

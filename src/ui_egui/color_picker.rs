@@ -11,6 +11,7 @@ use crate::{
         },
         curvature::draw_curvature_comb,
         gradient::color_function_gradient,
+        inspector::{point_inspector, InspectorOptions},
         tangents::paint_auto_tangents,
         ui_common::contrast_color,
     },
@@ -66,11 +67,12 @@ impl<'a> ZColorPicker<'a> {
     fn picker_ui(&mut self, ui: &mut Ui) -> Response {
         let spacing = ui.spacing();
         let strip_ratio = spacing.interact_size.y / spacing.slider_width;
-        let label_row_height = spacing.interact_size.y;
-        // Must match main_color_picker's stack inside the margins: swatch, label, hue, T, square, and the overlays' add_space(8.0).
-        let gap_count = 4.0;
+        let readout_and_inspector_height = 2.0 * spacing.interact_size.y;
+        // Must match main_color_picker's stack inside the margins: swatch, readout, inspector, hue, T, square, and the overlays' add_space(8.0).
+        let gap_count = 5.0;
         let overlay_space = 2.0 * 8.0;
-        let fixed_height = label_row_height + gap_count * spacing.item_spacing.y + overlay_space;
+        let fixed_height =
+            readout_and_inspector_height + gap_count * spacing.item_spacing.y + overlay_space;
         let (side, margin) = picker_layout(ui.available_size(), strip_ratio, fixed_height);
         let desired_size = vec2(side, side);
         if let Some(last_modified_index) = *self.ctx.last_modifying_point_index {
@@ -467,6 +469,16 @@ pub fn main_color_picker(
         {
             *ctx.copy_request = Some(anchor);
         }
+        point_inspector(
+            ui,
+            ctx.control_points,
+            is_modifying_index,
+            InspectorOptions {
+                is_hue_middle_interpolated: ctx.is_hue_middle_interpolated,
+                is_curve_locked: ctx.is_curve_locked,
+                is_window_lock: ctx.is_window_lock,
+            },
+        );
 
         let mut color_to_show = selected_color.unwrap_or(HsvaGamma {
             h: 0.0,
@@ -619,6 +631,8 @@ fn paint_empty_picker_hint(ui: &Ui, square: Rect) {
     painter.galley(text_rect.min, galley, Color32::WHITE);
 }
 
+pub const NO_SELECTION_HINT: &str = "Select a control point first";
+
 #[derive(Debug, Clone, Copy)]
 enum Strip {
     Hue,
@@ -631,7 +645,7 @@ fn strip_hint(strip: Strip, has_selection: bool) -> &'static str {
             "T: where each point sits along the gradient. Drag a middle point's marker to move it; \
              the first and last points stay at 0 and 1"
         }
-        (Strip::Hue, false) => "Select a control point first",
+        (Strip::Hue, false) => NO_SELECTION_HINT,
         (Strip::Hue, true) => {
             "Click or drag: set the selected point's hue; the other points rotate with it"
         }
@@ -690,7 +704,7 @@ fn handle_hue_slider(
     delta_hue
 }
 
-fn limit_group_delta(points: &[ControlPoint], delta_sv: Vec2) -> Vec2 {
+pub fn limit_group_delta(points: &[ControlPoint], delta_sv: Vec2) -> Vec2 {
     let mut min_sv = Vec2::splat(f32::INFINITY);
     let mut max_sv = Vec2::splat(f32::NEG_INFINITY);
     for cp in points {
@@ -703,7 +717,7 @@ fn limit_group_delta(points: &[ControlPoint], delta_sv: Vec2) -> Vec2 {
     delta_sv.clamp(lo, hi)
 }
 
-fn apply_group_delta_sv(points: &mut [ControlPoint], delta_sv: Vec2) {
+pub fn apply_group_delta_sv(points: &mut [ControlPoint], delta_sv: Vec2) {
     for cp in points {
         let val = &mut cp.val_mut().val;
         val[0] += delta_sv.x;
@@ -824,7 +838,7 @@ fn main_color_picker_color_at_function(hue: f32, alpha: f32) -> impl Fn(f32, f32
     return move |s, v| HsvaGamma { s, v, ..color }.into();
 }
 
-const HUE_DRAG_MAX_FRACTION: f32 = 1.0 - 1e-4;
+pub const HUE_DRAG_MAX_FRACTION: f32 = 1.0 - 1e-4;
 
 fn hue_after_drag(
     stored_hue: f32,
