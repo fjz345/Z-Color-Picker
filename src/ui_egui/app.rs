@@ -331,13 +331,15 @@ impl ZApp {
     }
 
     fn show_create_preset_window(&mut self, ctx: &egui::Context) {
-        let (mut is_open, mut text, spline_mode, control_points) = {
+        let (mut is_open, mut text, spline_mode, control_points, preset_handler, create_error) = {
             let ctx_ref = self.app_ctx.borrow();
             (
                 ctx_ref.presets_window.new_preset_is_open,
                 ctx_ref.presets_window.new_preset_window_text.clone(),
                 ctx_ref.spline_mode.clone(),
                 ctx_ref.control_points.clone(),
+                ctx_ref.preset_handler.clone(),
+                ctx_ref.presets_window.create_error.clone(),
             )
         };
 
@@ -346,24 +348,37 @@ impl ZApp {
         }
 
         let mut should_create = false;
+        let mut text_changed = false;
         egui::Window::new("Create Preset")
             .open(&mut is_open)
             .show(ctx, |ui| {
                 let text_response = ui.text_edit_singleline(&mut text);
                 text_response.request_focus();
+                text_changed = text_response.changed();
 
                 let was_enter =
                     text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
-                if !text.is_empty() && (was_enter || ui.button("Create").clicked()) {
-                    should_create = true;
+                let check = preset_handler.check_name(&text, None);
+                if let Err(reason) = check {
+                    ui.colored_label(ui.visuals().error_fg_color, reason.to_string());
                 }
+                if let Some(error) = &create_error {
+                    ui.colored_label(ui.visuals().error_fg_color, error);
+                }
+                let create_clicked = ui
+                    .add_enabled(check.is_ok(), egui::Button::new("Create"))
+                    .clicked();
+                should_create = check.is_ok() && (was_enter || create_clicked);
             });
 
         // 3. Re-borrow mutably only at the very end to apply changes
         let mut ctx_write = self.app_ctx.borrow_mut();
         ctx_write.presets_window.new_preset_is_open = is_open;
         ctx_write.presets_window.new_preset_window_text = text;
+        if text_changed {
+            ctx_write.presets_window.create_error = None;
+        }
 
         if should_create {
             let name = ctx_write.presets_window.new_preset_window_text.clone();
@@ -375,8 +390,12 @@ impl ZApp {
                     // Reset state
                     ctx_write.presets_window.new_preset_is_open = false;
                     ctx_write.presets_window.new_preset_window_text.clear();
+                    ctx_write.presets_window.create_error = None;
                 }
-                Err(e) => log::error!("{e}"),
+                Err(e) => {
+                    log::error!("{e}");
+                    ctx_write.presets_window.create_error = Some(e.to_string());
+                }
             }
         }
     }

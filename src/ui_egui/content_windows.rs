@@ -202,6 +202,10 @@ pub struct WindowPreset {
     pub position: Pos2,
     pub new_preset_window_text: String,
     pub new_preset_is_open: bool,
+    pub delete_confirm_open: bool,
+    pub delete_error: Option<String>,
+    pub create_error: Option<String>,
+    pub rename_error: Option<String>,
 }
 
 impl WindowPreset {
@@ -211,6 +215,10 @@ impl WindowPreset {
             position: window_position,
             new_preset_window_text: String::new(),
             new_preset_is_open: false,
+            delete_confirm_open: false,
+            delete_error: None,
+            create_error: None,
+            rename_error: None,
         }
     }
 
@@ -273,6 +281,7 @@ impl WindowPreset {
                 if combobox_selected_index == 0 {
                     self.new_preset_is_open = true;
                     self.new_preset_window_text.clear();
+                    self.create_error = None;
                     log::info!("Selected New Preset");
                 } else {
                     preset_handler.preset_selected_index = Some(combobox_selected_index - 1);
@@ -300,48 +309,115 @@ impl WindowPreset {
                 }
             }
             if ui.button("Delete").clicked_by(PointerButton::Primary) {
-                if let Err(e) = preset_handler.delete_selected_preset() {
+                if preset_handler.preset_selected_index.is_some() {
+                    self.delete_confirm_open = true;
+                    self.delete_error = None;
+                } else if let Err(e) = preset_handler.delete_selected_preset() {
                     log::error!("{e}");
                 }
             }
         });
 
-        ui.horizontal(|ui| {
-            let rename_button = ui.button("Rename");
+        let rename_text_field_id = egui::Id::new(819181);
+        let mut rename_text_field: String = ui.memory(|mem| {
+            mem.data
+                .get_temp::<String>(rename_text_field_id)
+                .unwrap_or_default()
+        });
+        let selected = preset_handler.preset_selected_index;
+        let rename_check = selected.map(|s| preset_handler.check_name(&rename_text_field, Some(s)));
+        let rename_reason = match rename_check {
+            Some(Err(reason)) if !rename_text_field.is_empty() => Some(reason),
+            _ => None,
+        };
 
-            let rename_text_field_id = egui::Id::new(819181);
-            let mut rename_text_field: String = ui.memory(|mem| {
-                mem.data
-                    .get_temp::<String>(rename_text_field_id)
-                    .unwrap_or_default()
-            });
+        ui.horizontal(|ui| {
+            let rename_button = ui.add_enabled(
+                matches!(rename_check, Some(Ok(()))),
+                egui::Button::new("Rename"),
+            );
+
             let mut was_text_box_enter = false;
             ui.push_id(rename_text_field_id, |ui| {
                 let text_widget = TextEdit::singleline(&mut rename_text_field).desired_width(200.0);
                 let text_response = ui.add(text_widget);
+                if text_response.changed() {
+                    self.rename_error = None;
+                }
                 if text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     was_text_box_enter = true;
                 }
             });
 
-            if !rename_text_field.is_empty()
-                && (was_text_box_enter || rename_button.clicked_by(egui::PointerButton::Primary))
-            {
-                if let Some(s) = preset_handler.preset_selected_index {
+            if let (Some(s), Some(Ok(()))) = (selected, rename_check) {
+                if was_text_box_enter || rename_button.clicked_by(PointerButton::Primary) {
                     match preset_handler.rename_preset(s, &rename_text_field) {
-                        Ok(()) => rename_text_field.clear(),
-                        Err(e) => log::error!("{e}"),
+                        Ok(()) => {
+                            rename_text_field.clear();
+                            self.rename_error = None;
+                        }
+                        Err(e) => {
+                            log::error!("{e}");
+                            self.rename_error = Some(e.to_string());
+                        }
                     }
-                } else {
-                    log::error!("Could not rename preset");
                 }
             }
-            ui.memory_mut(|mem| {
-                *mem.data.get_temp_mut_or_default(rename_text_field_id) = rename_text_field
-            });
         });
 
+        if let Some(reason) = rename_reason {
+            ui.colored_label(ui.visuals().error_fg_color, reason.to_string());
+        }
+        if let Some(error) = &self.rename_error {
+            ui.colored_label(ui.visuals().error_fg_color, error);
+        }
+        ui.memory_mut(|mem| {
+            *mem.data.get_temp_mut_or_default(rename_text_field_id) = rename_text_field
+        });
+
+        if self.delete_confirm_open {
+            self.draw_delete_confirm_modal(ui, preset_handler);
+        }
+
         draw_result
+    }
+
+    fn draw_delete_confirm_modal(&mut self, ui: &mut Ui, preset_handler: &mut PresetHandler) {
+        let Some(name) = preset_handler
+            .preset_selected_index
+            .and_then(|s| preset_handler.presets.get(s))
+            .map(|preset| preset.name.clone())
+        else {
+            self.close_delete_confirm();
+            return;
+        };
+
+        let modal = egui::Modal::new(egui::Id::new("delete_preset_modal")).show(ui.ctx(), |ui| {
+            ui.label(format!("Delete \"{name}\" from disk?"));
+            if let Some(error) = &self.delete_error {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+            ui.horizontal(|ui| (ui.button("Delete").clicked(), ui.button("Cancel").clicked()))
+                .inner
+        });
+        let (delete_clicked, cancel_clicked) = modal.inner;
+
+        if delete_clicked {
+            match preset_handler.delete_selected_preset() {
+                Ok(()) => self.close_delete_confirm(),
+                Err(e) => {
+                    log::error!("{e}");
+                    self.delete_error = Some(e.to_string());
+                }
+            }
+        } else if cancel_clicked || modal.should_close() {
+            self.close_delete_confirm();
+        }
+    }
+
+    fn close_delete_confirm(&mut self) {
+        self.delete_confirm_open = false;
+        self.delete_error = None;
     }
 
     fn draw_ui(
