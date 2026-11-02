@@ -199,6 +199,21 @@ fn selected_preset(preset_handler: &PresetHandler) -> Option<&PresetEntity> {
         .and_then(|i| preset_handler.presets.get(i))
 }
 
+#[derive(Clone, Copy, Debug)]
+enum PresetComboChoice {
+    Preset(usize),
+    New,
+    Clear,
+}
+
+fn is_combo_row_checked(row: PresetComboChoice, selected: Option<usize>) -> bool {
+    match row {
+        PresetComboChoice::Preset(i) => selected == Some(i),
+        PresetComboChoice::New => false,
+        PresetComboChoice::Clear => selected.is_none(),
+    }
+}
+
 impl WindowPreset {
     pub fn new() -> Self {
         Self {
@@ -257,58 +272,49 @@ impl WindowPreset {
             let combobox_selected_text_to_show =
                 selected_preset(preset_handler).map_or("<None>", |p| p.name.as_str());
 
-            let mut combobox_selected_index = 0;
-            let mut combobox_has_selected = false;
+            let selected_index = preset_handler.preset_selected_index;
+            let mut choice = None;
             let _combobox_response = egui::ComboBox::new(1232313, "")
                 .selected_text(combobox_selected_text_to_show)
                 .show_ui(ui, |ui| {
                     ui.set_min_width(60.0);
 
-                    for (i, preset) in &mut preset_handler.presets.iter().enumerate() {
-                        let selectable_value_response = ui.selectable_value(
-                            &mut combobox_selected_index,
-                            i + 1,
-                            preset.name.as_str(),
-                        );
-
-                        if selectable_value_response.clicked() {
-                            combobox_has_selected = true;
+                    let rows = preset_handler
+                        .presets
+                        .iter()
+                        .enumerate()
+                        .map(|(i, preset)| (PresetComboChoice::Preset(i), preset.name.as_str()))
+                        .chain([
+                            (PresetComboChoice::New, "<NEW>"),
+                            (PresetComboChoice::Clear, "<None>"),
+                        ]);
+                    for (row, text) in rows {
+                        let checked = is_combo_row_checked(row, selected_index);
+                        if ui.selectable_label(checked, text).clicked() {
+                            choice = Some(row);
                         }
-                    }
-
-                    // New
-                    let selectable_new_response =
-                        ui.selectable_value(&mut combobox_selected_index, 0, "<NEW>");
-                    // None
-                    let selectable_none_response =
-                        ui.selectable_value(&mut combobox_selected_index, 0, "<None>");
-
-                    if selectable_new_response.clicked() {
-                        combobox_has_selected = true;
-                    } else if selectable_none_response.clicked() {
-                        combobox_has_selected = false;
-                        preset_handler.preset_selected_index = None;
                     }
                 })
                 .response
                 .on_hover_text("Presets");
 
-            if combobox_has_selected {
-                if combobox_selected_index == 0 {
+            match choice {
+                Some(PresetComboChoice::New) => {
                     self.new_preset_is_open = true;
                     self.new_preset_window_text.clear();
                     self.create_error = None;
                     log::info!("Selected New Preset");
-                } else {
-                    preset_handler.preset_selected_index = Some(combobox_selected_index - 1);
-                    if let Some(s) = preset_handler.preset_selected_index {
-                        draw_result.preset_result.should_apply =
-                            Some(preset_handler.presets[s].clone());
-                        log::info!("Selected Preset {:?}", combobox_selected_index - 1);
-                        preset_handler.apply_selected_preset(control_points, spline_mode);
-                    }
                 }
-            };
+                Some(PresetComboChoice::Preset(i)) => {
+                    preset_handler.preset_selected_index = Some(i);
+                    draw_result.preset_result.should_apply =
+                        Some(preset_handler.presets[i].clone());
+                    log::info!("Selected Preset {i}");
+                    preset_handler.apply_selected_preset(control_points, spline_mode);
+                }
+                Some(PresetComboChoice::Clear) => preset_handler.preset_selected_index = None,
+                None => {}
+            }
 
             ui.checkbox(&mut preset_handler.auto_save_presets, "Auto-save")
                 .on_hover_text("Auto save preset");
@@ -489,6 +495,26 @@ mod tests {
         handler.preset_selected_index = Some(1);
         draw_frame(&ctx, &mut window, &mut handler);
         assert_eq!(window.rename_error, None);
+    }
+
+    #[test]
+    fn combo_row_checked_only_for_active_preset_or_none_row() {
+        let cases = [
+            (PresetComboChoice::Preset(1), Some(1), true),
+            (PresetComboChoice::Preset(1), Some(0), false),
+            (PresetComboChoice::Preset(1), None, false),
+            (PresetComboChoice::New, None, false),
+            (PresetComboChoice::New, Some(0), false),
+            (PresetComboChoice::Clear, None, true),
+            (PresetComboChoice::Clear, Some(0), false),
+        ];
+        for (row, selected, expected) in cases {
+            assert_eq!(
+                is_combo_row_checked(row, selected),
+                expected,
+                "{row:?} with {selected:?}"
+            );
+        }
     }
 
     #[test]
