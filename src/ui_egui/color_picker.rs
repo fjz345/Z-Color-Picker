@@ -4,7 +4,8 @@ use crate::{
     ui_egui::{
         app::ZColorPickerOptions,
         control_points::{
-            ui_ordered_control_points, ControlPointUiResult, CONTROL_POINT_FILL_RADIUS,
+            control_point_pos, ui_ordered_control_points, ControlPointUiResult,
+            CONTROL_POINT_FILL_RADIUS,
         },
         curvature::draw_curvature_comb,
         ui_common::contrast_color,
@@ -233,47 +234,6 @@ impl ZColorPickerWrapper {
         self.last_modifying_point_index = Some(new_index);
     }
 
-    pub fn get_control_points_sdf_2d<'a>(
-        &self,
-        control_points: &'a Vec<ControlPoint>,
-        xy: Pos2,
-    ) -> Option<(&'a ControlPoint, f32)> {
-        let mut closest_dist: Option<f32> = None;
-        let mut closest_cp: Option<&ControlPoint> = None;
-        for cp in control_points.iter() {
-            let pos_2d = Pos2::new(
-                cp.val()[0].clamp(0.0, 1.0),
-                1.0 - cp.val()[1].clamp(0.0, 1.0),
-            );
-            let distance_2d = pos_2d.distance(xy);
-
-            match closest_dist {
-                Some(closest_dist_2d) => {
-                    if distance_2d < closest_dist_2d {
-                        closest_cp = Some(cp);
-                        closest_dist = Some(distance_2d);
-                    }
-                }
-                None => {
-                    closest_cp = Some(cp);
-                    closest_dist = Some(distance_2d);
-                }
-            };
-        }
-
-        match closest_dist {
-            Some(closest_dist_2d) => {
-                let dist = closest_dist_2d;
-                log::debug!("Closest Dist: {}", dist);
-                Some((closest_cp.unwrap(), dist))
-            }
-            None => {
-                log::debug!("Did not find closest dist");
-                None
-            }
-        }
-    }
-
     fn apply_interpolate_hue_middle(&mut self, control_points: &mut Vec<ControlPoint>) {
         let num_points = control_points.len();
         if num_points >= 2 {
@@ -328,52 +288,27 @@ impl ZColorPickerWrapper {
         &mut self,
         control_points: &mut Vec<ControlPoint>,
         z_color_picker_response: &Response,
-    ) -> bool {
-        if z_color_picker_response.double_clicked_by(PointerButton::Primary) {
-            match z_color_picker_response.interact_pointer_pos() {
-                Some(pos) => {
-                    if z_color_picker_response.rect.contains(pos) {
-                        let z_color_picker_response_xy = pos - z_color_picker_response.rect.min;
-                        let normalized_xy =
-                            z_color_picker_response_xy / z_color_picker_response.rect.size();
-
-                        let closest =
-                            self.get_control_points_sdf_2d(control_points, normalized_xy.to_pos2());
-                        const MIN_DIST: f32 = 0.1;
-
-                        let color_xy = Pos2::new(
-                            normalized_xy.x.clamp(0.0, 1.0),
-                            1.0 - normalized_xy.y.clamp(0.0, 1.0),
-                        );
-
-                        match closest {
-                            Some((cp, dist)) => {
-                                let should_spawn_control_point = dist > MIN_DIST;
-                                if should_spawn_control_point {
-                                    let color_hue: f32 = cp.val().h();
-
-                                    let color: [f32; 3] = [color_xy[0], color_xy[1], color_hue];
-                                    let new_cp: ControlPoint =
-                                        ControlPoint::new_simple(color.into(), *cp.t());
-                                    self.spawn_control_point(control_points, new_cp);
-                                }
-                            }
-                            _ => {
-                                let color: [f32; 3] = [color_xy[0], color_xy[1], 0.0];
-                                let new_cp = ControlPoint::new_simple(color.into(), 0.0);
-                                self.spawn_control_point(control_points, new_cp);
-                            }
-                        };
-                        self.apply_control_point_constraints(control_points);
-                    }
-                }
-                _ => {}
-            }
-
-            return true;
+    ) {
+        if !z_color_picker_response.double_clicked_by(PointerButton::Primary) {
+            return;
         }
-
-        false
+        let Some(pos) = z_color_picker_response.interact_pointer_pos() else {
+            return;
+        };
+        let rect = z_color_picker_response.rect;
+        if !rect.contains(pos) {
+            return;
+        }
+        let click_normalized = ((pos - rect.min) / rect.size()).to_pos2();
+        if let Some(cp) = point_to_spawn(
+            control_points,
+            click_normalized,
+            rect.size(),
+            CONTROL_POINT_FILL_RADIUS,
+        ) {
+            self.spawn_control_point(control_points, cp);
+            self.apply_control_point_constraints(control_points);
+        }
     }
 }
 
@@ -390,6 +325,29 @@ fn selection_after_removal(
         Ordering::Equal => removed.saturating_sub(1),
     };
     Some(kept.min(last))
+}
+
+fn point_to_spawn(
+    control_points: &[ControlPoint],
+    click_normalized: Pos2,
+    rect_size: Vec2,
+    min_dist_px: f32,
+) -> Option<ControlPoint> {
+    let click = click_normalized.clamp(Pos2::ZERO, pos2(1.0, 1.0));
+    let screen_dist = |cp: &ControlPoint| ((control_point_pos(cp) - click) * rect_size).length();
+    let nearest = control_points
+        .iter()
+        .map(|cp| (cp, screen_dist(cp)))
+        .min_by(|(_, a), (_, b)| a.total_cmp(b));
+    let (hue, t) = match nearest {
+        None => (0.0, 0.0),
+        Some((_, dist)) if dist <= min_dist_px => return None,
+        Some((cp, _)) => (cp.val().h(), *cp.t()),
+    };
+    Some(ControlPoint::new_simple(
+        [click.x, 1.0 - click.y, hue].into(),
+        t,
+    ))
 }
 
 pub fn format_color_as(
@@ -1391,5 +1349,59 @@ mod tests {
     fn limit_group_delta_wider_than_range_does_not_move() {
         let points = points_sv(&[(-0.1, 0.5), (1.1, 0.5)]);
         assert_eq!(limit_group_delta(&points, vec2(0.2, 0.0)).x, 0.0);
+    }
+
+    fn spawn_at(points: &[ControlPoint], x: f32, y: f32) -> Option<ControlPoint> {
+        point_to_spawn(
+            points,
+            pos2(x, y),
+            vec2(200.0, 200.0),
+            CONTROL_POINT_FILL_RADIUS,
+        )
+    }
+
+    fn point(s: f32, v: f32, h: f32, t: f32) -> ControlPoint {
+        ControlPoint::new_simple([s, v, h].into(), t)
+    }
+
+    #[test]
+    fn point_to_spawn_empty_list_uses_click_with_zero_hue_and_t() {
+        assert_eq!(spawn_at(&[], 0.25, 0.75), Some(point(0.25, 0.25, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn point_to_spawn_on_point_disc_spawns_nothing() {
+        let points = [point(0.5, 0.5, 0.3, 0.7)];
+        assert_eq!(spawn_at(&points, 0.565, 0.5), None);
+        assert_eq!(spawn_at(&points, 0.5, 0.45), None);
+    }
+
+    #[test]
+    fn point_to_spawn_just_outside_disc_inherits_hue_and_t() {
+        let points = [point(0.5, 0.5, 0.3, 0.7)];
+        assert_eq!(
+            spawn_at(&points, 0.58, 0.5),
+            Some(point(0.58, 0.5, 0.3, 0.7))
+        );
+        assert_eq!(spawn_at(&points, 0.6, 0.5), Some(point(0.6, 0.5, 0.3, 0.7)));
+    }
+
+    #[test]
+    fn point_to_spawn_inherits_from_nearest_point() {
+        let points = [point(0.25, 0.5, 0.1, 0.2), point(0.75, 0.5, 0.9, 0.8)];
+        assert_eq!(
+            spawn_at(&points, 0.625, 0.5),
+            Some(point(0.625, 0.5, 0.9, 0.8))
+        );
+    }
+
+    #[test]
+    fn point_to_spawn_clamps_click_outside_unit_square() {
+        assert_eq!(spawn_at(&[], 1.5, -0.25), Some(point(1.0, 1.0, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn point_to_spawn_top_left_is_zero_saturation_full_value() {
+        assert_eq!(spawn_at(&[], 0.0, 0.0), Some(point(0.0, 1.0, 0.0, 0.0)));
     }
 }
