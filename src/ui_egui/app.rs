@@ -210,6 +210,8 @@ pub struct ZApp {
     tree: egui_tiles::Tree<Pane>,
     #[serde(skip)]
     log_buffer: Arc<Mutex<Vec<String>>>,
+    #[serde(skip)]
+    had_keyboard_focus: bool,
 }
 
 const HARDCODED_MONITOR_SIZE: Vec2 = Vec2::new(2560.0, 1440.0);
@@ -238,6 +240,7 @@ impl ZApp {
             tree: Self::create_tree(app_ctx.clone(), log_buffer.clone()),
             app_ctx: app_ctx,
             log_buffer: log_buffer,
+            had_keyboard_focus: false,
         }
     }
 
@@ -338,11 +341,15 @@ impl ZApp {
 
         let mut should_create = false;
         let mut text_changed = false;
+        let mut close_requested = false;
         egui::Window::new("Create Preset")
             .open(&mut is_open)
             .show(ctx, |ui| {
+                close_requested = ui.input(|i| i.key_pressed(egui::Key::Escape));
                 let text_response = ui.text_edit_singleline(&mut text);
-                text_response.request_focus();
+                if !close_requested {
+                    text_response.request_focus();
+                }
                 text_changed = text_response.changed();
 
                 let was_enter =
@@ -360,6 +367,9 @@ impl ZApp {
                     .clicked();
                 should_create = check.is_ok() && (was_enter || create_clicked);
             });
+        if close_requested {
+            is_open = false;
+        }
 
         // 3. Re-borrow mutably only at the very end to apply changes
         let mut ctx_write = self.app_ctx.borrow_mut();
@@ -589,27 +599,25 @@ impl ZApp {
         app_ctx.debug_window_test.draw_ui(ui);
     }
 
-    fn process_ctx_inputs(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn is_escape_blocked(&self, ctx: &egui::Context) -> bool {
+        let app_ctx = self.app_ctx.borrow();
+        self.had_keyboard_focus
+            || ctx.memory(|m| m.any_popup_open())
+            || app_ctx.presets_window.new_preset_is_open
+            || app_ctx.presets_window.delete_confirm_open
+    }
+
+    fn process_ctx_inputs(
+        &mut self,
+        ctx: &egui::Context,
+        _frame: &mut eframe::Frame,
+        esc_blocked: bool,
+    ) {
         let mut user_quit: bool = false;
         {
             let app_ctx = &mut self.app_ctx.borrow_mut();
-            let _input_ctx = ctx.input(|r| {
-                // Esc
-                if r.key_down(egui::Key::Escape) {
-                    user_quit = true;
-                }
-
-                // DoubleLeftClick
-                if r.pointer.button_double_clicked(PointerButton::Primary) {
-                    let mouse_pos = r.pointer.interact_pos().unwrap();
-                    log::info!("double click @({},{})", mouse_pos.x, mouse_pos.y);
-                }
-
-                if r.pointer.button_clicked(PointerButton::Middle) {
-                    let mouse_pos: Pos2 = r.pointer.interact_pos().unwrap();
-
-                    log::info!("middle click @({},{})", mouse_pos.x, mouse_pos.y);
-                }
+            ctx.input(|r| {
+                user_quit = should_quit_on_escape(&r.events, esc_blocked);
 
                 // Debug toggles
                 if r.key_pressed(egui::Key::F12) {
@@ -641,6 +649,21 @@ impl ZApp {
     }
 }
 
+fn should_quit_on_escape(events: &[egui::Event], esc_blocked: bool) -> bool {
+    let esc_first_press = events.iter().any(|event| {
+        matches!(
+            event,
+            egui::Event::Key {
+                key: egui::Key::Escape,
+                pressed: true,
+                repeat: false,
+                ..
+            }
+        )
+    });
+    esc_first_press && !esc_blocked
+}
+
 impl eframe::App for ZApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         log::info!("SAVING...");
@@ -660,9 +683,12 @@ impl eframe::App for ZApp {
                 self.state = AppState::Idle;
             }
             AppState::Idle => {
+                // egui drops focus and closes popups during the Esc frame, so read them first.
+                let esc_blocked = self.is_escape_blocked(ctx);
                 self.handle_clipboardcopy_event();
                 self.draw_ui_tree(ctx, frame);
-                self.process_ctx_inputs(ctx, frame);
+                self.process_ctx_inputs(ctx, frame, esc_blocked);
+                self.had_keyboard_focus = ctx.wants_keyboard_input();
             }
             AppState::Exit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -687,5 +713,35 @@ impl eframe::App for ZApp {
         //         event.frame_pixels = None;
         //     }
         // }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key_event(key: egui::Key, pressed: bool, repeat: bool) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn escape_quits_only_on_first_press_when_not_blocked() {
+        let first_press = [key_event(egui::Key::Escape, true, false)];
+        let repeat = [key_event(egui::Key::Escape, true, true)];
+        let release = [key_event(egui::Key::Escape, false, false)];
+        let other_key = [key_event(egui::Key::Enter, true, false)];
+
+        assert!(should_quit_on_escape(&first_press, false));
+        assert!(!should_quit_on_escape(&first_press, true));
+        assert!(!should_quit_on_escape(&repeat, false));
+        assert!(!should_quit_on_escape(&release, false));
+        assert!(!should_quit_on_escape(&other_key, false));
+        assert!(!should_quit_on_escape(&[], false));
     }
 }
