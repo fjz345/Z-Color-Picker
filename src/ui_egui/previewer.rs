@@ -249,24 +249,27 @@ fn ui_previewer_curve_quantized(
     response
 }
 
-fn ui_previewer_options(ui: &mut Ui, _size: Vec2, previewer_data: &mut PreviewerData) {
-    let slider = egui::Slider::new(
-        &mut previewer_data.quantize_num_levels,
-        1..=previewer_data.control_points.len(),
-    );
-    let slider_size: Vec2 = Vec2::new(300.0, 25.0);
-    let mut slider_button_rect: Rect = Rect::from_min_size(
-        egui::Pos2 {
-            x: ui.max_rect().min.x,
-            y: ui.max_rect().min.y,
-        },
-        slider_size,
-    );
-    slider_button_rect = slider_button_rect.translate(Vec2::new(0.0, 25.0));
+fn previewer_strip_heights(total_height: f32, controls_height: f32) -> [f32; 3] {
+    let strips_height = (total_height - controls_height).max(0.0);
+    [0.2, 0.4, 0.4].map(|share| share * strips_height)
+}
 
-    if ui.put(slider_button_rect, slider).clicked() {
-        previewer_data.reset_preview_sizes();
-    }
+fn ui_previewer_options(ui: &mut Ui, previewer_data: &mut PreviewerData) {
+    ui.horizontal(|ui| {
+        ui.label("Levels");
+        ui.add(egui::Slider::new(
+            &mut previewer_data.quantize_num_levels,
+            1..=previewer_data.control_points.len(),
+        ))
+        .on_hover_text("Number of quantized colors");
+        if ui
+            .button("Reset sizes")
+            .on_hover_text("Reset the color band widths")
+            .clicked()
+        {
+            previewer_data.reset_preview_sizes();
+        }
+    });
 }
 
 pub fn ui_previewer(
@@ -276,48 +279,38 @@ pub fn ui_previewer(
     color_copy_format: ColorStringCopy,
 ) -> PreviewerUiResponses {
     let previewer_rect = ui.available_rect_before_wrap();
+    let gaps_after_strips = 3.0 * ui.spacing().item_spacing.y;
+    let controls_height = ui.spacing().interact_size.y + gaps_after_strips;
+    let [control_points_height, curve_height, quantized_height] =
+        previewer_strip_heights(previewer_rect.height(), controls_height);
+    let width = previewer_rect.width();
 
     let inner_response = ui.vertical(|ui| {
         let control_points = &previewer_data.control_points.clone();
 
         let response_control_points = ui_previewer_control_points_with_drag(
             ui,
-            previewer_rect.size() * Vec2::new(1.0, 0.16),
+            Vec2::new(width, control_points_height),
             control_points,
             previewer_data,
             color_copy_format,
         );
         let response_curve = ui_previewer_curve(
             ui,
-            previewer_rect.size() * Vec2::new(1.0, 0.25),
+            Vec2::new(width, curve_height),
             control_points,
             spline_mode,
         );
         let response_curve_quantized = ui_previewer_curve_quantized(
             ui,
-            previewer_rect.size() * Vec2::new(1.0, 0.25),
+            Vec2::new(width, quantized_height),
             control_points,
             spline_mode,
             previewer_data,
             color_copy_format,
             previewer_data.quantize_num_levels,
         );
-        let _response_curve_options = ui_previewer_options(
-            ui,
-            previewer_rect.size() * Vec2::new(1.0, 1.0),
-            previewer_data,
-        );
-
-        let reset_button = egui::Button::new("❌").small().frame(true).wrap();
-        let reset_button_size: Vec2 = Vec2::new(25.0, 25.0);
-        let reset_button_rect: Rect = Rect {
-            min: previewer_rect.min,
-            max: previewer_rect.min + reset_button_size,
-        };
-
-        if ui.put(reset_button_rect, reset_button).clicked() {
-            previewer_data.reset_preview_sizes();
-        }
+        ui_previewer_options(ui, previewer_data);
 
         PreviewerUiResponses {
             controlpoints: Some(response_control_points.clone()),
@@ -435,5 +428,32 @@ impl ZPreviewer {
 impl Default for ZPreviewer {
     fn default() -> Self {
         Self::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_heights_plus_controls_fill_total() {
+        let heights = previewer_strip_heights(600.0, 27.0);
+        let sum: f32 = heights.iter().sum();
+        assert!((sum + 27.0 - 600.0).abs() < 1e-3, "{heights:?}");
+    }
+
+    #[test]
+    fn strip_heights_ratio_is_1_2_2() {
+        let [swatches, curve, quantized] = previewer_strip_heights(527.0, 27.0);
+        assert!((swatches - 100.0).abs() < 1e-3, "{swatches}");
+        assert!((curve - 2.0 * swatches).abs() < 1e-3);
+        assert!((quantized - 2.0 * swatches).abs() < 1e-3);
+    }
+
+    #[test]
+    fn strip_heights_are_zero_when_controls_do_not_fit() {
+        let heights = previewer_strip_heights(10.0, 27.0);
+        assert!(heights.iter().all(|&height| height >= 0.0), "{heights:?}");
+        assert_eq!(heights.iter().sum::<f32>(), 0.0);
     }
 }
