@@ -21,6 +21,17 @@ use crate::{
     },
 };
 
+fn on_hover_strip_hint(response: Response, text: &str) -> Response {
+    // A middle press screenshots this pass, so a tooltip drawn now would be in the copied image.
+    if response
+        .ctx
+        .input(|i| i.pointer.button_down(PointerButton::Middle))
+    {
+        return response;
+    }
+    response.on_hover_text(text)
+}
+
 fn ui_previewer_colors(
     ui: &mut Ui,
     size: Vec2,
@@ -47,7 +58,7 @@ fn ui_previewer_colors(
 
     for cp in control_points {
         let size_weight: f32 = 1.0;
-        color_button(
+        let response_button = color_button(
             &mut previewer_ui_control_points,
             Vec2 {
                 x: size_weight * size_per_color_x,
@@ -55,8 +66,8 @@ fn ui_previewer_colors(
             },
             cp.color(),
             true,
-        )
-        .on_hover_text(&hover_text);
+        );
+        on_hover_strip_hint(response_button, &hover_text);
     }
 
     response
@@ -98,10 +109,11 @@ fn ui_previewer_control_points_with_drag(
             cp.val().color(),
             true,
         )
-        .on_hover_text(
-            "Key colors. Drag a band to resize it; middle-click copies the strip as an image",
-        )
         .on_hover_and_drag_cursor(CursorIcon::ResizeHorizontal);
+        let response_button = on_hover_strip_hint(
+            response_button,
+            "Key colors. Drag a band to resize it; middle-click copies the strip as an image",
+        );
 
         if response_button.dragged_by(PointerButton::Primary) {
             resize_band(
@@ -186,7 +198,10 @@ fn ui_previewer_curve(
         sample.color()
     });
 
-    response.on_hover_text("Gradient along the curve; middle-click copies it as an image")
+    on_hover_strip_hint(
+        response,
+        "Gradient along the curve; middle-click copies it as an image",
+    )
 }
 
 fn ui_previewer_curve_quantized(
@@ -669,13 +684,17 @@ mod tests {
         }
     }
 
-    fn draw_previewer(previewer_data: &mut PreviewerData) -> (bool, usize) {
-        let ctx = egui::Context::default();
+    fn draw_previewer_pass(
+        ctx: &egui::Context,
+        previewer_data: &mut PreviewerData,
+        events: Vec<egui::Event>,
+    ) -> (Vec<Rect>, Vec<String>) {
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(
                 egui::Pos2::ZERO,
                 Vec2::new(800.0, 600.0),
             )),
+            events,
             ..Default::default()
         };
         let mut rects = Vec::new();
@@ -690,10 +709,23 @@ mod tests {
                 .get_rects();
             });
         });
-        let paints_hint = output.shapes.iter().any(|clipped| match &clipped.shape {
-            egui::Shape::Text(text) => text.galley.text() == EMPTY_PREVIEWER_HINT,
-            _ => false,
-        });
+        let painted_texts = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect();
+        (rects, painted_texts)
+    }
+
+    fn draw_previewer(previewer_data: &mut PreviewerData) -> (bool, usize) {
+        let (rects, painted_texts) =
+            draw_previewer_pass(&egui::Context::default(), previewer_data, Vec::new());
+        let paints_hint = painted_texts
+            .iter()
+            .any(|text| text == EMPTY_PREVIEWER_HINT);
         (paints_hint, rects.len())
     }
 
@@ -701,5 +733,51 @@ mod tests {
     fn empty_previewer_paints_hint_and_no_copy_rects() {
         assert_eq!(draw_previewer(&mut PreviewerData::new(0)), (true, 0));
         assert_eq!(draw_previewer(&mut PreviewerData::new(2)), (false, 3));
+    }
+
+    fn mentions_middle_click(painted_texts: &[String]) -> bool {
+        painted_texts
+            .iter()
+            .any(|text| text.contains("middle-click"))
+    }
+
+    #[test]
+    fn middle_press_hides_strip_copy_tooltips() {
+        for strip in 0..3 {
+            let ctx = egui::Context::default();
+            ctx.style_mut(|style| {
+                style.interaction.tooltip_delay = 0.0;
+                style.interaction.show_tooltips_only_when_still = false;
+            });
+            let mut previewer_data = PreviewerData::new(2);
+            let (rects, _) = draw_previewer_pass(&ctx, &mut previewer_data, Vec::new());
+            let pos = rects[strip].lerp_inside(Vec2::new(0.3, 0.5));
+            draw_previewer_pass(
+                &ctx,
+                &mut previewer_data,
+                vec![egui::Event::PointerMoved(pos)],
+            );
+            let mut hovered_texts = Vec::new();
+            for _ in 0..3 {
+                (_, hovered_texts) = draw_previewer_pass(&ctx, &mut previewer_data, Vec::new());
+            }
+            assert!(
+                mentions_middle_click(&hovered_texts),
+                "strip {strip}: {hovered_texts:?}"
+            );
+
+            let middle_press = egui::Event::PointerButton {
+                pos,
+                button: PointerButton::Middle,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            };
+            let (_, pressed_texts) =
+                draw_previewer_pass(&ctx, &mut previewer_data, vec![middle_press]);
+            assert!(
+                !mentions_middle_click(&pressed_texts),
+                "strip {strip}: {pressed_texts:?}"
+            );
+        }
     }
 }
