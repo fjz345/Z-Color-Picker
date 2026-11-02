@@ -12,6 +12,7 @@ use crate::preset::PresetEntity;
 use crate::preset::PresetHandler;
 use crate::ui_egui::app::ZColorPickerOptions;
 use crate::ui_egui::color_picker::format_color_as;
+use crate::ui_egui::curvature::COMB_SCALE_RANGE;
 use crate::ui_egui::ui_common::ContentWindow;
 
 pub struct WindowPresetDrawResult {
@@ -115,12 +116,29 @@ impl WindowZColorPickerOptions {
             });
             ui.checkbox(&mut options.is_window_lock, "Clamp")
                 .on_hover_text("Keep points inside the S/V square and wrap hue into 0..1");
-            ui.add_enabled(
-                *spline_mode == SplineMode::Bezier,
-                egui::Checkbox::new(&mut options.is_show_curvature_comb, "Comb"),
-            )
-            .on_hover_text("Curvature comb: spikes show how sharply the Bezier curve bends")
-            .on_disabled_hover_text("The comb is only drawn in Bezier mode");
+            let is_curved = *spline_mode != SplineMode::Linear;
+            let straight_hint = "Linear segments are straight: there is no curvature to show";
+            ui.horizontal(|ui| {
+                ui.add_enabled(
+                    is_curved,
+                    egui::Checkbox::new(&mut options.is_show_curvature_comb, "Comb"),
+                )
+                .on_hover_text("Curvature comb: spikes show how sharply the curve bends")
+                .on_disabled_hover_text(straight_hint);
+                ui.add_enabled(
+                    is_curved && options.is_show_curvature_comb,
+                    egui::Slider::new(&mut options.curvature_comb_scale, COMB_SCALE_RANGE)
+                        .logarithmic(true)
+                        .fixed_decimals(2)
+                        .suffix("×"),
+                )
+                .on_hover_text("Comb spike length")
+                .on_disabled_hover_text(if is_curved {
+                    "Turn on Comb first"
+                } else {
+                    straight_hint
+                });
+            });
         });
 
         ui.horizontal_wrapped(|ui| {
@@ -805,6 +823,68 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn draw_options_frame(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        options: &mut ZColorPickerOptions,
+        mut spline_mode: SplineMode,
+    ) -> egui::FullOutput {
+        let mut window = WindowZColorPickerOptions::new();
+        let mut color_copy_format = ColorStringCopy::HEXNOA;
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                window.draw_content(ui, options, &mut spline_mode, &mut color_copy_format);
+            });
+        })
+    }
+
+    fn painted_text_center(output: &egui::FullOutput, wanted: &str) -> egui::Pos2 {
+        output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.text() == wanted => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{wanted:?} not painted"))
+    }
+
+    fn click_comb(spline_mode: SplineMode) -> ZColorPickerOptions {
+        let ctx = egui::Context::default();
+        let mut options = ZColorPickerOptions::default();
+        let output = draw_options_frame(&ctx, Vec::new(), &mut options, spline_mode);
+        let pos = painted_text_center(&output, "Comb");
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let press = vec![egui::Event::PointerMoved(pos), button(true)];
+        draw_options_frame(&ctx, press, &mut options, spline_mode);
+        draw_options_frame(&ctx, vec![button(false)], &mut options, spline_mode);
+        options
+    }
+
+    #[test]
+    fn comb_checkbox_toggles_in_curved_modes_only() {
+        assert!(ZColorPickerOptions::default().is_show_curvature_comb);
+        for (mode, toggles) in [
+            (SplineMode::Bezier, true),
+            (SplineMode::HermiteBezier, true),
+            (SplineMode::Linear, false),
+        ] {
+            let options = click_comb(mode);
+            assert_eq!(options.is_show_curvature_comb, !toggles, "{mode:?}");
+        }
     }
 
     #[test]

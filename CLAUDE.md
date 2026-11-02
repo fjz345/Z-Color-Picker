@@ -55,7 +55,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 - There is no `Polynomial` mode; saved JSON that names it fails to parse.
 - `flatten_control_points` unwraps hue across the 0/1 boundary before interpolation.
 - The previewer (`src/ui_egui/previewer.rs`) samples with `sample_spline_normalized`, which maps x in [0,1] onto the real keys. It handles the end of a Catmull-Rom spline, where the `splines` sampler returns `None`. In every mode, the quantized preview first remaps the real keys' `t` to the centres of the key bands (`points_preview_sizes`, `modify_spline_t_to_preview_sizes`); the Catmull-Rom phantom keys are mirrored one key spacing outside the end keys. The middle curve strip ignores the band widths.
-- Curvature comb drawing lives in `src/ui_egui/curvature.rs` and has its own cubic evaluation. It is toggled via `ZColorPickerOptions::is_show_curvature_comb`.
+- Curvature comb drawing lives in `src/ui_egui/curvature.rs` and has its own cubic evaluation. It is toggled via `ZColorPickerOptions::is_show_curvature_comb`; `curvature_comb_scale` multiplies every spike's length. Linear has no comb. Hermite segments are converted from the spline's Catmull-Rom keys to exact cubic Beziers (`catmull_rom_cubics`, the tangent formula of `HsvKeyValue::cubic_hermite`), so they follow the key times. Their inner control points are the read-only Hermite tangents drawn dashed on the selected point (`paint_auto_tangents`).
 
 ### Presets
 - `src/preset.rs`: one JSON file per `PresetEntity` in `./presets/` (the `presets/` folder is gitignored). The path comes from `std::env::current_dir()`.
