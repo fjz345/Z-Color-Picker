@@ -450,6 +450,29 @@ impl PreviewerData {
     }
 }
 
+fn reconcile_preview_sizes(old: &[ControlPoint], new: &[ControlPoint], sizes: &[f32]) -> Vec<f32> {
+    let defaults = || vec![PREVIEWER_DEFAULT_VALUE; new.len()];
+    if sizes.len() != old.len() {
+        return defaults();
+    }
+    let first_sv_change = old
+        .iter()
+        .zip(new)
+        .position(|(old, new)| old.val()[0] != new.val()[0] || old.val()[1] != new.val()[1]);
+    let mut sizes = sizes.to_vec();
+    if new.len() == old.len() + 1 {
+        sizes.insert(
+            first_sv_change.unwrap_or(old.len()),
+            PREVIEWER_DEFAULT_VALUE,
+        );
+    } else if new.len() + 1 == old.len() {
+        sizes.remove(first_sv_change.unwrap_or(new.len()));
+    } else if new.len() != old.len() {
+        return defaults();
+    }
+    sizes
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZPreviewer {
     pub data: PreviewerData,
@@ -464,15 +487,13 @@ impl ZPreviewer {
 
     pub fn update(&mut self, control_points: &[ControlPoint], spline_mode: SplineMode) {
         self.data.spline_mode = spline_mode;
-
-        let old_size = self.data.control_points.len();
-        let new_size = control_points.len();
+        self.data.points_preview_sizes = reconcile_preview_sizes(
+            &self.data.control_points,
+            control_points,
+            &self.data.points_preview_sizes,
+        );
         self.data.control_points.clear();
         self.data.control_points.extend_from_slice(control_points);
-
-        if old_size != new_size {
-            self.data.points_preview_sizes = vec![PREVIEWER_DEFAULT_VALUE; new_size];
-        }
     }
 
     pub fn draw_ui(
@@ -837,6 +858,158 @@ mod tests {
                 !mentions_middle_click(&pressed_texts),
                 "strip {strip}: {pressed_texts:?}"
             );
+        }
+    }
+
+    fn point(s: f32, v: f32, h: f32) -> ControlPoint {
+        ControlPoint::new_simple(ControlPointValue::new(s, v, h), 0.0)
+    }
+
+    fn abc() -> [ControlPoint; 3] {
+        [
+            point(0.1, 0.1, 0.5),
+            point(0.4, 0.5, 0.5),
+            point(0.9, 0.8, 0.5),
+        ]
+    }
+
+    fn spawned() -> ControlPoint {
+        point(0.6, 0.3, 0.5)
+    }
+
+    const CUSTOM_SIZES: [f32; 3] = [10.0, 20.0, 30.0];
+    const D: f32 = PREVIEWER_DEFAULT_VALUE;
+
+    #[test]
+    fn reconcile_insert_gives_new_index_the_default() {
+        let [a, b, c] = abc();
+        let x = spawned();
+        for (new, expected) in [
+            (
+                vec![a.clone(), x.clone(), b.clone(), c.clone()],
+                [10.0, D, 20.0, 30.0],
+            ),
+            (
+                vec![a.clone(), b.clone(), c.clone(), x.clone()],
+                [10.0, 20.0, 30.0, D],
+            ),
+            (
+                vec![x.clone(), a.clone(), b.clone(), c.clone()],
+                [D, 10.0, 20.0, 30.0],
+            ),
+        ] {
+            assert_eq!(
+                reconcile_preview_sizes(&abc(), &new, &CUSTOM_SIZES),
+                expected,
+                "{new:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reconcile_insert_ignores_hue_changes_before_the_insert_index() {
+        let [a, mut b, c] = abc();
+        b.val_mut()[2] = 0.9;
+        let new = [a, b, spawned(), c];
+        assert_eq!(
+            reconcile_preview_sizes(&abc(), &new, &CUSTOM_SIZES),
+            [10.0, 20.0, D, 30.0]
+        );
+    }
+
+    #[test]
+    fn reconcile_remove_drops_that_width() {
+        let [a, b, c] = abc();
+        for (new, expected) in [
+            ([b.clone(), c.clone()], [20.0, 30.0]),
+            ([a.clone(), c.clone()], [10.0, 30.0]),
+            ([a.clone(), b.clone()], [10.0, 20.0]),
+        ] {
+            assert_eq!(
+                reconcile_preview_sizes(&abc(), &new, &CUSTOM_SIZES),
+                expected,
+                "{new:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reconcile_two_points_added_or_removed_resets() {
+        let [a, b, c] = abc();
+        let plus_two = [a.clone(), spawned(), point(0.2, 0.9, 0.5), b, c];
+        assert_eq!(
+            reconcile_preview_sizes(&abc(), &plus_two, &CUSTOM_SIZES),
+            [D; 5]
+        );
+        assert_eq!(reconcile_preview_sizes(&abc(), &[a], &CUSTOM_SIZES), [D]);
+    }
+
+    #[test]
+    fn reconcile_same_count_keeps_sizes_of_moved_points() {
+        let moved = abc().map(|mut cp| {
+            cp.val_mut()[0] *= 0.5;
+            cp
+        });
+        assert_eq!(
+            reconcile_preview_sizes(&abc(), &moved, &CUSTOM_SIZES),
+            CUSTOM_SIZES
+        );
+    }
+
+    #[test]
+    fn reconcile_sizes_not_matching_old_reset() {
+        let [a, b, c] = abc();
+        let four = [a, spawned(), b, c];
+        assert_eq!(
+            reconcile_preview_sizes(&abc(), &four, &[10.0, 20.0]),
+            [D; 4]
+        );
+        assert_eq!(
+            reconcile_preview_sizes(&abc(), &abc(), &[10.0, 20.0]),
+            [D; 3]
+        );
+    }
+
+    #[test]
+    fn previewer_update_keeps_sizes_on_insert_until_reset() {
+        let [a, b, c] = abc();
+        let mut previewer = ZPreviewer::default();
+        previewer.update(&abc(), SplineMode::Linear);
+        previewer.data.points_preview_sizes = CUSTOM_SIZES.to_vec();
+
+        previewer.update(&[a, spawned(), b, c], SplineMode::Linear);
+        assert_eq!(previewer.data.points_preview_sizes, [10.0, D, 20.0, 30.0]);
+
+        previewer.data.reset_preview_sizes();
+        assert_eq!(previewer.data.points_preview_sizes, [D; 4]);
+    }
+
+    #[test]
+    fn quantized_colors_survive_count_transitions() {
+        let pool: Vec<ControlPoint> = (0..5)
+            .map(|i| point(i as f32 * 0.2, 1.0 - i as f32 * 0.2, 0.1 * i as f32))
+            .collect();
+        for spline_mode in [
+            SplineMode::Linear,
+            SplineMode::Bezier,
+            SplineMode::HermiteBezier,
+        ] {
+            for from in 0..=5 {
+                for to in 0..=5 {
+                    let mut previewer = ZPreviewer::default();
+                    previewer.update(&pool[..from], spline_mode);
+                    for (i, size) in previewer.data.points_preview_sizes.iter_mut().enumerate() {
+                        *size = 10.0 * (i + 1) as f32;
+                    }
+                    previewer.update(&pool[..to], spline_mode);
+                    let colors = quantized_colors(&pool[..to], spline_mode, &previewer.data, 8);
+                    assert_eq!(
+                        colors.len(),
+                        if to == 0 { 0 } else { 8 },
+                        "{spline_mode:?} {from} -> {to}"
+                    );
+                }
+            }
         }
     }
 }
