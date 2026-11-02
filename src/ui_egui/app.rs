@@ -414,6 +414,7 @@ impl ZApp {
     fn draw_ui_tree(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Windows needs to be drawn before the tree
         self.show_create_preset_window(ctx);
+        self.app_ctx.borrow_mut().stored_ui_responses = PreviewerUiResponses::default();
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.with_layout(Layout::left_to_right(egui::Align::Min), |mut ui| {
@@ -629,19 +630,18 @@ fn visible_name_error(text: &str, check: Result<(), PresetNameError>) -> Option<
     check.err().map(|err| err.to_string())
 }
 
-fn begin_screenshot(app_ctx: &mut ZColorPickerAppContext, pointer_pos: Pos2) {
-    let mut found_rect = None;
-    for rect in app_ctx.stored_ui_responses.get_rects() {
-        if rect.contains(pointer_pos) {
-            found_rect = Some(rect);
-            log::debug!("Found Rect");
-            break;
-        }
-    }
-    let target = match found_rect {
-        Some(rect) => ScreenshotTarget::Region(rect),
+fn screenshot_target(pointer_pos: Pos2, previewer_rects: &[Rect]) -> ScreenshotTarget {
+    match previewer_rects
+        .iter()
+        .find(|rect| rect.contains(pointer_pos))
+    {
+        Some(&rect) => ScreenshotTarget::Region(rect),
         None => ScreenshotTarget::Pixel(pointer_pos),
-    };
+    }
+}
+
+fn begin_screenshot(app_ctx: &mut ZColorPickerAppContext, pointer_pos: Pos2) {
+    let target = screenshot_target(pointer_pos, &app_ctx.stored_ui_responses.get_rects());
 
     app_ctx.pending_screenshot_target = Some(target);
     app_ctx.clipboard_copy_window.close();
@@ -780,6 +780,32 @@ mod tests {
         assert!(matches!(
             app_ctx.pending_screenshot_target,
             Some(ScreenshotTarget::Pixel(p)) if p == pos
+        ));
+    }
+
+    #[test]
+    fn screenshot_target_is_the_previewer_rect_under_the_pointer() {
+        let left = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(10.0, 10.0));
+        let right = Rect::from_min_max(Pos2::new(20.0, 0.0), Pos2::new(30.0, 10.0));
+
+        assert!(matches!(
+            screenshot_target(Pos2::new(25.0, 5.0), &[left, right]),
+            ScreenshotTarget::Region(r) if r == right
+        ));
+    }
+
+    #[test]
+    fn screenshot_target_outside_every_rect_is_the_pointer_pixel() {
+        let rect = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(10.0, 10.0));
+        let pos = Pos2::new(15.0, 5.0);
+
+        assert!(matches!(
+            screenshot_target(pos, &[rect]),
+            ScreenshotTarget::Pixel(p) if p == pos
+        ));
+        assert!(matches!(
+            screenshot_target(pos, &[]),
+            ScreenshotTarget::Pixel(p) if p == pos
         ));
     }
 

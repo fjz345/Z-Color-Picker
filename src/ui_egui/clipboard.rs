@@ -146,7 +146,7 @@ impl ClipboardPopup {
         let time_since = Instant::now()
             .duration_since(self.open_timestamp)
             .as_secs_f32();
-        let alpha = (1.0 - (time_since / self.open_duration)).clamp(0.0, 1.0);
+        let alpha = popup_alpha(time_since, self.open_duration);
         let color = egui::Color32::from_rgba_unmultiplied(0, 0, 0, (alpha * 200.0) as u8);
 
         let galley = painter.layout_no_wrap(
@@ -176,10 +176,20 @@ pub fn popup_rect(anchor: Pos2, text_size: Vec2, screen: Rect) -> Rect {
     Rect::from_min_size(min, size)
 }
 
+const POPUP_OPAQUE_FRACTION: f32 = 0.6;
+
+pub fn popup_alpha(elapsed: f32, duration: f32) -> f32 {
+    if duration <= 0.0 {
+        return 0.0;
+    }
+    let fade_start = POPUP_OPAQUE_FRACTION * duration;
+    (1.0 - (elapsed - fade_start) / (duration - fade_start)).clamp(0.0, 1.0)
+}
+
 pub fn copy_popup_seconds(result: &Result<()>) -> f32 {
     match result {
-        Ok(()) => 0.7,
-        Err(_) => 2.5,
+        Ok(()) => 1.5,
+        Err(_) => 3.0,
     }
 }
 
@@ -341,7 +351,37 @@ mod tests {
     #[test]
     fn failed_copy_popup_stays_longer() {
         let failed: Result<()> = Err(ZError::from(arboard::Error::ClipboardOccupied));
-        assert_eq!(copy_popup_seconds(&failed), 2.5);
-        assert_eq!(copy_popup_seconds(&Ok(())), 0.7);
+        assert_eq!(copy_popup_seconds(&failed), 3.0);
+        assert_eq!(copy_popup_seconds(&Ok(())), 1.5);
+        assert!(copy_popup_seconds(&failed) > copy_popup_seconds(&Ok(())));
+    }
+
+    #[test]
+    fn popup_alpha_is_opaque_before_sixty_percent() {
+        let duration = 1.5;
+        assert_eq!(popup_alpha(0.0, duration), 1.0);
+        assert_eq!(popup_alpha(0.59 * duration, duration), 1.0);
+    }
+
+    #[test]
+    fn popup_alpha_fades_strictly_down_to_zero_at_duration() {
+        let duration = 1.5;
+        let fading: Vec<f32> = (0..=20)
+            .map(|i| popup_alpha(duration * (0.6 + 0.4 * i as f32 / 20.0), duration))
+            .collect();
+        assert!(
+            fading.windows(2).all(|pair| pair[1] < pair[0]),
+            "{fading:?}"
+        );
+        assert_eq!(popup_alpha(duration, duration), 0.0);
+        assert_eq!(popup_alpha(2.0 * duration, duration), 0.0);
+    }
+
+    #[test]
+    fn popup_alpha_with_zero_duration_is_zero() {
+        let alpha = popup_alpha(0.0, 0.0);
+        assert!(alpha.is_finite());
+        assert_eq!(alpha, 0.0);
+        assert_eq!(popup_alpha(1.0, -1.0), 0.0);
     }
 }
