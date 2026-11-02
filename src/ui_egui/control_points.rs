@@ -230,6 +230,7 @@ pub fn sample_spline_normalized(
     spline_mode: SplineMode,
     x: f32,
 ) -> Option<ControlPointValue> {
+    let x = x.clamp(0.0, 1.0);
     match spline_mode {
         SplineMode::HermiteBezier => {
             // Real keys are at 1..=n, with phantom endpoint duplicates at 0 and n + 1.
@@ -542,6 +543,127 @@ mod tests {
         assert_eq!(find_spline_max_t(&hermite), 4.0);
         let empty = control_points_to_spline(&[], SplineMode::Linear);
         assert_eq!(find_spline_max_t(&empty), 0.0);
+    }
+
+    fn assert_sample_near(
+        sample: Option<ControlPointValue>,
+        expected: ControlPointValue,
+        context: &str,
+    ) {
+        let sample = sample.unwrap_or_else(|| panic!("{context}: no sample"));
+        for c in 0..3 {
+            assert!(
+                (sample[c] - expected[c]).abs() < 1e-5,
+                "{context}: {sample:?} vs {expected:?}"
+            );
+        }
+    }
+
+    fn distinct_points(n: usize) -> Vec<ControlPoint> {
+        (0..n)
+            .map(|i| {
+                let i = i as f32;
+                let val =
+                    ControlPointValue::new((0.1 + 0.37 * i) % 1.0, (0.8 + 0.61 * i) % 1.0, 0.4);
+                ControlPoint::new_simple(val, i)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn bezier_segment_uses_outgoing_slot_of_start_and_incoming_slot_of_end() {
+        let cps = [
+            point_with_tangent([0.0, 0.0, 0.0], 1, [0.3, 0.0, 0.0]),
+            point_with_tangent([1.0, 1.0, 0.0], 0, [0.0, -0.2, 0.0]),
+        ];
+        let spline = control_points_to_spline(&cps, SplineMode::Bezier);
+        assert_sample_near(
+            sample_spline_normalized(&spline, SplineMode::Bezier, 0.5),
+            ControlPointValue::new(0.6125, 0.425, 0.0),
+            "bezier midpoint",
+        );
+    }
+
+    #[test]
+    fn sample_hits_every_key() {
+        for n in [3, 4, 5, 7] {
+            let cps = distinct_points(n);
+            for mode in SAMPLED_MODES {
+                let spline = control_points_to_spline(&cps, mode);
+                for (i, cp) in cps.iter().enumerate() {
+                    let x = i as f32 / (n - 1) as f32;
+                    assert_sample_near(
+                        sample_spline_normalized(&spline, mode, x),
+                        *cp.val(),
+                        &format!("{mode:?} n={n} key {i}"),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sample_out_of_range_x_clamps_to_end_keys() {
+        for n in [2, 3] {
+            let cps = distinct_points(n);
+            for mode in SAMPLED_MODES {
+                let spline = control_points_to_spline(&cps, mode);
+                for (x, key) in [(-1.0, 0), (-0.25, 0), (1.25, n - 1), (1.5, n - 1)] {
+                    assert_sample_near(
+                        sample_spline_normalized(&spline, mode, x),
+                        *cps[key].val(),
+                        &format!("{mode:?} n={n} at {x}"),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hue_is_continuous_across_wrap_for_three_keys() {
+        let flattened = flatten_control_points(&points_with_hues(&[0.9, 0.1, 0.3]));
+        for mode in SAMPLED_MODES {
+            let spline = control_points_to_spline(&flattened, mode);
+            let hues: Vec<f32> = (0..=200)
+                .map(|i| sample_spline_normalized(&spline, mode, i as f32 / 200.0).unwrap()[2])
+                .collect();
+            for pair in hues.windows(2) {
+                assert!(
+                    hue_abs_distance(pair[0], pair[1]) < 0.01,
+                    "{mode:?}: jump {} -> {}",
+                    pair[0],
+                    pair[1]
+                );
+            }
+            for hue in hues {
+                assert!(
+                    hue_abs_distance(hue, 0.1) <= 0.2 + 1e-4,
+                    "{mode:?}: {hue} is off the arc 0.9 -> 0.3"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hermite_two_point_gradient_eases_at_the_ends() {
+        let two = [
+            ControlPoint::new_simple(ControlPointValue::new(0.0, 0.0, 0.2), 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(1.0, 1.0, 0.2), 1.0),
+        ];
+        let three = three_points();
+        for (cps, x, sv) in [
+            (&two[..], 0.25, 0.203125),
+            (&two[..], 0.5, 0.5),
+            (&two[..], 0.75, 0.796875),
+            (&three[..], 0.25, 0.21875),
+        ] {
+            let spline = control_points_to_spline(cps, SplineMode::HermiteBezier);
+            assert_sample_near(
+                sample_spline_normalized(&spline, SplineMode::HermiteBezier, x),
+                ControlPointValue::new(sv, sv, 0.2),
+                &format!("{} points at {x}", cps.len()),
+            );
+        }
     }
 
     const PICKER_RECT: Rect = Rect {
