@@ -7,7 +7,11 @@ use std::{
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
-use crate::{common::ColorStringCopy, logger::ui_log_window, ui_egui::app::ZColorPickerAppContext};
+use crate::{
+    common::ColorStringCopy,
+    logger::ui_log_window,
+    ui_egui::{app::ZColorPickerAppContext, content_windows::flip_control_points},
+};
 pub struct TreeBehavior {}
 
 impl egui_tiles::Behavior<Pane> for TreeBehavior {
@@ -128,13 +132,16 @@ impl ZAppPane for ColorPickerOptionsPane {
         presets_window.update();
         let mut color_copy_format = color_copy_format;
 
-        options_window.draw_content(
-            ui,
-            &mut options,
-            &mut control_points,
-            &mut spline_mode,
-            &mut color_copy_format,
-        );
+        let is_flip_clicked =
+            options_window.draw_content(ui, &mut options, &mut spline_mode, &mut color_copy_format);
+        if is_flip_clicked {
+            flip_control_points(
+                &mut control_points,
+                &mut color_picker.last_modifying_point_index,
+                &mut mut_ctx.previewer.data.points_preview_sizes,
+            );
+            color_picker.dragging_index = None;
+        }
         presets_window.draw_content(
             ui,
             &mut preset_handler,

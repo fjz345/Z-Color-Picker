@@ -87,10 +87,9 @@ impl WindowZColorPickerOptions {
         &mut self,
         ui: &mut Ui,
         options: &mut ZColorPickerOptions,
-        control_points: &mut Vec<ControlPoint>,
         spline_mode: &mut SplineMode,
         color_copy_format: &mut ColorStringCopy,
-    ) {
+    ) -> bool {
         ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut options.is_curve_locked, "Lock")
                 .on_hover_text("Move all control points together");
@@ -152,15 +151,24 @@ impl WindowZColorPickerOptions {
                 .response
                 .on_hover_text("Spline Mode");
 
-            if ui.button("Flip").clicked_by(PointerButton::Primary) {
-                // Also Flip the tangets
-                for cp in control_points.iter_mut() {
-                    cp.flip_tangents();
-                }
+            ui.button("Flip").clicked_by(PointerButton::Primary)
+        })
+        .inner
+    }
+}
 
-                control_points.reverse();
-            }
-        });
+pub fn flip_control_points(
+    points: &mut [ControlPoint],
+    selected: &mut Option<usize>,
+    preview_sizes: &mut [f32],
+) {
+    for cp in points.iter_mut() {
+        cp.flip_tangents();
+    }
+    points.reverse();
+    *selected = selected.and_then(|i| points.len().checked_sub(i + 1));
+    if preview_sizes.len() == points.len() {
+        preview_sizes.reverse();
     }
 }
 
@@ -566,5 +574,91 @@ mod tests {
         let ctx = egui::Context::default();
 
         draw_frame(&ctx, &mut window, &mut handler);
+    }
+
+    fn three_points() -> Vec<ControlPoint> {
+        use crate::datatypes::control_point::{ControlPointStorage, ControlPointValue};
+        (0..3)
+            .map(|i| {
+                let f = i as f32;
+                ControlPoint::ControlPointLeftRightTangent(ControlPointStorage {
+                    val: ControlPointValue::new(0.1 + 0.2 * f, 0.9 - 0.3 * f, 0.25 * f),
+                    t: 0.5 * f,
+                    tangents: [
+                        Some(ControlPointValue::new(0.05 * (f + 1.0), 0.0, 0.0)),
+                        None,
+                    ],
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn flip_reverses_points_and_swaps_their_tangents() {
+        let original = three_points();
+        let mut points = original.clone();
+
+        flip_control_points(&mut points, &mut None, &mut []);
+
+        assert_eq!(points.len(), original.len());
+        for (flipped, orig) in points.iter().zip(original.iter().rev()) {
+            assert_eq!(flipped.val(), orig.val());
+            assert_eq!(flipped.t(), orig.t());
+            assert_eq!(flipped.tangents()[0], orig.tangents()[1]);
+            assert_eq!(flipped.tangents()[1], orig.tangents()[0]);
+        }
+    }
+
+    #[test]
+    fn flip_keeps_the_same_point_selected() {
+        for (before, after) in [
+            (Some(0), Some(2)),
+            (Some(1), Some(1)),
+            (Some(2), Some(0)),
+            (None, None),
+            (Some(3), None),
+        ] {
+            let mut points = three_points();
+            let mut selected = before;
+
+            flip_control_points(&mut points, &mut selected, &mut []);
+
+            assert_eq!(selected, after, "selected before flip: {before:?}");
+        }
+    }
+
+    #[test]
+    fn flip_reverses_matching_preview_sizes() {
+        let mut points = three_points();
+        let mut sizes = [10.0, 20.0, 30.0];
+
+        flip_control_points(&mut points, &mut None, &mut sizes);
+
+        assert_eq!(sizes, [30.0, 20.0, 10.0]);
+    }
+
+    #[test]
+    fn flip_leaves_preview_sizes_of_another_length_untouched() {
+        let mut points = three_points();
+        let mut sizes = [10.0, 20.0];
+
+        flip_control_points(&mut points, &mut None, &mut sizes);
+
+        assert_eq!(sizes, [10.0, 20.0]);
+    }
+
+    #[test]
+    fn flip_twice_is_the_identity() {
+        let original = three_points();
+        let mut points = original.clone();
+        let mut selected = Some(0);
+        let mut sizes = [10.0, 20.0, 30.0];
+
+        flip_control_points(&mut points, &mut selected, &mut sizes);
+        flip_control_points(&mut points, &mut selected, &mut sizes);
+
+        assert_eq!(points, original);
+        assert_eq!(selected, Some(0));
+        assert_eq!(sizes, [10.0, 20.0, 30.0]);
     }
 }
