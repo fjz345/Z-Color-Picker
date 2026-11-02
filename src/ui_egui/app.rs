@@ -18,7 +18,7 @@ use crate::{
     },
     image_processing::{u8u8u8_to_u8u8u8u8, u8u8u8u8_to_u8, FramePixelRead, Rgb},
     logger::LogCollector,
-    preset::PresetHandler,
+    preset::{PresetHandler, PresetNameError},
     ui_egui::{
         clipboard::{
             copy_popup_seconds, copy_status_text, crop_screenshot, write_pixels_to_clipboard,
@@ -323,10 +323,15 @@ impl ZApp {
     }
 
     fn show_create_preset_window(&mut self, ctx: &egui::Context) {
-        let (mut is_open, mut text, spline_mode, control_points, preset_handler, create_error) = {
+        let shown_id = egui::Id::new("create_preset_window_shown");
+        if !self.app_ctx.borrow().presets_window.new_preset_is_open {
+            ctx.data_mut(|d| d.remove::<bool>(shown_id));
+            return;
+        }
+
+        let (mut text, spline_mode, control_points, preset_handler, create_error) = {
             let ctx_ref = self.app_ctx.borrow();
             (
-                ctx_ref.presets_window.new_preset_is_open,
                 ctx_ref.presets_window.new_preset_window_text.clone(),
                 ctx_ref.spline_mode.clone(),
                 ctx_ref.control_points.clone(),
@@ -334,39 +339,47 @@ impl ZApp {
                 ctx_ref.presets_window.create_error.clone(),
             )
         };
+        let is_first_open_frame = !ctx.data(|d| d.get_temp::<bool>(shown_id)).unwrap_or(false);
 
-        if !is_open {
-            return;
-        }
-
+        let mut is_open = true;
         let mut should_create = false;
         let mut text_changed = false;
         let mut close_requested = false;
-        egui::Window::new("Create Preset")
+        let mut window = egui::Window::new("Create Preset")
             .open(&mut is_open)
-            .show(ctx, |ui| {
-                close_requested = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                let text_response = ui.text_edit_singleline(&mut text);
-                if !close_requested {
-                    text_response.request_focus();
-                }
-                text_changed = text_response.changed();
+            .collapsible(false)
+            .resizable(false)
+            .pivot(egui::Align2::CENTER_CENTER);
+        if is_first_open_frame {
+            window = window.current_pos(ctx.screen_rect().center());
+        }
+        window.show(ctx, |ui| {
+            close_requested = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            let text_response =
+                ui.add(egui::TextEdit::singleline(&mut text).hint_text("Preset name"));
+            if is_first_open_frame {
+                text_response.request_focus();
+            }
+            text_changed = text_response.changed();
 
-                let was_enter =
-                    text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let was_enter =
+                text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
-                let check = preset_handler.check_name(&text, None);
-                if let Err(reason) = check {
-                    ui.colored_label(ui.visuals().error_fg_color, reason.to_string());
-                }
-                if let Some(error) = &create_error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                }
-                let create_clicked = ui
-                    .add_enabled(check.is_ok(), egui::Button::new("Create"))
-                    .clicked();
-                should_create = check.is_ok() && (was_enter || create_clicked);
-            });
+            let check = preset_handler.check_name(&text, None);
+            if let Some(reason) = visible_name_error(&text, check) {
+                ui.colored_label(ui.visuals().error_fg_color, reason);
+            }
+            if let Some(error) = &create_error {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+            let create_clicked = ui
+                .add_enabled(check.is_ok(), egui::Button::new("Create"))
+                .clicked();
+            should_create = check.is_ok() && (was_enter || create_clicked);
+        });
+        if is_first_open_frame {
+            ctx.data_mut(|d| d.insert_temp(shown_id, true));
+        }
         if close_requested {
             is_open = false;
         }
@@ -610,6 +623,13 @@ fn should_quit_on_escape(events: &[egui::Event], esc_blocked: bool) -> bool {
     esc_first_press && !esc_blocked
 }
 
+fn visible_name_error(text: &str, check: Result<(), PresetNameError>) -> Option<String> {
+    if text.is_empty() {
+        return None;
+    }
+    check.err().map(|err| err.to_string())
+}
+
 fn begin_screenshot(app_ctx: &mut ZColorPickerAppContext, pointer_pos: Pos2) {
     let mut found_rect = None;
     for rect in app_ctx.stored_ui_responses.get_rects() {
@@ -792,6 +812,25 @@ mod tests {
         assert_eq!(
             output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
             std::time::Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn visible_name_error_hides_only_the_empty_text_error() {
+        use crate::preset::validate_preset_name;
+
+        assert_eq!(visible_name_error("", Err(PresetNameError::Empty)), None);
+        assert_eq!(
+            visible_name_error("a/b", validate_preset_name("a/b", [])),
+            Some(PresetNameError::InvalidChar('/').to_string())
+        );
+        assert_eq!(
+            visible_name_error("Warm", validate_preset_name("Warm", ["warm"])),
+            Some(PresetNameError::Duplicate.to_string())
+        );
+        assert_eq!(
+            visible_name_error("Warm", validate_preset_name("Warm", ["cold"])),
+            None
         );
     }
 }
