@@ -27,7 +27,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 - Right-click (M2) on a point: remove it.
 - Click the color readout or Ctrl+C: copy the selected point's color in the Copy-as format.
 - Middle-click: copy the color under the cursor in the selected format. On the previewer, it copies the image instead.
-- Drag (M1): move a point, a Bezier tangent handle, a hue/T gizmo, or a previewer key band.
+- Drag (M1): move a point, a Bezier tangent handle, a hue gizmo, or a middle point's T (its marker on the T strip, or its previewer key band). End T markers and bands are fixed; clicking a marker selects its point.
 - F12: debug window with the control point values.
 - Esc: quit, only on a first press (not a key repeat) and only when `ZApp::is_input_blocked` is false: no widget had keyboard focus last frame, and no popup, modal (delete confirm, pending switch) or Create Preset window is open. It is read before the tree is drawn, because egui drops focus and closes popups during the Esc frame. The same flag blocks Ctrl+C (`should_quit_on_escape`, `is_copy_shortcut`).
 
@@ -49,12 +49,13 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 
 ### Spline evaluation
 - `control_points_to_spline` (`src/ui_egui/control_points.rs`) converts control points into a `splines::Spline`, one match arm per `SplineMode` (`src/common.rs`). `SplineMode::ALL` feeds the Spline combo and the per-mode tests; a new mode goes there too.
-- Keys are placed at `t = index`, not at `ControlPoint.t`. Anything that walks segments, such as the curvature comb, must use index order too.
-- `ControlPoint.t` (edited with the T slider) doesn't affect the gradient yet; it's listed as work in progress in the README.
-- `HermiteBezier` is actually Catmull-Rom: the endpoints are duplicated as phantom keys.
+- Keys are placed at `ControlPoint.t` ("T", the position along the gradient). Invariant (`has_valid_t`): first T = 0, last T = 1 (a single point has 0), strictly increasing by index, so index order is T order. `normalize_t` spaces invalid T evenly; it runs in `pre_draw_update` and `apply_control_point_constraints`, on preset load (`load_preset_from_disk`, in memory only) and on restored eframe state (`ZApp::init`, before `hold_auto_save_if_dirty`, so old data doesn't look dirty), each with a `log::warn`. `control_points_to_spline` keys invalid T evenly too (`key_ts`).
+- Every T edit keeps the invariant, in `control_points.rs`: `insert_point` (between two points: the middle of their T; at an end: the new point is pinned and the others are squeezed by 1/old count), `remove_point` (removing an end rescales the rest onto 0..1), `mirror_t` (Flip), `drag_t` (middle points only, `MIN_T_GAP` from both neighbours). Auto hue interpolates middle hues by T.
+- `HermiteBezier` is actually Catmull-Rom: the endpoints are duplicated as phantom keys, mirrored one neighbour spacing outside the end keys. Its tangents follow the T spacing (non-uniform Catmull-Rom in `HsvKeyValue::cubic_hermite`).
 - There is no `Polynomial` mode; saved JSON that names it fails to parse.
 - `flatten_control_points` unwraps hue across the 0/1 boundary before interpolation.
-- The previewer (`src/ui_egui/previewer.rs`) samples with `sample_spline_normalized`, which maps x in [0,1] onto the real keys. It handles the end of a Catmull-Rom spline, where the `splines` sampler returns `None`. In every mode, the quantized preview first remaps the real keys' `t` to the centres of the key bands (`points_preview_sizes`, `modify_spline_t_to_preview_sizes`); the Catmull-Rom phantom keys are mirrored one key spacing outside the end keys. The middle curve strip ignores the band widths.
+- `sample_spline_normalized` maps x in [0,1] onto the real keys (`real_keys` drops the Catmull-Rom phantoms), so x = T. It handles the end of a Catmull-Rom spline, where the `splines` sampler returns `None`. The ribbon (`generate_spline_points`) samples a fixed count per real segment between key T.
+- The previewer (`src/ui_egui/previewer.rs`) gradient, quantized strip and key color bands all follow T, as does the picker's T strip gradient (`gradient_color_at`). Key color bands split halfway between neighbouring T (`key_band_edges`). The previewer edits its own copy of the points (band drag, Space evenly), and `PreviewerPane::ui` writes it back to the context when it changed.
 - Curvature comb drawing lives in `src/ui_egui/curvature.rs` and has its own cubic evaluation. It is toggled via `ZColorPickerOptions::is_show_curvature_comb`.
 
 ### Presets
@@ -64,7 +65,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 - Name rules, enforced by `validate_preset_name` / `PresetHandler::check_name`: not empty or whitespace; no `< > : " / \ | ? *` or control chars; no trailing dot or space; no reserved device name (CON, NUL, COM1..); at most 64 chars; no case-insensitive duplicate. The UI disables Create/Rename and shows the reason in red.
 - When `auto_save_presets` is enabled, the selected preset is rewritten only when the current control points or spline mode differ from it (`PresetHandler::auto_save`), and only once no pointer button is held, so a drag writes once, on release. A failed write keeps the preset dirty, shows the error in the preset bar, and is not retried until the content changes again.
 - `PresetHandler.presets` is `#[serde(skip)]`: presets are not in eframe storage, disk is the truth. At startup `init_presets` loads them from `presets_dir` (default `./presets`), skips non-`.json`, malformed or non-finite files (`first_non_finite_point`) with `log::warn`, and sorts them by name, case-insensitive. Only the selected preset's name is persisted (`selected_preset`); it is restored by case-insensitive name, else `None`. If the restored points differ from that file, `hold_auto_save_if_dirty` marks them as a held auto-save, so Auto-save does not overwrite the file until the next edit.
-- Unsaved changes (`has_unsaved_changes`: the selection is dirty and Auto-save is off or its last write failed) show as `name *` in the combo. Picking a preset then, or while unselected points match no preset, sets `WindowPreset::pending_switch` and opens a modal instead of applying it: Save and switch / Discard / Cancel; for the already selected preset Save / Revert to saved / Cancel; with no selection Discard / Cancel. A failed save keeps the modal open with the error. Applying a preset clears the point selection and resets the previewer band widths.
+- Unsaved changes (`has_unsaved_changes`: the selection is dirty and Auto-save is off or its last write failed) show as `name *` in the combo. Picking a preset then, or while unselected points match no preset, sets `WindowPreset::pending_switch` and opens a modal instead of applying it: Save and switch / Discard / Cancel; for the already selected preset Save / Revert to saved / Cancel; with no selection Discard / Cancel. A failed save keeps the modal open with the error. Applying a preset clears the point selection.
 - Save without a selection opens the Create Preset window.
 
 ### Clipboard / screen capture

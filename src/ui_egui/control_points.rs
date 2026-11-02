@@ -39,7 +39,7 @@ fn to_screen_pos(to_screen: &RectTransform, cp: &ControlPoint) -> Pos2 {
     to_screen.transform_pos(control_point_pos(cp))
 }
 
-fn control_point_outline(fill: Color32, emphasized: bool) -> Stroke {
+pub fn control_point_outline(fill: Color32, emphasized: bool) -> Stroke {
     let width = if emphasized { 2.5 } else { 1.5 };
     Stroke::new(width, contrast_color(fill))
 }
@@ -219,9 +219,149 @@ pub fn flatten_control_points(control_points: &[ControlPoint]) -> Vec<ControlPoi
     flattened
 }
 
-pub fn find_spline_max_t(spline: &Spline<f32, ControlPointValue>) -> f32 {
-    // Spline::from_vec sorts keys by t.
-    spline.keys().last().map_or(0.0, |k| k.t)
+pub const MIN_T_GAP: f32 = 1e-3;
+
+pub fn has_valid_t(points: &[ControlPoint]) -> bool {
+    match points {
+        [] => true,
+        [only] => *only.t() == 0.0,
+        [first, .., last] => {
+            *first.t() == 0.0
+                && *last.t() == 1.0
+                && points.windows(2).all(|pair| pair[0].t() < pair[1].t())
+        }
+    }
+}
+
+fn evenly_spaced_t(index: usize, count: usize) -> f32 {
+    if count <= 1 {
+        0.0
+    } else {
+        index as f32 / (count - 1) as f32
+    }
+}
+
+pub fn space_t_evenly(points: &mut [ControlPoint]) {
+    let count = points.len();
+    for (i, cp) in points.iter_mut().enumerate() {
+        *cp.t_mut() = evenly_spaced_t(i, count);
+    }
+}
+
+pub fn normalize_t(points: &mut [ControlPoint]) -> bool {
+    if has_valid_t(points) {
+        return false;
+    }
+    space_t_evenly(points);
+    true
+}
+
+fn rescale_t_onto_unit_range(points: &mut [ControlPoint]) {
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
+        return;
+    };
+    let (first, last) = (*first.t(), *last.t());
+    if last <= first {
+        space_t_evenly(points);
+        return;
+    }
+    for cp in points.iter_mut() {
+        *cp.t_mut() = (*cp.t() - first) / (last - first);
+    }
+}
+
+pub fn insert_point(points: &mut Vec<ControlPoint>, index: usize, mut cp: ControlPoint) {
+    let old_count = points.len();
+    let end_share = 1.0 / old_count.max(1) as f32;
+    *cp.t_mut() = if old_count == 0 || index == 0 {
+        0.0
+    } else if index == old_count {
+        1.0
+    } else {
+        0.5 * (points[index - 1].t() + points[index].t())
+    };
+    if old_count > 0 && index == 0 {
+        for p in points.iter_mut() {
+            *p.t_mut() = end_share + *p.t() * (1.0 - end_share);
+        }
+    } else if old_count > 0 && index == old_count {
+        for p in points.iter_mut() {
+            *p.t_mut() *= 1.0 - end_share;
+        }
+    }
+    points.insert(index, cp);
+}
+
+pub fn remove_point(points: &mut Vec<ControlPoint>, index: usize) -> ControlPoint {
+    let removed = points.remove(index);
+    if index == 0 || index == points.len() {
+        rescale_t_onto_unit_range(points);
+    }
+    removed
+}
+
+pub fn mirror_t(points: &mut [ControlPoint]) {
+    if points.len() < 2 {
+        return;
+    }
+    for cp in points.iter_mut() {
+        *cp.t_mut() = 1.0 - *cp.t();
+    }
+}
+
+pub fn t_drag_bounds(points: &[ControlPoint], index: usize) -> Option<(f32, f32)> {
+    if index == 0 || index + 1 >= points.len() {
+        return None;
+    }
+    let lo = points[index - 1].t() + MIN_T_GAP;
+    let hi = points[index + 1].t() - MIN_T_GAP;
+    (lo <= hi).then_some((lo, hi))
+}
+
+pub fn drag_t(points: &mut [ControlPoint], index: usize, target: f32) {
+    if let Some((lo, hi)) = t_drag_bounds(points, index) {
+        *points[index].t_mut() = target.clamp(lo, hi);
+    }
+}
+
+pub fn t_at_pointer(pointer_x: f32, grab_offset_x: f32, strip_left: f32, strip_width: f32) -> f32 {
+    (pointer_x - grab_offset_x - strip_left) / strip_width
+}
+
+pub fn drag_grab_offset_x(ui: &Ui, response: &egui::Response, anchor_x: f32) -> f32 {
+    let grab_offset_id = response.id.with("grab_offset");
+    if response.drag_started_by(egui::PointerButton::Primary) {
+        let press_origin = ui
+            .input(|i| i.pointer.press_origin())
+            .or(response.interact_pointer_pos());
+        if let Some(press_origin) = press_origin {
+            ui.data_mut(|d| d.insert_temp(grab_offset_id, press_origin.x - anchor_x));
+        }
+    }
+    ui.data(|d| d.get_temp::<f32>(grab_offset_id))
+        .unwrap_or_default()
+}
+
+pub fn key_ts(points: &[ControlPoint]) -> Vec<f32> {
+    if has_valid_t(points) {
+        points.iter().map(|cp| *cp.t()).collect()
+    } else {
+        (0..points.len())
+            .map(|i| evenly_spaced_t(i, points.len()))
+            .collect()
+    }
+}
+
+pub fn real_keys(
+    spline: &Spline<f32, ControlPointValue>,
+    spline_mode: SplineMode,
+) -> &[Key<f32, ControlPointValue>] {
+    let keys = spline.keys();
+    match spline_mode {
+        SplineMode::HermiteBezier if keys.len() >= 2 => &keys[1..keys.len() - 1],
+        SplineMode::HermiteBezier => &[],
+        SplineMode::Linear | SplineMode::Bezier => keys,
+    }
 }
 
 /// Samples `spline` (built by `control_points_to_spline`) at `x` in [0, 1] across the real control points.
@@ -230,27 +370,23 @@ pub fn sample_spline_normalized(
     spline_mode: SplineMode,
     x: f32,
 ) -> Option<ControlPointValue> {
-    let x = x.clamp(0.0, 1.0);
-    match spline_mode {
-        SplineMode::HermiteBezier => {
-            // Real keys are keys[1..=n], with phantom endpoint duplicates at keys[0] and keys[n + 1].
-            let n = spline.len().checked_sub(2)?;
-            if n == 0 {
-                return None;
-            }
-            let first = spline.keys()[1].t;
-            let last = spline.keys()[n].t;
-            let t = first + x * (last - first);
-            // CatmullRom needs keys[i + 2], so the sampler returns None exactly at the last real key.
-            spline
-                .clamped_sample(t)
-                .or_else(|| (t >= last).then(|| spline.keys()[n].value))
-        }
-        _ => {
-            let first = spline.keys().first()?.t;
-            let last = spline.keys().last()?.t;
-            spline.clamped_sample(first + x * (last - first))
-        }
+    let keys = real_keys(spline, spline_mode);
+    let (first, last) = (keys.first()?, keys.last()?);
+    let t = first.t + x.clamp(0.0, 1.0) * (last.t - first.t);
+    // CatmullRom needs keys[i + 2], so the sampler returns None exactly at the last real key.
+    spline
+        .clamped_sample(t)
+        .or_else(|| (t >= last.t).then_some(last.value))
+}
+
+pub fn gradient_color_at(
+    control_points: &[ControlPoint],
+    spline_mode: SplineMode,
+) -> impl Fn(f32) -> Color32 {
+    let spline = control_points_to_spline(&flatten_control_points(control_points), spline_mode);
+    move |x| {
+        sample_spline_normalized(&spline, spline_mode, x)
+            .map_or(Color32::TRANSPARENT, |sample| sample.color())
     }
 }
 
@@ -265,45 +401,43 @@ pub fn control_points_to_spline(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
 ) -> Spline<f32, ControlPointValue> {
+    let ts = key_ts(control_points);
+    let points_at_t = control_points.iter().zip(ts.iter().copied());
     match spline_mode {
         SplineMode::Linear => Spline::from_vec(
-            control_points
-                .iter()
-                .enumerate()
-                .map(|(index, e)| Key::new(index as f32, *e.val(), Interpolation::Linear))
+            points_at_t
+                .map(|(cp, t)| Key::new(t, *cp.val(), Interpolation::Linear))
                 .collect(),
         ),
         SplineMode::Bezier => Spline::from_vec(
-            control_points
-                .iter()
-                .enumerate()
-                .map(|(index, e)| {
+            points_at_t
+                .map(|(cp, t)| {
                     Key::new(
-                        index as f32,
-                        *e.val(),
-                        Interpolation::StrokeBezier(bezier_handle(e, 0), bezier_handle(e, 1)),
+                        t,
+                        *cp.val(),
+                        Interpolation::StrokeBezier(bezier_handle(cp, 0), bezier_handle(cp, 1)),
                     )
                 })
                 .collect(),
         ),
         SplineMode::HermiteBezier => {
-            let mut catmul_rom_spline_vec = control_points.to_vec();
-            if control_points.len() >= 1 {
-                catmul_rom_spline_vec.insert(0, control_points.first().unwrap().clone());
-            }
-            if control_points.len() >= 1 {
-                catmul_rom_spline_vec.push(control_points.last().unwrap().clone());
-            }
-
-            let new_spline = Spline::from_vec(
-                catmul_rom_spline_vec
-                    .iter()
-                    .enumerate()
-                    .map(|(index, e)| Key::new(index as f32, *e.val(), Interpolation::CatmullRom))
+            let (Some(first), Some(last)) = (control_points.first(), control_points.last()) else {
+                return Spline::from_vec(Vec::new());
+            };
+            let n = ts.len();
+            let (before, after) = if n >= 2 {
+                (2.0 * ts[0] - ts[1], 2.0 * ts[n - 1] - ts[n - 2])
+            } else {
+                (ts[0] - 1.0, ts[0] + 1.0)
+            };
+            let catmull_rom_key =
+                |t, cp: &ControlPoint| Key::new(t, *cp.val(), Interpolation::CatmullRom);
+            Spline::from_vec(
+                std::iter::once(catmull_rom_key(before, first))
+                    .chain(points_at_t.map(|(cp, t)| catmull_rom_key(t, cp)))
+                    .chain(std::iter::once(catmull_rom_key(after, last)))
                     .collect(),
-            );
-
-            new_spline
+            )
         }
     }
 }
@@ -539,15 +673,289 @@ mod tests {
         }
     }
 
+    fn points_with_t(ts: &[f32]) -> Vec<ControlPoint> {
+        ts.iter()
+            .enumerate()
+            .map(|(i, &t)| {
+                let i = i as f32;
+                ControlPoint::new_simple(ControlPointValue::new(0.1 * i, 0.9 - 0.2 * i, 0.4), t)
+            })
+            .collect()
+    }
+
+    fn ts_of(points: &[ControlPoint]) -> Vec<f32> {
+        points.iter().map(|cp| *cp.t()).collect()
+    }
+
+    fn assert_ts_near(points: &[ControlPoint], expected: &[f32]) {
+        let actual = ts_of(points);
+        assert_eq!(actual.len(), expected.len(), "{actual:?} vs {expected:?}");
+        for (a, e) in actual.iter().zip(expected) {
+            assert!((a - e).abs() < 1e-6, "{actual:?} vs {expected:?}");
+        }
+    }
+
+    fn key_ts(spline: &Spline<f32, ControlPointValue>) -> Vec<f32> {
+        spline.keys().iter().map(|k| k.t).collect()
+    }
+
     #[test]
-    fn find_spline_max_t_is_last_key_t() {
-        let cps = three_points();
-        let linear = control_points_to_spline(&cps, SplineMode::Linear);
-        assert_eq!(find_spline_max_t(&linear), 2.0);
+    fn has_valid_t_needs_pinned_ends_and_strictly_increasing_t() {
+        let valid: [&[f32]; 4] = [&[], &[0.0], &[0.0, 1.0], &[0.0, 0.2, 0.9, 1.0]];
+        for ts in valid {
+            assert!(has_valid_t(&points_with_t(ts)), "{ts:?}");
+        }
+        let invalid: [&[f32]; 9] = [
+            &[0.5],
+            &[0.0, 0.0],
+            &[0.0, 0.0, 0.0, 0.0],
+            &[0.0, 1.0, 2.0],
+            &[0.1, 1.0],
+            &[0.0, 0.9],
+            &[0.0, 0.6, 0.4, 1.0],
+            &[0.0, 0.5, 0.5, 1.0],
+            &[0.0, f32::NAN, 1.0],
+        ];
+        for ts in invalid {
+            assert!(!has_valid_t(&points_with_t(ts)), "{ts:?}");
+        }
+    }
+
+    #[test]
+    fn normalize_t_spaces_invalid_t_evenly() {
+        for (ts, expected) in [
+            (
+                &[0.0, 0.0, 0.0, 0.0][..],
+                &[0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0][..],
+            ),
+            (&[0.0, 1.0, 2.0], &[0.0, 0.5, 1.0]),
+            (&[0.0, 0.7, 0.3, 1.0], &[0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0]),
+            (&[0.7], &[0.0]),
+        ] {
+            let mut points = points_with_t(ts);
+            assert!(normalize_t(&mut points), "{ts:?}");
+            assert_eq!(ts_of(&points), expected, "{ts:?}");
+            assert!(has_valid_t(&points), "{ts:?}");
+        }
+    }
+
+    #[test]
+    fn normalize_t_keeps_valid_t() {
+        for ts in [&[][..], &[0.0], &[0.0, 0.2, 0.25, 1.0]] {
+            let mut points = points_with_t(ts);
+            assert!(!normalize_t(&mut points), "{ts:?}");
+            assert_eq!(ts_of(&points), ts);
+        }
+    }
+
+    #[test]
+    fn space_t_evenly_is_valid_for_any_count() {
+        for n in [0, 1, 2, 3, 7, 2000] {
+            let mut points = points_with_t(&vec![0.0; n]);
+            space_t_evenly(&mut points);
+            assert!(has_valid_t(&points), "{n}");
+        }
+    }
+
+    #[test]
+    fn inserting_between_two_points_takes_the_middle_of_their_t() {
+        let mut points = points_with_t(&[0.0, 0.2, 1.0]);
+        insert_point(&mut points, 2, ControlPoint::default());
+        assert_ts_near(&points, &[0.0, 0.2, 0.6, 1.0]);
+        insert_point(&mut points, 1, ControlPoint::default());
+        assert_ts_near(&points, &[0.0, 0.1, 0.2, 0.6, 1.0]);
+    }
+
+    #[test]
+    fn inserting_at_an_end_pins_the_new_point_and_squeezes_the_others() {
+        let third = 1.0 / 3.0;
+        for (ts, index, expected) in [
+            (&[0.0, 0.5, 1.0][..], 3, &[0.0, third, 2.0 * third, 1.0][..]),
+            (&[0.0, 0.5, 1.0], 0, &[0.0, third, 2.0 * third, 1.0]),
+            (
+                &[0.0, 0.2, 1.0],
+                3,
+                &[0.0, 0.2 * 2.0 * third, 2.0 * third, 1.0],
+            ),
+            (
+                &[0.0, 0.2, 1.0],
+                0,
+                &[0.0, third, third + 0.2 * 2.0 * third, 1.0],
+            ),
+            (&[0.0], 1, &[0.0, 1.0]),
+            (&[0.0], 0, &[0.0, 1.0]),
+            (&[], 0, &[0.0]),
+        ] {
+            let mut points = points_with_t(ts);
+            insert_point(&mut points, index, ControlPoint::default());
+            assert_ts_near(&points, expected);
+            assert!(has_valid_t(&points), "{ts:?} at {index}");
+        }
+    }
+
+    #[test]
+    fn inserting_puts_the_point_at_the_index() {
+        let mut points = points_with_t(&[0.0, 1.0]);
+        let inserted = ControlPoint::new_simple(ControlPointValue::new(0.7, 0.7, 0.7), 0.0);
+        insert_point(&mut points, 1, inserted.clone());
+        assert_eq!(points.len(), 3);
+        assert_eq!(points[1].val(), inserted.val());
+    }
+
+    #[test]
+    fn removing_an_end_point_rescales_the_rest_onto_zero_one() {
+        for (ts, index, expected) in [
+            (&[0.0, 0.25, 0.5, 1.0][..], 0, &[0.0, 1.0 / 3.0, 1.0][..]),
+            (&[0.0, 0.25, 0.5, 1.0], 3, &[0.0, 0.5, 1.0]),
+            (&[0.0, 0.25, 0.5, 1.0], 1, &[0.0, 0.5, 1.0]),
+            (&[0.0, 1.0], 0, &[0.0]),
+            (&[0.0, 1.0], 1, &[0.0]),
+            (&[0.0], 0, &[]),
+        ] {
+            let mut points = points_with_t(ts);
+            let removed = remove_point(&mut points, index);
+            assert_eq!(*removed.t(), ts[index]);
+            assert_ts_near(&points, expected);
+            assert!(has_valid_t(&points), "{ts:?} at {index}");
+        }
+    }
+
+    #[test]
+    fn inserting_at_an_end_then_removing_that_point_restores_t() {
+        let ts = [0.0, 0.1, 0.45, 1.0];
+        for index in [0, ts.len()] {
+            let mut points = points_with_t(&ts);
+            insert_point(&mut points, index, ControlPoint::default());
+            remove_point(&mut points, index);
+            assert_ts_near(&points, &ts);
+        }
+    }
+
+    #[test]
+    fn mirror_t_maps_t_to_one_minus_t() {
+        let mut points = points_with_t(&[0.0, 0.25, 1.0]);
+        mirror_t(&mut points);
+        assert_eq!(ts_of(&points), [1.0, 0.75, 0.0]);
+        let mut single = points_with_t(&[0.0]);
+        mirror_t(&mut single);
+        assert_eq!(ts_of(&single), [0.0]);
+    }
+
+    #[test]
+    fn t_drag_bounds_keep_the_min_gap_to_both_neighbours() {
+        let points = points_with_t(&[0.0, 0.4, 0.6, 1.0]);
+        assert_eq!(
+            t_drag_bounds(&points, 1),
+            Some((MIN_T_GAP, 0.6 - MIN_T_GAP))
+        );
+        assert_eq!(
+            t_drag_bounds(&points, 2),
+            Some((0.4 + MIN_T_GAP, 1.0 - MIN_T_GAP))
+        );
+    }
+
+    #[test]
+    fn t_drag_bounds_are_none_for_end_points_and_tight_neighbours() {
+        let points = points_with_t(&[0.0, 0.4, 0.6, 1.0]);
+        assert_eq!(t_drag_bounds(&points, 0), None);
+        assert_eq!(t_drag_bounds(&points, 3), None);
+        assert_eq!(t_drag_bounds(&points, 4), None);
+        let tight = points_with_t(&[0.0, 0.5, 0.5005, 0.501, 1.0]);
+        assert_eq!(t_drag_bounds(&tight, 2), None);
+    }
+
+    #[test]
+    fn drag_t_clamps_a_middle_point_between_its_neighbours() {
+        let mut points = points_with_t(&[0.0, 0.4, 0.6, 1.0]);
+        drag_t(&mut points, 1, 0.3);
+        assert_eq!(*points[1].t(), 0.3);
+        drag_t(&mut points, 1, 0.9);
+        assert_eq!(*points[1].t(), 0.6 - MIN_T_GAP);
+        drag_t(&mut points, 2, -5.0);
+        assert_eq!(*points[2].t(), *points[1].t() + MIN_T_GAP);
+        assert!(has_valid_t(&points));
+    }
+
+    #[test]
+    fn drag_t_leaves_end_points_pinned() {
+        let mut points = points_with_t(&[0.0, 0.4, 1.0]);
+        drag_t(&mut points, 0, 0.3);
+        drag_t(&mut points, 2, 0.5);
+        assert_eq!(ts_of(&points), [0.0, 0.4, 1.0]);
+    }
+
+    #[test]
+    fn t_at_pointer_is_the_strip_fraction_without_the_grab_offset() {
+        assert_eq!(t_at_pointer(150.0, 0.0, 100.0, 200.0), 0.25);
+        assert_eq!(t_at_pointer(160.0, 10.0, 100.0, 200.0), 0.25);
+        assert_eq!(t_at_pointer(50.0, 0.0, 100.0, 200.0), -0.25);
+    }
+
+    #[test]
+    fn spline_keys_sit_at_point_t() {
+        let cps = points_with_t(&[0.0, 0.25, 1.0]);
+        for mode in [SplineMode::Linear, SplineMode::Bezier] {
+            let spline = control_points_to_spline(&cps, mode);
+            assert_eq!(key_ts(&spline), [0.0, 0.25, 1.0], "{mode:?}");
+        }
         let hermite = control_points_to_spline(&cps, SplineMode::HermiteBezier);
-        assert_eq!(find_spline_max_t(&hermite), 4.0);
-        let empty = control_points_to_spline(&[], SplineMode::Linear);
-        assert_eq!(find_spline_max_t(&empty), 0.0);
+        assert_eq!(key_ts(&hermite), [-0.25, 0.0, 0.25, 1.0, 1.75]);
+    }
+
+    #[test]
+    fn hermite_single_point_phantoms_are_one_apart() {
+        let hermite = control_points_to_spline(&points_with_t(&[0.0]), SplineMode::HermiteBezier);
+        assert_eq!(key_ts(&hermite), [-1.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn spline_of_points_with_invalid_t_keys_them_evenly() {
+        let cps = points_with_t(&[0.0, 0.0, 0.0]);
+        let spline = control_points_to_spline(&cps, SplineMode::Linear);
+        assert_eq!(key_ts(&spline), [0.0, 0.5, 1.0]);
+        let hermite = control_points_to_spline(&cps, SplineMode::HermiteBezier);
+        assert_eq!(key_ts(&hermite), [-0.5, 0.0, 0.5, 1.0, 1.5]);
+    }
+
+    #[test]
+    fn sample_at_a_point_t_hits_that_point() {
+        let cps = points_with_t(&[0.0, 0.1, 0.35, 1.0]);
+        for mode in SAMPLED_MODES {
+            let spline = control_points_to_spline(&cps, mode);
+            for cp in &cps {
+                assert_sample_near(
+                    sample_spline_normalized(&spline, mode, *cp.t()),
+                    *cp.val(),
+                    &format!("{mode:?} at {}", cp.t()),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn gradient_color_at_hits_the_point_colors_at_their_t() {
+        let cps = points_with_t(&[0.0, 0.3, 1.0]);
+        let color_at = gradient_color_at(&cps, SplineMode::Linear);
+        for cp in &cps {
+            assert_eq!(color_at(*cp.t()), cp.val().color());
+        }
+        assert_eq!(
+            gradient_color_at(&[], SplineMode::Linear)(0.5),
+            Color32::TRANSPARENT
+        );
+    }
+
+    #[test]
+    fn moving_a_middle_t_moves_where_the_gradient_passes_its_point() {
+        let early = points_with_t(&[0.0, 0.2, 1.0]);
+        let late = points_with_t(&[0.0, 0.8, 1.0]);
+        for mode in SAMPLED_MODES {
+            let sample_s = |cps: &[ControlPoint]| {
+                let spline = control_points_to_spline(cps, mode);
+                sample_spline_normalized(&spline, mode, 0.5).unwrap()[0]
+            };
+            assert!(sample_s(&early) > sample_s(&late), "{mode:?}");
+        }
     }
 
     fn assert_sample_near(

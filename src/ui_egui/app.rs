@@ -26,6 +26,7 @@ use crate::{
         },
         color_picker::ZColorPickerWrapper,
         content_windows::{WindowPreset, WindowZColorPickerOptions},
+        control_points::normalize_t,
         debug_windows::DebugWindowControlPoints,
         panes::{
             ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
@@ -237,6 +238,11 @@ impl ZApp {
     fn init(&mut self) {
         let ctx = &mut *self.app_ctx.borrow_mut();
         ctx.preset_handler.init_presets();
+        if normalize_t(&mut ctx.control_points) {
+            log::warn!(
+                "Restored control point T was not increasing from 0 to 1; spaced the points evenly"
+            );
+        }
         ctx.preset_handler
             .hold_auto_save_if_dirty(&ctx.control_points, ctx.spline_mode);
     }
@@ -977,6 +983,53 @@ mod tests {
         fields.insert("native_pixel_per_point".to_owned(), serde_json::json!(1.0));
 
         assert!(serde_json::from_value::<ZApp>(json).is_ok());
+    }
+
+    #[test]
+    fn init_spaces_restored_old_t_evenly_without_dirtying_the_selected_preset() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let old_points: Vec<ControlPoint> = [0.1, 0.5, 0.9]
+            .map(|sv| ControlPoint::new_simple([sv, sv, 0.2].into(), 0.0))
+            .to_vec();
+        let preset = crate::preset::PresetEntity::new(
+            "Old",
+            (old_points.clone(), SplineMode::Linear).into(),
+        );
+        crate::preset::save_preset_to_disk(tmp.path(), &preset).unwrap();
+        let preset_file = tmp.path().join("Old.json");
+        let file_before = std::fs::read(&preset_file).unwrap();
+        let mut preset_handler = PresetHandler::new(tmp.path().into());
+        preset_handler.auto_save_presets = true;
+        preset_handler.preset_selected_index = Some(0);
+        let app_ctx = Rc::new(RefCell::new(ZColorPickerAppContext {
+            control_points: old_points,
+            spline_mode: SplineMode::Linear,
+            preset_handler,
+            ..<ZColorPickerAppContext as Default>::default()
+        }));
+        let log_buffer = Arc::new(Mutex::new(Vec::new()));
+        let mut app = ZApp {
+            state: AppState::Startup,
+            tree: ZApp::create_tree(app_ctx.clone(), log_buffer.clone()),
+            app_ctx,
+            log_buffer,
+            had_keyboard_focus: false,
+        };
+
+        app.init();
+
+        let ctx = &mut *app.app_ctx.borrow_mut();
+        let ts: Vec<f32> = ctx.control_points.iter().map(|cp| *cp.t()).collect();
+        assert_eq!(ts, [0.0, 0.5, 1.0]);
+        assert!(!ctx
+            .preset_handler
+            .is_selected_dirty(&ctx.control_points, ctx.spline_mode));
+        assert!(!ctx.preset_handler.has_failed_auto_save());
+        assert!(!ctx
+            .preset_handler
+            .auto_save(&ctx.control_points, ctx.spline_mode)
+            .unwrap());
+        assert_eq!(std::fs::read(&preset_file).unwrap(), file_before);
     }
 
     #[test]

@@ -18,15 +18,16 @@
 
 Each control point is a value in a color space (currently only HSV).
 Hue of each individual control point can be changed in the hue bar, and saturation & value in the 2d slider.
+T, the strip under the hue bar, is each point's position along the gradient: the first and last points stay at 0 and 1, the middle points can be dragged between their neighbours.
 The selected control point's color is shown in the top left. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
 To create a new preset, click the preset combo box and select `<NEW>`
 
 ## Controls
 
 - Double-click-M1: Add control-point
-- Drag-M1: Move a control-point, a Bezier tangent handle, or a hue/T gizmo
+- Drag-M1: Move a control-point, a Bezier tangent handle, a hue gizmo, or a middle point's T marker
 - Right-click-M2: Remove control-point
-- Drag-M1 on a previewer key color: resize its band
+- Drag-M1 on a middle previewer key color: move its point's T
 - Click the color readout or Ctrl+C: copy the selected point's color in the Copy-as format
 - Middle-click: Copy screen color as the selected format, on previewer, copies image to clipboard
 - F12: debug window with the control point values
@@ -35,16 +36,16 @@ To create a new preset, click the preset combo box and select `<NEW>`
 ## Options
 
 - Lock: Apply any control point coordinate translation to all control points
-- Auto hue: Select hue for start/end control points, middle control point's hue is automatically selected
+- Auto hue: Select hue for start/end control points, middle control point's hue is interpolated by T (shown as markers on the hue bar)
 - Insert left/right: Side of the selected point where a new control point goes (start/end when none is selected)
 - Clamp: Keep control points inside the S/V square and wrap hue into 0..1
 - Comb: Show the curvature comb (Bezier only)
 - Copy as: Text format for a copied color; previewer strips are copied as images
 - Spline: Linear, Bezier (drag the tangent handles) or Hermite (Catmull-Rom, automatic tangents)
-- Flip: Reverse the control point order
+- Flip: Reverse the control point order (T is mirrored)
 - Auto-save: Rewrite the selected preset file after every edit
 - Levels (previewer): Number of colors in the quantized gradient
-- Reset widths (previewer): Make all key color bands equal width
+- Space evenly (previewer): Spread the points evenly along the gradient (equal T steps)
 
 ## Presets
 
@@ -64,7 +65,6 @@ To create a new preset, click the preset combo box and select `<NEW>`
 - Control point ordering visuals on color picker
 - Control point Hue visuals
 - Size slider for color picker spline
-- T should be modifiable by user, potentially normalized on display
 - Spline mode interactivity
 
 #

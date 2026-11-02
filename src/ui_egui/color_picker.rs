@@ -4,10 +4,12 @@ use crate::{
     ui_egui::{
         app::ZColorPickerOptions,
         control_points::{
-            control_point_pos, ui_ordered_control_points, ControlPointUiResult,
-            CONTROL_POINT_FILL_RADIUS,
+            control_point_outline, control_point_pos, drag_grab_offset_x, drag_t,
+            gradient_color_at, insert_point, normalize_t, remove_point, t_at_pointer,
+            ui_ordered_control_points, ControlPointUiResult, CONTROL_POINT_FILL_RADIUS,
         },
         curvature::draw_curvature_comb,
+        gradient::color_function_gradient,
         ui_common::contrast_color,
     },
 };
@@ -144,6 +146,7 @@ impl ZColorPickerWrapper {
         control_points: &mut Vec<ControlPoint>,
         spline_mode: SplineMode,
     ) {
+        normalize_t_with_warning(control_points);
         if spline_mode == SplineMode::Bezier {
             // Force init tangents
             for control_point in control_points {
@@ -193,7 +196,7 @@ impl ZColorPickerWrapper {
 
     // TODO: SHOULD MOVE THIS REMOVE LOGIC OUT SIDE OF THE COLOR PICKER
     pub fn remove_control_point(&mut self, control_points: &mut Vec<ControlPoint>, index: usize) {
-        control_points.remove(index);
+        remove_point(control_points, index);
         log::info!("CP {} removed, new len {}", index, control_points.len());
         self.last_modifying_point_index =
             selection_after_removal(self.last_modifying_point_index, index, control_points.len());
@@ -225,15 +228,16 @@ impl ZColorPickerWrapper {
 
         self.dragging_index = None;
 
+        insert_point(control_points, new_index, cp);
+        let cp = &control_points[new_index];
         log::info!(
             "ControlPoint#{} spawned @[{}]{},{},{}",
-            control_points.len(),
+            control_points.len() - 1,
             cp.t(),
             cp.val()[0],
             cp.val()[1],
             cp.val()[2],
         );
-        control_points.insert(new_index, cp);
         // Adding keys messes with the indicies
         self.last_modifying_point_index = Some(new_index);
     }
@@ -248,10 +252,9 @@ impl ZColorPickerWrapper {
             let first_hue = points[first_index].val()[2];
             let last_hue: f32 = points[last_index].val()[2];
 
-            for i in 1..last_index {
-                let t = (i as f32) / (points.len() - 1) as f32;
-                let hue = hue_lerp(first_hue, last_hue, t);
-                points[i].val_mut()[2] = hue;
+            for cp in &mut points[1..last_index] {
+                let hue = hue_lerp(first_hue, last_hue, *cp.t());
+                cp.val_mut()[2] = hue;
             }
         }
     }
@@ -264,6 +267,7 @@ impl ZColorPickerWrapper {
     }
 
     pub fn apply_control_point_constraints(&mut self, control_points: &mut Vec<ControlPoint>) {
+        normalize_t_with_warning(control_points);
         if self.options.is_hue_middle_interpolated {
             self.apply_interpolate_hue_middle(control_points);
         }
@@ -316,6 +320,12 @@ impl ZColorPickerWrapper {
     }
 }
 
+fn normalize_t_with_warning(control_points: &mut [ControlPoint]) {
+    if normalize_t(control_points) {
+        log::warn!("Control point T was not increasing from 0 to 1; spaced the points evenly");
+    }
+}
+
 fn selection_after_removal(
     selected: Option<usize>,
     removed: usize,
@@ -343,14 +353,14 @@ fn point_to_spawn(
         .iter()
         .map(|cp| (cp, screen_dist(cp)))
         .min_by(|(_, a), (_, b)| a.total_cmp(b));
-    let (hue, t) = match nearest {
-        None => (0.0, 0.0),
+    let hue = match nearest {
+        None => 0.0,
         Some((_, dist)) if dist <= min_dist_px => return None,
-        Some((cp, _)) => (cp.val().h(), *cp.t()),
+        Some((cp, _)) => cp.val().h(),
     };
     Some(ControlPoint::new_simple(
         [click.x, 1.0 - click.y, hue].into(),
-        t,
+        0.0,
     ))
 }
 
@@ -463,29 +473,7 @@ pub fn main_color_picker(
             }
         }
 
-        let t_to_show = {
-            if let Some(cp) = is_modifying_index.and_then(|i| ctx.control_points.get(i)) {
-                *cp.t()
-            } else {
-                0.0
-            }
-        };
-        let mut t_to_show = t_to_show;
-        let delta_t = handle_t_slider(
-            ui,
-            &mut t_to_show,
-            slider_2d_rect_size,
-            ctx,
-            &mut is_modifying_index,
-        );
-        if let Some(t) = delta_t {
-            if let Some(_index) = is_modifying_index {
-                for cp in ctx.control_points.iter_mut() {
-                    *cp.t_mut() -= t;
-                    *cp.t_mut() = cp.t().clamp(0.0, 1.0);
-                }
-            }
-        }
+        handle_t_strip(ui, slider_2d_rect_size, ctx, &mut is_modifying_index);
 
         let slider_2d_response = color_slider_2d(
             ui,
@@ -615,13 +603,23 @@ enum Strip {
 
 fn strip_hint(strip: Strip, has_selection: bool) -> &'static str {
     match (strip, has_selection) {
-        (_, false) => "Select a control point first",
+        (Strip::T, _) => {
+            "T: where each point sits along the gradient. Drag a middle point's marker to move it; \
+             the first and last points stay at 0 and 1"
+        }
+        (Strip::Hue, false) => "Select a control point first",
         (Strip::Hue, true) => {
             "Click or drag: set the selected point's hue; the other points rotate with it"
         }
-        (Strip::T, true) => {
-            "Click or drag: shift every point's T (T does not affect the gradient yet)"
-        }
+    }
+}
+
+fn t_gizmo_hint(index: usize, count: usize, t: f32) -> String {
+    let point = format!("Point {} of {count}: T {t:.3}", index + 1);
+    if index == 0 || index + 1 == count {
+        format!("{point} (fixed). Click: select")
+    } else {
+        format!("{point}. Drag: move it along the gradient. Click: select")
     }
 }
 
@@ -814,10 +812,6 @@ fn hue_after_drag(
     stored_hue.floor() + fraction
 }
 
-fn t_after_drag(pointer_y: f32, grab_offset_y: f32, strip_bottom: f32, strip_height: f32) -> f32 {
-    ((strip_bottom - (pointer_y - grab_offset_y)) / strip_height).clamp(0.0, 1.0)
-}
-
 pub fn ui_hue_control_points_overlay(
     ui: &mut Ui,
     parent_response: &Response,
@@ -836,15 +830,7 @@ pub fn ui_hue_control_points_overlay(
 
     let mut selected_key_frame = None;
     for i in 0..control_points.len() {
-        let Some(gizmo) = hue_gizmo(
-            i,
-            control_points.len(),
-            modifying_control_point_index,
-            is_hue_middle_interpolated,
-        ) else {
-            continue;
-        };
-
+        let gizmo = hue_gizmo(i, control_points.len(), is_hue_middle_interpolated);
         let val = hue_strip_x_fraction(control_points[i].val().h());
         let picked_color = control_points[i].val().color();
         // Show where the slider is at:
@@ -854,11 +840,17 @@ pub fn ui_hue_control_points_overlay(
         );
 
         if gizmo == HueGizmo::Marker {
+            let is_selected = modifying_control_point_index == Some(i);
+            let y_offset = if is_selected {
+                Y_OFFSET_SELECTED
+            } else {
+                Y_OFFSET
+            };
             let marker_half_width = r / 4.0;
             let marker_rect = Rect::from_x_y_ranges(
                 x - marker_half_width..=x + marker_half_width,
-                Y_OFFSET_SELECTED + container_response.rect.center().y
-                    ..=Y_OFFSET_SELECTED + container_response.rect.bottom(),
+                y_offset + container_response.rect.center().y
+                    ..=y_offset + container_response.rect.bottom(),
             );
             ui.painter().add(Shape::convex_polygon(
                 vec![
@@ -868,7 +860,7 @@ pub fn ui_hue_control_points_overlay(
                     marker_rect.left_bottom(),
                 ],
                 picked_color,
-                Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
+                control_point_outline(picked_color, is_selected),
             ));
             continue;
         }
@@ -962,55 +954,20 @@ pub fn ui_hue_control_points_overlay(
     (container_response, selected_key_frame)
 }
 
-fn handle_t_slider(
+fn handle_t_strip(
     ui: &mut Ui,
-    t_to_show: &mut f32,
     slider_size: Vec2,
     ctx: &mut MainColorPickerCtx,
     is_modifying_index: &mut Option<usize>,
-) -> Option<f32> {
-    let mut pick_t = 0.0;
-    let mut pick_x = 0.0;
-
-    let t_response = color_slider_2d(ui, slider_size, &mut pick_x, &mut pick_t, |x, _t| {
-        HsvaGamma {
-            h: 0.0,
-            s: 0.0,
-            v: x,
-            a: 1.0,
-        }
-        .into()
-    })
-    .interact(Sense::drag())
-    .on_hover_text(strip_hint(Strip::T, is_modifying_index.is_some()));
-
-    let curve_slot = ui.painter().add(Shape::Noop);
-    let (_t_response_cp, t_selected_index) =
-        ui_t_control_points_overlay(ui, &t_response, ctx.control_points);
-
+) {
+    let gradient = gradient_color_at(ctx.control_points, ctx.spline_mode);
+    let t_response = color_function_gradient(ui, slider_size, gradient)
+        .on_hover_text(strip_hint(Strip::T, is_modifying_index.is_some()));
+    let (_, t_selected_index) =
+        ui_t_control_points_overlay(ui, &t_response, ctx.control_points, *is_modifying_index);
     if let Some(new_index) = t_selected_index {
         *is_modifying_index = Some(new_index);
     }
-
-    ui.painter().set(
-        curve_slot,
-        t_slider_curve_shape(t_response.rect, ctx.control_points),
-    );
-
-    if t_response.clicked_by(PointerButton::Primary)
-        || t_response.dragged_by(PointerButton::Primary)
-    {
-        return Some(*t_to_show - pick_t);
-    } else {
-        None
-    }
-}
-
-fn t_slider_x_fraction(index: usize, count: usize) -> f32 {
-    if count <= 1 {
-        return 0.5;
-    }
-    index as f32 / (count - 1) as f32
 }
 
 fn hue_strip_x_fraction(hue: f32) -> f32 {
@@ -1023,95 +980,71 @@ enum HueGizmo {
     Marker,
 }
 
-fn hue_gizmo(
-    index: usize,
-    count: usize,
-    selected: Option<usize>,
-    auto_hue: bool,
-) -> Option<HueGizmo> {
+fn hue_gizmo(index: usize, count: usize, auto_hue: bool) -> HueGizmo {
     let is_middle = index != 0 && index + 1 != count;
-    if !auto_hue || !is_middle {
-        Some(HueGizmo::Editable)
-    } else if selected == Some(index) {
-        Some(HueGizmo::Marker)
+    if auto_hue && is_middle {
+        HueGizmo::Marker
     } else {
-        None
+        HueGizmo::Editable
     }
 }
 
-fn t_slider_curve_shape(slider_rect: egui::Rect, control_points: &[ControlPoint]) -> Shape {
-    if control_points.is_empty() {
-        return Shape::Noop;
+fn t_gizmo_shape(strip: Rect, x: f32, half_width: f32, index: usize, count: usize) -> Vec<Pos2> {
+    let (top, middle, bottom) = (strip.top(), strip.center().y, strip.bottom());
+    if index == 0 {
+        vec![
+            pos2(x - half_width, top),
+            pos2(x + half_width / 2.0, middle),
+            pos2(x - half_width, bottom),
+        ]
+    } else if index + 1 == count {
+        vec![
+            pos2(x + half_width, bottom),
+            pos2(x - half_width / 2.0, middle),
+            pos2(x + half_width, top),
+        ]
+    } else {
+        let bar = Rect::from_x_y_ranges(x - half_width / 2.0..=x + half_width / 2.0, top..=bottom);
+        vec![
+            bar.left_top(),
+            bar.right_top(),
+            bar.right_bottom(),
+            bar.left_bottom(),
+        ]
     }
-
-    let mut points = Vec::with_capacity(control_points.len());
-    for (i, cp) in control_points.iter().enumerate() {
-        let x = lerp(
-            slider_rect.left()..=slider_rect.right(),
-            t_slider_x_fraction(i, control_points.len()),
-        );
-        let y = lerp(slider_rect.bottom()..=slider_rect.top(), *cp.t());
-
-        points.push(pos2(x, y));
-    }
-
-    let stroke = Stroke::new(2.0, Color32::WHITE);
-    let halo = crate::ui_egui::curves::ribbon_halo_stroke(stroke.color, stroke.width);
-    Shape::Vec(vec![
-        Shape::line(points.clone(), halo),
-        Shape::line(points, stroke),
-    ])
 }
 
 pub fn ui_t_control_points_overlay(
     ui: &mut Ui,
     parent_response: &Response,
     control_points: &mut [ControlPoint],
+    selected: Option<usize>,
 ) -> (Response, Option<usize>) {
     let container_response =
         ui.allocate_rect(parent_response.rect, Sense::focusable_noninteractive());
     ui.add_space(8.0);
-    let visuals = ui.style().interact(&parent_response);
-
-    let r = container_response.rect.height() / 4.0;
+    let strip = container_response.rect;
+    let half_width = strip.height() / 4.0;
+    let count = control_points.len();
 
     let mut selected_key_frame = None;
-    for i in 0..control_points.len() {
-        let val = *control_points[i].t();
-        let picked_color = control_points[i].val().color();
-        // Show where the slider is at
-        let x: f32 = lerp(
-            container_response.rect.left()..=container_response.rect.right(),
-            t_slider_x_fraction(i, control_points.len()),
-        );
-        let y = lerp(
-            container_response.rect.bottom()..=container_response.rect.top(),
-            val,
-        );
-
-        let gizmo_rect: Vec<Pos2> = if i == 0 {
-            // First
-            vec![pos2(x - r, y), pos2(x + r, y + r), pos2(x + r, y - r)]
-        } else if i == (control_points.len() - 1) {
-            // Last
-            vec![pos2(x + r, y), pos2(x - r, y + r), pos2(x - r, y - r)]
+    for i in 0..count {
+        let is_end = i == 0 || i + 1 == count;
+        let x = lerp(strip.x_range(), *control_points[i].t());
+        let sense = if is_end {
+            Sense::click()
         } else {
-            // Other
-            vec![
-                pos2(x + r, y + r),
-                pos2(x + r, y - r),
-                pos2(x - r, y - r),
-                pos2(x - r, y + r),
-            ]
+            Sense::click_and_drag()
         };
-
-        let response = ui
-            .interact(
-                Rect::from_points(&gizmo_rect),
-                container_response.id.with(i),
-                Sense::click_and_drag(),
-            )
-            .on_hover_and_drag_cursor(CursorIcon::ResizeVertical);
+        let hit_rect = Rect::from_x_y_ranges(x - half_width..=x + half_width, strip.y_range());
+        let mut response = ui.interact(hit_rect, container_response.id.with(i), sense);
+        if !is_end {
+            response = response.on_hover_and_drag_cursor(CursorIcon::ResizeHorizontal);
+        }
+        let t = *control_points[i].t();
+        let response = response.on_hover_ui(|ui| {
+            ui.label(t_gizmo_hint(i, count, t));
+        });
 
         if response.clicked_by(PointerButton::Primary)
             || response.dragged_by(PointerButton::Primary)
@@ -1119,29 +1052,20 @@ pub fn ui_t_control_points_overlay(
             selected_key_frame = Some(i);
         }
         if response.dragged_by(PointerButton::Primary) {
-            let grab_offset_id = response.id.with("grab_offset");
-            if response.drag_started_by(PointerButton::Primary) {
-                let press_origin = ui
-                    .input(|i| i.pointer.press_origin())
-                    .or(response.interact_pointer_pos());
-                if let Some(press_origin) = press_origin {
-                    ui.data_mut(|d| d.insert_temp(grab_offset_id, press_origin.y - y));
-                }
-            }
-            let grab_offset_y = ui
-                .data(|d| d.get_temp::<f32>(grab_offset_id))
-                .unwrap_or_default();
+            let grab_offset_x = drag_grab_offset_x(ui, &response, x);
             if let Some(pointer) = response.interact_pointer_pos() {
-                let strip = container_response.rect;
-                *control_points[i].t_mut() =
-                    t_after_drag(pointer.y, grab_offset_y, strip.bottom(), strip.height());
+                let target = t_at_pointer(pointer.x, grab_offset_x, strip.left(), strip.width());
+                drag_t(control_points, i, target);
             }
         }
 
+        let color = control_points[i].val().color();
+        let x = lerp(strip.x_range(), *control_points[i].t());
+        let emphasized = selected == Some(i) || selected_key_frame == Some(i);
         ui.painter().add(Shape::convex_polygon(
-            gizmo_rect,
-            picked_color,
-            Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
+            t_gizmo_shape(strip, x, half_width, i, count),
+            color,
+            control_point_outline(color, emphasized),
         ));
     }
 
@@ -1152,6 +1076,7 @@ pub fn ui_t_control_points_overlay(
 mod tests {
     use super::*;
     use crate::datatypes::control_point::ControlPointValue;
+    use crate::ui_egui::control_points::MIN_T_GAP;
 
     fn orange() -> Color32 {
         Color32::from_rgba_unmultiplied(255, 128, 0, 204)
@@ -1322,18 +1247,6 @@ mod tests {
         assert_square_inset(vec2(1000.0, 520.0));
     }
 
-    #[test]
-    fn t_slider_x_fraction_centers_single_point() {
-        assert_eq!(t_slider_x_fraction(0, 1), 0.5);
-    }
-
-    #[test]
-    fn t_slider_x_fraction_spans_slider_for_many_points() {
-        assert_eq!(t_slider_x_fraction(0, 3), 0.0);
-        assert_eq!(t_slider_x_fraction(1, 3), 0.5);
-        assert_eq!(t_slider_x_fraction(2, 3), 1.0);
-    }
-
     const STRIP_RECT: Rect = Rect {
         min: Pos2::new(100.0, 100.0),
         max: Pos2::new(300.0, 140.0),
@@ -1401,17 +1314,32 @@ mod tests {
         assert_eq!(points[0].val().h(), 0.25);
     }
 
+    fn three_t_strip_points() -> Vec<ControlPoint> {
+        [(0.0, 0.1), (0.4, 0.5), (1.0, 0.9)]
+            .into_iter()
+            .map(|(t, sv)| ControlPoint::new_simple(ControlPointValue::new(sv, sv, 0.3), t))
+            .collect()
+    }
+
+    fn t_strip_pos(t: f32) -> Pos2 {
+        pos2(lerp(STRIP_RECT.x_range(), t), STRIP_RECT.center().y)
+    }
+
+    fn run_t_overlay(points: &mut [ControlPoint], frames: Vec<Vec<egui::Event>>) -> Option<usize> {
+        run_strip_overlay(points, frames, |ui, strip, points| {
+            ui_t_control_points_overlay(ui, strip, points, None).1
+        })
+    }
+
     #[test]
-    fn clicking_t_gizmo_selects_its_point_without_changing_t() {
-        let mut points = two_strip_points();
-        let first_gizmo_center = pos2(STRIP_RECT.left(), lerp(STRIP_RECT.y_range(), 0.6));
-        let selected = run_strip_overlay(
-            &mut points,
-            primary_click_frames(first_gizmo_center),
-            |ui, strip, points| ui_t_control_points_overlay(ui, strip, points).1,
-        );
-        assert_eq!(selected, Some(0));
-        assert_eq!(*points[0].t(), 0.4);
+    fn clicking_t_gizmos_selects_their_point_without_changing_t() {
+        for index in 0..3 {
+            let mut points = three_t_strip_points();
+            let t = *points[index].t();
+            let selected = run_t_overlay(&mut points, primary_click_frames(t_strip_pos(t)));
+            assert_eq!(selected, Some(index));
+            assert_eq!(*points[index].t(), t);
+        }
     }
 
     #[test]
@@ -1444,56 +1372,110 @@ mod tests {
     }
 
     #[test]
-    fn hue_gizmo_marks_only_the_selected_middle_point_under_auto_hue() {
+    fn hue_gizmo_marks_every_middle_point_under_auto_hue() {
         use HueGizmo::{Editable, Marker};
         let cases = [
-            (0, 3, Some(1), true, Some(Editable)),
-            (1, 3, Some(1), true, Some(Marker)),
-            (1, 3, Some(0), true, None),
-            (1, 3, None, true, None),
-            (2, 3, Some(1), true, Some(Editable)),
-            (0, 3, Some(1), false, Some(Editable)),
-            (1, 3, Some(1), false, Some(Editable)),
-            (1, 3, None, false, Some(Editable)),
-            (2, 3, Some(1), false, Some(Editable)),
-            (0, 2, Some(0), true, Some(Editable)),
-            (1, 2, Some(1), true, Some(Editable)),
-            (0, 2, None, false, Some(Editable)),
-            (0, 1, Some(0), true, Some(Editable)),
-            (0, 1, None, false, Some(Editable)),
+            (0, 3, true, Editable),
+            (1, 3, true, Marker),
+            (2, 3, true, Editable),
+            (1, 4, true, Marker),
+            (2, 4, true, Marker),
+            (0, 3, false, Editable),
+            (1, 3, false, Editable),
+            (2, 3, false, Editable),
+            (0, 2, true, Editable),
+            (1, 2, true, Editable),
+            (0, 1, true, Editable),
+            (0, 1, false, Editable),
         ];
-        for (index, count, selected, auto_hue, expected) in cases {
+        for (index, count, auto_hue, expected) in cases {
             assert_eq!(
-                hue_gizmo(index, count, selected, auto_hue),
+                hue_gizmo(index, count, auto_hue),
                 expected,
-                "index {index} of {count}, selected {selected:?}, auto hue {auto_hue}"
+                "index {index} of {count}, auto hue {auto_hue}"
             );
         }
     }
 
+    fn three_hue_strip_points() -> Vec<ControlPoint> {
+        let mut points = two_strip_points();
+        points.insert(
+            1,
+            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.6, 0.5), 0.5),
+        );
+        points
+    }
+
     #[test]
-    fn hue_marker_of_selected_middle_point_is_not_clickable() {
-        let three_strip_points = || {
-            let mut points = two_strip_points();
-            points.insert(
-                1,
-                ControlPoint::new_simple(ControlPointValue::new(0.5, 0.6, 0.5), 0.5),
-            );
-            points
-        };
+    fn hue_markers_of_middle_points_are_not_clickable() {
         let r = STRIP_RECT.height() / 4.0;
         let raised_middle_center = pos2(STRIP_RECT.center().x, STRIP_RECT.center().y + r - 14.0);
-        let click = |auto_hue| {
+        let lowered_middle_center = pos2(STRIP_RECT.center().x, STRIP_RECT.center().y + r + 5.0);
+        let click = |pos, selected, auto_hue| {
             run_strip_overlay(
-                &mut three_strip_points(),
-                primary_click_frames(raised_middle_center),
+                &mut three_hue_strip_points(),
+                primary_click_frames(pos),
                 move |ui, strip, points| {
-                    ui_hue_control_points_overlay(ui, strip, points, Some(1), auto_hue).1
+                    ui_hue_control_points_overlay(ui, strip, points, selected, auto_hue).1
                 },
             )
         };
-        assert_eq!(click(false), Some(1));
-        assert_eq!(click(true), None);
+        assert_eq!(click(raised_middle_center, Some(1), false), Some(1));
+        assert_eq!(click(raised_middle_center, Some(1), true), None);
+        assert_eq!(click(lowered_middle_center, None, false), Some(1));
+        assert_eq!(click(lowered_middle_center, None, true), None);
+    }
+
+    fn painted_hue_gizmos(selected: Option<usize>, auto_hue: bool) -> Vec<egui::epaint::PathShape> {
+        let ctx = egui::Context::default();
+        let mut points = three_hue_strip_points();
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0))),
+            ..Default::default()
+        };
+        let output = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let strip = ui.allocate_rect(STRIP_RECT, Sense::hover());
+                ui_hue_control_points_overlay(ui, &strip, &mut points, selected, auto_hue);
+            });
+        });
+        output
+            .shapes
+            .into_iter()
+            .filter_map(|clipped| match clipped.shape {
+                Shape::Path(path) if path.closed => Some(path),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn auto_hue_paints_middle_markers_without_a_selection() {
+        let gizmos = painted_hue_gizmos(None, true);
+        assert_eq!(gizmos.len(), 3);
+        let middle_x = lerp(STRIP_RECT.x_range(), 0.5);
+        assert!(
+            gizmos.iter().any(|g| {
+                let rect = Rect::from_points(&g.points);
+                (rect.center().x - middle_x).abs() < 1e-3
+                    && rect.width() < STRIP_RECT.height() / 4.0
+            }),
+            "{gizmos:?}"
+        );
+    }
+
+    #[test]
+    fn selected_hue_marker_is_raised_and_outlined_wider() {
+        let marker = |selected| {
+            let middle_x = lerp(STRIP_RECT.x_range(), 0.5);
+            painted_hue_gizmos(selected, true)
+                .into_iter()
+                .find(|g| (Rect::from_points(&g.points).center().x - middle_x).abs() < 1e-3)
+                .expect("middle marker")
+        };
+        let (plain, selected) = (marker(None), marker(Some(1)));
+        assert!(Rect::from_points(&selected.points).top() < Rect::from_points(&plain.points).top());
+        assert!(selected.stroke.width > plain.stroke.width);
     }
 
     #[test]
@@ -1567,30 +1549,63 @@ mod tests {
         assert!((hue - 0.5).abs() < 1e-4, "{hue}");
     }
 
-    fn t_strip_pos(t: f32) -> Pos2 {
-        pos2(
-            STRIP_RECT.center().x,
-            lerp(STRIP_RECT.bottom()..=STRIP_RECT.top(), t),
-        )
+    fn drag_t_gizmo(index: usize, grab_dx: f32, dx: f32) -> Vec<ControlPoint> {
+        let mut points = three_t_strip_points();
+        let start = t_strip_pos(*points[index].t()) + vec2(grab_dx, 0.0);
+        run_t_overlay(
+            &mut points,
+            primary_drag_frames(start, start + vec2(dx, 0.0)),
+        );
+        points
     }
 
-    fn run_t_slider_with_first_point_selected(frames: Vec<Vec<egui::Event>>) -> Vec<ControlPoint> {
-        let mut points = two_strip_points();
-        let mut last_modifying_point_index = Some(0);
+    #[test]
+    fn dragging_a_middle_t_gizmo_moves_its_t_by_the_pointer_distance() {
+        let points = drag_t_gizmo(1, 3.0, 0.25 * STRIP_RECT.width());
+        assert!((*points[1].t() - 0.65).abs() < 1e-4, "{}", points[1].t());
+        assert_eq!((*points[0].t(), *points[2].t()), (0.0, 1.0));
+    }
+
+    #[test]
+    fn dragging_a_middle_t_gizmo_past_a_neighbour_stops_at_the_min_gap() {
+        let right = drag_t_gizmo(1, 0.0, 2.0 * STRIP_RECT.width());
+        assert_eq!(*right[1].t(), 1.0 - MIN_T_GAP);
+        let left = drag_t_gizmo(1, 0.0, -2.0 * STRIP_RECT.width());
+        assert_eq!(*left[1].t(), MIN_T_GAP);
+    }
+
+    #[test]
+    fn end_t_gizmos_stay_pinned_when_dragged() {
+        let first = drag_t_gizmo(0, 2.0, 0.5 * STRIP_RECT.width());
+        let last = drag_t_gizmo(2, -2.0, -0.5 * STRIP_RECT.width());
+        for points in [first, last] {
+            let ts: Vec<f32> = points.iter().map(|cp| *cp.t()).collect();
+            assert_eq!(ts, [0.0, 0.4, 1.0]);
+        }
+    }
+
+    fn run_t_strip(
+        points: &mut Vec<ControlPoint>,
+        selected: Option<usize>,
+        frames: Vec<Vec<egui::Event>>,
+    ) -> (Option<usize>, Vec<Shape>) {
+        let mut last_modifying_point_index = selected;
+        let mut is_modifying_index = selected;
         let mut dragging_index = None;
         let mut control_point_right_clicked = None;
         let mut copy_request = None;
         let egui_ctx = egui::Context::default();
+        let mut shapes = Vec::new();
         for events in frames {
             let input = egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0))),
                 events,
                 ..Default::default()
             };
-            let _ = egui_ctx.run(input, |egui_ctx| {
+            let output = egui_ctx.run(input, |egui_ctx| {
                 egui::CentralPanel::default().show(egui_ctx, |ui| {
                     let mut ctx = MainColorPickerCtx {
-                        control_points: &mut points,
+                        control_points: &mut *points,
                         spline_mode: SplineMode::Linear,
                         color_copy_format: ColorStringCopy::HEXNOA,
                         last_modifying_point_index: &mut last_modifying_point_index,
@@ -1602,236 +1617,111 @@ mod tests {
                         is_window_lock: false,
                         is_show_curvature_comb: false,
                     };
-                    let mut is_modifying_index = Some(0);
-                    let mut t_to_show = *ctx.control_points[0].t();
                     let strip = egui::UiBuilder::new().max_rect(STRIP_RECT);
-                    let delta_t = ui
-                        .scope_builder(strip, |ui| {
-                            handle_t_slider(
-                                ui,
-                                &mut t_to_show,
-                                STRIP_RECT.size(),
-                                &mut ctx,
-                                &mut is_modifying_index,
-                            )
-                        })
-                        .inner;
-                    if let Some(delta_t) = delta_t {
-                        for cp in ctx.control_points.iter_mut() {
-                            *cp.t_mut() = (*cp.t() - delta_t).clamp(0.0, 1.0);
-                        }
-                    }
+                    ui.scope_builder(strip, |ui| {
+                        handle_t_strip(ui, STRIP_RECT.size(), &mut ctx, &mut is_modifying_index)
+                    });
                 });
             });
+            shapes = output
+                .shapes
+                .into_iter()
+                .flat_map(|clipped| match clipped.shape {
+                    Shape::Vec(shapes) => shapes,
+                    shape => vec![shape],
+                })
+                .collect();
         }
-        points
+        (is_modifying_index, shapes)
     }
 
     #[test]
-    fn dragging_t_strip_moves_the_selected_point() {
-        let start = t_strip_pos(0.125);
-        let end = t_strip_pos(0.875);
-        let button = |pos, pressed| egui::Event::PointerButton {
-            pos,
-            button: PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::default(),
-        };
-        let mut frames = vec![
-            Vec::new(),
-            vec![egui::Event::PointerMoved(start)],
-            vec![button(start, true)],
-        ];
-        for step in 1..=3 {
-            let pos = start.lerp(end, step as f32 / 3.0);
-            frames.push(vec![egui::Event::PointerMoved(pos)]);
-        }
-        frames.push(vec![button(end, false)]);
-        let points = run_t_slider_with_first_point_selected(frames);
-        assert!((*points[0].t() - 0.875).abs() < 1e-5, "{}", points[0].t());
+    fn dragging_the_t_strip_background_changes_no_t_or_selection() {
+        let mut points = three_t_strip_points();
+        let frames = primary_drag_frames(t_strip_pos(0.15), t_strip_pos(0.3));
+        let (selected, _) = run_t_strip(&mut points, Some(2), frames);
+        assert_eq!(points, three_t_strip_points());
+        assert_eq!(selected, Some(2));
+    }
+
+    fn closed_paths(shapes: &[Shape]) -> Vec<(usize, &egui::epaint::PathShape)> {
+        shapes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, shape)| match shape {
+                Shape::Path(path) if path.closed => Some((i, path)),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
-    fn clicking_t_strip_moves_the_selected_point() {
-        let frames = primary_click_frames(t_strip_pos(0.125));
-        let points = run_t_slider_with_first_point_selected(frames);
-        assert!((*points[0].t() - 0.125).abs() < 1e-5, "{}", points[0].t());
-    }
-
-    #[test]
-    fn t_after_drag_follows_the_pointer_clamped_to_the_strip() {
-        let (bottom, height) = (STRIP_RECT.bottom(), STRIP_RECT.height());
-        let cases = [
-            (124.0, 0.0, 0.4),
-            (bottom, 0.0, 0.0),
-            (bottom + 100.0, 0.0, 0.0),
-            (STRIP_RECT.top() - 100.0, 0.0, 1.0),
-            (130.0, 6.0, 0.4),
-            (118.0, -6.0, 0.4),
-        ];
-        for (pointer_y, grab_offset_y, expected) in cases {
-            let t = t_after_drag(pointer_y, grab_offset_y, bottom, height);
+    fn t_strip_paints_the_gradient_under_the_gizmos() {
+        let mut points = three_t_strip_points();
+        let (_, shapes) = run_t_strip(&mut points, None, vec![Vec::new()]);
+        let (mesh_index, mesh) = shapes
+            .iter()
+            .enumerate()
+            .find_map(|(i, shape)| match shape {
+                Shape::Mesh(mesh) => Some((i, mesh)),
+                _ => None,
+            })
+            .expect("gradient mesh");
+        assert_eq!(
+            mesh.vertices.first().unwrap().color,
+            points[0].val().color()
+        );
+        assert_eq!(mesh.vertices.last().unwrap().color, points[2].val().color());
+        let gizmos = closed_paths(&shapes);
+        assert_eq!(gizmos.len(), 3);
+        assert!(gizmos.iter().all(|(i, _)| mesh_index < *i));
+        for (gizmo, cp) in gizmos.iter().zip(&points) {
+            let x = Rect::from_points(&gizmo.1.points).center().x;
+            let expected = lerp(STRIP_RECT.x_range(), *cp.t());
             assert!(
-                (t - expected).abs() < 1e-6,
-                "{pointer_y} - {grab_offset_y}: {t}"
+                (x - expected).abs() <= STRIP_RECT.height() / 4.0,
+                "{x} vs {expected}"
             );
         }
     }
 
-    fn primary_drag_path(path: &[Pos2]) -> Vec<Vec<egui::Event>> {
-        let button = |pos, pressed| egui::Event::PointerButton {
-            pos,
-            button: PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::default(),
+    #[test]
+    fn selected_t_gizmo_is_outlined_wider() {
+        let middle_width = |selected| {
+            let mut points = three_t_strip_points();
+            let (_, shapes) = run_t_strip(&mut points, selected, vec![Vec::new()]);
+            closed_paths(&shapes)[1].1.stroke.width
         };
-        let (start, end) = (path[0], path[path.len() - 1]);
-        let mut frames = vec![
-            Vec::new(),
-            vec![egui::Event::PointerMoved(start)],
-            vec![button(start, true)],
-        ];
-        frames.extend(
-            path[1..]
-                .iter()
-                .map(|&pos| vec![egui::Event::PointerMoved(pos)]),
-        );
-        frames.push(vec![button(end, false)]);
-        frames
-    }
-
-    fn drag_first_t_gizmo(path: &[Pos2]) -> f32 {
-        let mut points = two_strip_points();
-        run_strip_overlay(&mut points, primary_drag_path(path), |ui, strip, points| {
-            ui_t_control_points_overlay(ui, strip, points).1
-        });
-        *points[0].t()
-    }
-
-    fn first_t_gizmo_center() -> Pos2 {
-        pos2(
-            STRIP_RECT.left(),
-            lerp(STRIP_RECT.bottom()..=STRIP_RECT.top(), 0.4),
-        )
+        assert!(middle_width(Some(1)) > middle_width(None));
     }
 
     #[test]
-    fn dragging_t_gizmo_past_the_strip_bottom_and_back_keeps_it_at_the_bottom() {
-        let start = first_t_gizmo_center();
-        let path = [
-            start,
-            pos2(start.x, STRIP_RECT.bottom() + 20.0),
-            pos2(start.x, STRIP_RECT.bottom() + 60.0),
-            pos2(start.x, STRIP_RECT.bottom() + 100.0),
-            pos2(start.x, STRIP_RECT.bottom() + 70.0),
-        ];
-        assert_eq!(drag_first_t_gizmo(&path), 0.0);
-    }
-
-    #[test]
-    fn dragging_t_gizmo_off_centre_moves_its_t_by_the_pointer_distance() {
-        let start = first_t_gizmo_center() + vec2(0.0, -3.0);
-        let quarter = 0.25 * STRIP_RECT.height();
-        let path = [
-            start,
-            start + vec2(0.0, -quarter / 3.0),
-            start + vec2(0.0, -2.0 * quarter / 3.0),
-            start + vec2(0.0, -quarter),
-        ];
-        let t = drag_first_t_gizmo(&path);
-        assert!((t - 0.65).abs() < 1e-4, "{t}");
-    }
-
-    #[test]
-    fn t_curve_is_painted_under_the_gizmos_with_a_dark_halo() {
-        let mut points = two_strip_points();
-        points.insert(
-            1,
-            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.6, 0.5), 0.5),
-        );
-        let mut last_modifying_point_index = None;
-        let mut dragging_index = None;
-        let mut control_point_right_clicked = None;
-        let mut copy_request = None;
-        let egui_ctx = egui::Context::default();
-        let input = egui::RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0))),
-            ..Default::default()
-        };
-        let output = egui_ctx.run(input, |egui_ctx| {
-            egui::CentralPanel::default().show(egui_ctx, |ui| {
-                let mut ctx = MainColorPickerCtx {
-                    control_points: &mut points,
-                    spline_mode: SplineMode::Linear,
-                    color_copy_format: ColorStringCopy::HEXNOA,
-                    last_modifying_point_index: &mut last_modifying_point_index,
-                    dragging_index: &mut dragging_index,
-                    control_point_right_clicked: &mut control_point_right_clicked,
-                    copy_request: &mut copy_request,
-                    is_hue_middle_interpolated: false,
-                    is_curve_locked: false,
-                    is_window_lock: false,
-                    is_show_curvature_comb: false,
-                };
-                let mut is_modifying_index = None;
-                let mut t_to_show = 0.0;
-                ui.scope_builder(egui::UiBuilder::new().max_rect(STRIP_RECT), |ui| {
-                    handle_t_slider(
-                        ui,
-                        &mut t_to_show,
-                        STRIP_RECT.size(),
-                        &mut ctx,
-                        &mut is_modifying_index,
-                    )
-                });
-            });
-        });
-        let shapes: Vec<Shape> = output
-            .shapes
-            .into_iter()
-            .flat_map(|clipped| match clipped.shape {
-                Shape::Vec(shapes) => shapes,
-                shape => vec![shape],
-            })
-            .collect();
-        let (curve, gizmos): (Vec<_>, Vec<_>) = shapes
-            .iter()
-            .enumerate()
-            .filter_map(|(i, shape)| match shape {
-                Shape::Path(path) => Some((i, path)),
-                _ => None,
-            })
-            .partition(|(_, path)| !path.closed);
-        assert_eq!(gizmos.len(), 3);
-        let [(halo_index, halo), (line_index, line)] = curve[..] else {
-            panic!("expected a halo and a line, got {} open paths", curve.len());
-        };
-        let solid = |stroke: &egui::epaint::PathStroke| match stroke.color {
-            egui::epaint::ColorMode::Solid(color) => color,
-            _ => panic!("expected a solid stroke"),
-        };
-        assert!(halo_index < line_index);
-        assert!(gizmos.iter().all(|(i, _)| line_index < *i));
-        assert_eq!(halo.points, line.points);
-        assert_eq!(solid(&line.stroke), Color32::WHITE);
-        assert!(halo.stroke.width > line.stroke.width);
-        assert_eq!(contrast_color(Color32::WHITE), Color32::BLACK);
-        assert_eq!(solid(&halo.stroke).to_opaque(), Color32::BLACK);
-        assert!(solid(&halo.stroke).a() > 0);
-    }
-
-    #[test]
-    fn strip_hint_is_distinct_per_strip_and_shared_without_selection() {
-        let hue = strip_hint(Strip::Hue, true);
-        let t = strip_hint(Strip::T, true);
-        let no_selection = strip_hint(Strip::Hue, false);
-        assert_eq!(strip_hint(Strip::T, false), no_selection);
-        for hint in [hue, t, no_selection] {
+    fn t_strip_hint_does_not_need_a_selection() {
+        assert_eq!(strip_hint(Strip::T, false), strip_hint(Strip::T, true));
+        assert_ne!(strip_hint(Strip::T, true), strip_hint(Strip::Hue, true));
+        assert_ne!(strip_hint(Strip::Hue, false), strip_hint(Strip::Hue, true));
+        for hint in [strip_hint(Strip::T, true), strip_hint(Strip::Hue, false)] {
             assert!(!hint.is_empty());
         }
-        assert_ne!(hue, t);
-        assert_ne!(hue, no_selection);
-        assert_ne!(t, no_selection);
+    }
+
+    #[test]
+    fn t_gizmo_hint_shows_t_and_which_points_are_fixed() {
+        let first = t_gizmo_hint(0, 3, 0.0);
+        let middle = t_gizmo_hint(1, 3, 0.4);
+        let last = t_gizmo_hint(2, 3, 1.0);
+        assert!(
+            first.contains("fixed") && last.contains("fixed"),
+            "{first} / {last}"
+        );
+        assert!(
+            !middle.contains("fixed") && middle.contains("Drag"),
+            "{middle}"
+        );
+        assert!(
+            middle.contains("0.400") && middle.contains("2 of 3"),
+            "{middle}"
+        );
     }
 
     fn paints_empty_picker_hint(points: &mut Vec<ControlPoint>) -> bool {
@@ -2061,6 +1951,86 @@ mod tests {
         wrapper.remove_control_point(&mut points, 1);
         assert_eq!(wrapper.last_modifying_point_index, Some(3));
         assert_eq!(wrapper.dragging_index, None);
+    }
+
+    fn points_t(ts: &[f32]) -> Vec<ControlPoint> {
+        ts.iter()
+            .map(|&t| ControlPoint::new_simple([0.5, 0.5, 0.0].into(), t))
+            .collect()
+    }
+
+    fn assert_ts_near(points: &[ControlPoint], expected: &[f32]) {
+        let ts: Vec<f32> = points.iter().map(|cp| *cp.t()).collect();
+        assert_eq!(ts.len(), expected.len(), "{ts:?} vs {expected:?}");
+        for (t, e) in ts.iter().zip(expected) {
+            assert!((t - e).abs() < 1e-6, "{ts:?} vs {expected:?}");
+        }
+    }
+
+    #[test]
+    fn spawning_right_of_a_middle_point_takes_the_middle_t_of_the_gap() {
+        let mut points = points_t(&[0.0, 0.4, 1.0]);
+        let mut wrapper = ZColorPickerWrapper {
+            last_modifying_point_index: Some(1),
+            ..Default::default()
+        };
+        wrapper.spawn_control_point(&mut points, ControlPoint::default());
+        assert_ts_near(&points, &[0.0, 0.4, 0.7, 1.0]);
+        assert_eq!(wrapper.last_modifying_point_index, Some(2));
+    }
+
+    #[test]
+    fn spawning_at_an_end_pins_the_new_point() {
+        for (is_insert_right, new_index, expected) in
+            [(true, 2, [0.0, 0.5, 1.0]), (false, 0, [0.0, 0.5, 1.0])]
+        {
+            let mut points = points_t(&[0.0, 1.0]);
+            let mut wrapper = ZColorPickerWrapper::default();
+            wrapper.options.is_insert_right = is_insert_right;
+            let spawned = ControlPoint::new_simple([0.9, 0.9, 0.9].into(), 0.5);
+            wrapper.spawn_control_point(&mut points, spawned);
+            assert_ts_near(&points, &expected);
+            assert_eq!(points[new_index].val()[0], 0.9);
+        }
+    }
+
+    #[test]
+    fn removing_an_end_point_re_pins_t() {
+        let mut points = points_t(&[0.0, 0.5, 0.75, 1.0]);
+        let mut wrapper = ZColorPickerWrapper::default();
+        wrapper.remove_control_point(&mut points, 0);
+        assert_ts_near(&points, &[0.0, 0.5, 1.0]);
+        wrapper.remove_control_point(&mut points, 2);
+        assert_ts_near(&points, &[0.0, 1.0]);
+    }
+
+    #[test]
+    fn constraints_space_invalid_t_evenly() {
+        let mut points = points_t(&[0.0, 0.0, 0.0]);
+        ZColorPickerWrapper::default().apply_control_point_constraints(&mut points);
+        assert_ts_near(&points, &[0.0, 0.5, 1.0]);
+        let mut points = points_t(&[0.0, 1.0, 2.0]);
+        ZColorPickerWrapper::default().pre_draw_update(&mut points, SplineMode::Linear);
+        assert_ts_near(&points, &[0.0, 0.5, 1.0]);
+    }
+
+    #[test]
+    fn constraints_keep_valid_t() {
+        let mut points = points_t(&[0.0, 0.1, 1.0]);
+        let mut wrapper = ZColorPickerWrapper::default();
+        wrapper.pre_draw_update(&mut points, SplineMode::Linear);
+        wrapper.apply_control_point_constraints(&mut points);
+        assert_ts_near(&points, &[0.0, 0.1, 1.0]);
+    }
+
+    #[test]
+    fn auto_hue_interpolates_middle_hues_by_t() {
+        let mut points: Vec<ControlPoint> = [(0.0, 0.0), (0.25, 0.9), (1.0, 0.4)]
+            .into_iter()
+            .map(|(t, h)| ControlPoint::new_simple([0.5, 0.5, h].into(), t))
+            .collect();
+        ZColorPickerWrapper::default().apply_control_point_constraints(&mut points);
+        assert!((points[1].val().h() - 0.1).abs() < 1e-6, "{:?}", points[1]);
     }
 
     #[test]
@@ -2331,21 +2301,21 @@ mod tests {
     }
 
     #[test]
-    fn point_to_spawn_just_outside_disc_inherits_hue_and_t() {
+    fn point_to_spawn_just_outside_disc_inherits_hue() {
         let points = [point(0.5, 0.5, 0.3, 0.7)];
         assert_eq!(
             spawn_at(&points, 0.58, 0.5),
-            Some(point(0.58, 0.5, 0.3, 0.7))
+            Some(point(0.58, 0.5, 0.3, 0.0))
         );
-        assert_eq!(spawn_at(&points, 0.6, 0.5), Some(point(0.6, 0.5, 0.3, 0.7)));
+        assert_eq!(spawn_at(&points, 0.6, 0.5), Some(point(0.6, 0.5, 0.3, 0.0)));
     }
 
     #[test]
-    fn point_to_spawn_inherits_from_nearest_point() {
+    fn point_to_spawn_inherits_hue_from_nearest_point() {
         let points = [point(0.25, 0.5, 0.1, 0.2), point(0.75, 0.5, 0.9, 0.8)];
         assert_eq!(
             spawn_at(&points, 0.625, 0.5),
-            Some(point(0.625, 0.5, 0.9, 0.8))
+            Some(point(0.625, 0.5, 0.9, 0.0))
         );
     }
 
