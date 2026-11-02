@@ -2,17 +2,13 @@
 
 use crate::common::SplineMode;
 use crate::datatypes::control_point::{ControlPoint, ControlPointValue};
-#[allow(unused_imports)]
-use crate::error::Result;
 use crate::ui_egui::control_points::{
     control_points_to_spline, find_spline_max_t, flatten_control_points,
 };
-use eframe::egui::{self, lerp, Sense, Ui};
+use eframe::egui::{self, Sense, Ui};
 use eframe::emath;
 use eframe::epaint::{Pos2, Rect, Stroke, Vec2};
 use egui::epaint::PathShape;
-
-use crate::math::{add_array_array, mul_array};
 
 pub fn generate_spline_points_with_distance(
     control_points: &[ControlPoint],
@@ -46,48 +42,6 @@ pub fn generate_spline_points_with_distance(
     );
 
     spline_samples
-}
-
-pub fn sub_divide_control_points(
-    control_points: &[ControlPoint],
-    distance_per_point: f32,
-) -> Vec<ControlPoint> {
-    let capacity: usize = control_points.len() * 4;
-    let mut sub_divided: Vec<ControlPoint> = Vec::with_capacity(capacity);
-
-    for i in 1..control_points.len() {
-        sub_divided.push(control_points[i - 1].clone());
-        let hue_to_use = control_points[i - 1].val()[2];
-        let first = control_points[i - 1].val().pos2();
-        let last = control_points[i].val().pos2();
-        let dir = (last - first).normalized();
-        let mut sub_div_start = first;
-        let mut distance_to_end = (last - first).dot(last - first).sqrt();
-        while distance_to_end > distance_per_point {
-            let new: Pos2 = sub_div_start + distance_per_point * dir;
-            distance_to_end -= distance_per_point;
-
-            let mut new_cp = ControlPoint::default();
-            *new_cp.val_mut() = ControlPointValue::new(new.x, new.y, hue_to_use);
-            *new_cp.t_mut() = lerp(*control_points[i - 1].t()..=*control_points[i].t(), 0.5);
-
-            sub_divided.push(new_cp);
-            sub_div_start = new;
-        }
-        let last_new = sub_div_start + distance_to_end.max(0.0) * dir;
-
-        let mut new_cp = ControlPoint::default();
-        *new_cp.val_mut() = ControlPointValue::new(last_new.x, last_new.y, hue_to_use);
-        *new_cp.t_mut() = *control_points[i].t();
-
-        let last_cp = new_cp;
-        sub_divided.push(last_cp);
-    }
-    if control_points.last().is_some() {
-        sub_divided.push(control_points.last().unwrap().clone());
-    }
-
-    sub_divided
 }
 
 pub fn ui_ordered_spline_gradient(
@@ -143,31 +97,4 @@ pub fn ui_ordered_spline_gradient(
     }
 
     Some(response)
-}
-
-pub struct Bezier<const D: usize, const N: usize> {
-    pub control_points: [[f32; D]; N],
-}
-
-impl<const D: usize, const N: usize> Bezier<D, N> {
-    pub fn new() -> Self {
-        Self {
-            control_points: [[0.0; D]; N],
-        }
-    }
-
-    pub fn get_at(&self, t: f32) -> [f32; D] {
-        // https://en.wikipedia.org/wiki/B%C3%A9zier_curve
-        let mut outer_sum: [f32; D] = [0.0; D];
-
-        for i in 0..N {
-            let inner_prod = num_integer::binomial(N as u64, i as u64) as f32
-                * (1.0 - t).powi(N as i32 - i as i32)
-                * t.powi(i as i32);
-            let inner = mul_array(self.control_points[i].clone(), inner_prod);
-            outer_sum = add_array_array(outer_sum, inner);
-        }
-
-        outer_sum
-    }
 }

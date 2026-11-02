@@ -45,9 +45,6 @@ pub fn ui_ordered_control_points(
     const SHOW_LINEAR_LINE: bool = false;
 
     const FILL_RADIUS_SCALE: f32 = 1.8;
-    const TANGENT_RADIUS_SCALE: f32 = 0.7;
-    const ACTIVE_LINE_ALPHA: f32 = 0.25;
-    const INACTIVE_LINE_ALPHA: f32 = 0.002;
 
     if control_points.is_empty() {
         return ControlPointUiResult::default();

@@ -67,19 +67,6 @@ pub trait ZAppPane {
     fn title(&self) -> String {
         "Pane".to_string()
     }
-    fn post_draw(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
-        let color = egui::epaint::Hsva::new(0.103 as f32, 0.5, 0.5, 1.0);
-        ui.painter().rect_filled(ui.max_rect(), 0.0, color);
-        let dragged = ui
-            .allocate_rect(ui.max_rect(), egui::Sense::click_and_drag())
-            .on_hover_cursor(egui::CursorIcon::Grab)
-            .dragged();
-        if dragged {
-            egui_tiles::UiResponse::DragStarted
-        } else {
-            egui_tiles::UiResponse::None
-        }
-    }
 }
 #[derive(Serialize, Deserialize)]
 pub struct ColorPickerPane {

@@ -12,8 +12,8 @@ use eframe::{
     egui::{
         self,
         color_picker::{show_color, Alpha},
-        lerp, pos2, Layout, NumExt, PointerButton, Pos2, Rect, Response, Sense, Shape, Stroke,
-        TextStyle, Ui, Widget, WidgetInfo,
+        lerp, pos2, Layout, PointerButton, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Widget,
+        WidgetInfo,
     },
     epaint::{vec2, Color32, HsvaGamma, Vec2},
 };
@@ -64,16 +64,6 @@ impl<'a> ZColorPicker<'a> {
         }
 
         return main_color_picker(ui, desired_size, self.ctx);
-    }
-
-    /// Just the slider, no text
-    fn allocate_space(&self, ui: &mut Ui) -> Response {
-        let thickness = ui
-            .text_style_height(&TextStyle::Body)
-            .at_least(ui.spacing().interact_size.y);
-
-        let desired_size = Vec2::new(ui.spacing().slider_width, thickness);
-        ui.allocate_response(desired_size, Sense::click_and_drag())
     }
 
     fn add_contents(&mut self, ui: &mut Ui) -> Response {
@@ -191,15 +181,6 @@ impl ZColorPickerWrapper {
             self.dragging_index = None;
             self.last_modifying_point_index = None;
         }
-    }
-
-    // THIS ASWELL
-    fn remove_all_control_points(&mut self, control_points: &mut Vec<ControlPoint>) {
-        for i in (0..control_points.len()).rev() {
-            self.remove_control_point(control_points, i);
-        }
-        self.last_modifying_point_index = None;
-        self.dragging_index = None;
     }
 
     // TODO: THIS TOO
@@ -632,11 +613,6 @@ fn handle_hue_slider(
     }
 
     delta_hue
-}
-
-fn apply_drag_delta(point: &mut [f32; 2], delta: Vec2, rect_size: Vec2) {
-    point[0] += delta.x / rect_size.x;
-    point[1] -= delta.y / rect_size.y;
 }
 
 fn apply_drag_delta_3(point: &mut [f32; 3], delta: Vec2, rect_size: Vec2) {

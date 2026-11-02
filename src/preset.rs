@@ -32,29 +32,8 @@ impl PresetEntity {
         }
     }
 
-    pub fn apply(&self, control_points: &mut Vec<ControlPoint>, spline_mode: &mut SplineMode) {
-        self.data.clone().apply(control_points, spline_mode);
-    }
-
     pub fn into(self) -> (Vec<ControlPoint>, SplineMode) {
         (self.data.control_points, self.data.spline_mode)
-    }
-
-    pub fn make_preset_data(
-        control_points: &Vec<ControlPoint>,
-        spline_mode: &SplineMode,
-    ) -> AppDataCtx {
-        AppDataCtx {
-            spline_mode: *spline_mode,
-            control_points: control_points.clone(),
-        }
-    }
-}
-
-impl AppDataCtx {
-    pub fn apply(self, control_points: &mut Vec<ControlPoint>, spline_mode: &mut SplineMode) {
-        *control_points = self.control_points;
-        *spline_mode = self.spline_mode;
     }
 }
 
@@ -248,10 +227,6 @@ impl PresetHandler {
             .filter(|&(i, _)| Some(i) != renaming)
             .map(|(_, preset)| preset.name.as_str());
         validate_preset_name(name, other_names)
-    }
-
-    pub fn presets_mut(&mut self) -> &mut Vec<PresetEntity> {
-        &mut self.presets
     }
 
     pub fn apply_selected_preset(

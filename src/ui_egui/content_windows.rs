@@ -4,15 +4,12 @@ use eframe::egui::TextEdit;
 use crate::common::ColorStringCopy;
 use crate::common::SplineMode;
 use crate::datatypes::control_point::ControlPoint;
-use crate::egui::InnerResponse;
 use crate::egui::PointerButton;
 use crate::egui::Ui;
-use crate::egui::Window;
 use crate::preset::PresetEntity;
 use crate::preset::PresetHandler;
-use crate::ui_egui::app::AppDataCtx;
 use crate::ui_egui::app::ZColorPickerOptions;
-use crate::{egui::Pos2, ui_egui::ui_common::ContentWindow};
+use crate::ui_egui::ui_common::ContentWindow;
 
 pub struct WindowPresetDrawResult {
     pub preset_result: PresetDrawResult,
@@ -64,14 +61,12 @@ impl ContentWindow for WindowPreset {
 
 pub struct PresetDrawResult {
     pub should_apply: Option<PresetEntity>,
-    pub open_create_preset_window: bool,
 }
 
 impl Default for PresetDrawResult {
     fn default() -> Self {
         Self {
             should_apply: Default::default(),
-            open_create_preset_window: false,
         }
     }
 }
@@ -79,15 +74,11 @@ impl Default for PresetDrawResult {
 #[derive(Clone, Debug, Default)]
 pub struct WindowZColorPickerOptions {
     pub open: bool,
-    pub position: Pos2,
 }
 
 impl WindowZColorPickerOptions {
-    pub fn new(window_position: Pos2) -> Self {
-        Self {
-            open: false,
-            position: window_position,
-        }
+    pub fn new() -> Self {
+        Self { open: false }
     }
 
     pub fn update(&mut self) {}
@@ -176,43 +167,11 @@ impl WindowZColorPickerOptions {
             }
         });
     }
-
-    fn draw_ui(
-        &mut self,
-        ui: &mut Ui,
-        options: &mut ZColorPickerOptions,
-        control_points: &mut Vec<ControlPoint>,
-        spline_mode: &mut SplineMode,
-        color_copy_format: &mut ColorStringCopy,
-    ) -> Option<InnerResponse<Option<()>>> {
-        let prev_visuals = ui.visuals_mut().clone();
-
-        let mut open = self.is_open();
-        let response = Window::new(self.title())
-            .resizable(false)
-            .title_bar(false)
-            .open(&mut open)
-            .auto_sized()
-            .show(ui.ctx(), |ui: &mut Ui| {
-                self.draw_content(ui, options, control_points, spline_mode, color_copy_format)
-            });
-
-        if open {
-            self.open();
-        } else {
-            self.close();
-        }
-
-        ui.ctx().set_visuals(prev_visuals);
-
-        response
-    }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct WindowPreset {
     pub open: bool,
-    pub position: Pos2,
     pub new_preset_window_text: String,
     pub new_preset_is_open: bool,
     pub delete_confirm_open: bool,
@@ -222,10 +181,9 @@ pub struct WindowPreset {
 }
 
 impl WindowPreset {
-    pub fn new(window_position: Pos2) -> Self {
+    pub fn new() -> Self {
         Self {
             open: false,
-            position: window_position,
             new_preset_window_text: String::new(),
             new_preset_is_open: false,
             delete_confirm_open: false,
@@ -431,35 +389,5 @@ impl WindowPreset {
     fn close_delete_confirm(&mut self) {
         self.delete_confirm_open = false;
         self.delete_error = None;
-    }
-
-    fn draw_ui(
-        &mut self,
-        ui: &mut Ui,
-        preset_handler: &mut PresetHandler,
-        control_points: &mut Vec<ControlPoint>,
-        spline_mode: &mut SplineMode,
-    ) -> Option<InnerResponse<Option<WindowPresetDrawResult>>> {
-        let prev_visuals = ui.visuals_mut().clone();
-
-        let mut open = self.is_open();
-        let response = Window::new(self.title())
-            .resizable(false)
-            .title_bar(false)
-            .open(&mut open)
-            .auto_sized()
-            .show(ui.ctx(), |ui: &mut Ui| {
-                self.draw_content(ui, preset_handler, control_points, spline_mode)
-            });
-
-        if open {
-            self.open();
-        } else {
-            self.close();
-        }
-
-        ui.ctx().set_visuals(prev_visuals);
-
-        response
     }
 }

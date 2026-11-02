@@ -5,7 +5,7 @@ use eframe::egui::Window;
 use eframe::{
     egui::{color_picker::Alpha, Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
     emath::{lerp, remap_clamp},
-    epaint::{pos2, Color32, Mesh, Rect, Rgba, Shape, Stroke, Vec2},
+    epaint::{pos2, Color32, Mesh, Rect, Rgba, Shape, Vec2},
 };
 use std::sync::Arc;
 

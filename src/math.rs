@@ -1,72 +1,9 @@
 use std::f32::consts::TAU;
 
-#[allow(unused_imports)]
-use crate::error::Result;
 use bspline::Interpolate;
 use ecolor::Color32;
-use eframe::egui::{lerp, Vec2};
+use eframe::egui::lerp;
 use palette::{FromColor, LabHue, Lch, LinSrgb};
-
-pub fn factorial(n: u64) -> u64 {
-    (1..=n).product()
-}
-
-// n! / (n - r)!
-
-pub fn combination(n: u64, r: u64) -> u64 {
-    factorial(n) / factorial(n - r)
-}
-
-pub fn count_combinations(n: u64, r: u64) -> u64 {
-    if r > n {
-        0
-    } else {
-        (1..=r.min(n - r)).fold(1, |acc, val| acc * (n - val + 1) / val)
-    }
-}
-
-pub fn count_permutations(n: u64, r: u64) -> u64 {
-    (n - r + 1..=n).product()
-}
-
-pub fn mul_array<const D: usize, T: std::ops::MulAssign + std::marker::Copy>(
-    mut lhs: [T; D],
-    rhs: T,
-) -> [T; D] {
-    for i in 0..D {
-        lhs[i] *= rhs;
-    }
-    lhs
-}
-
-pub fn add_array<const D: usize, T: std::ops::AddAssign + std::marker::Copy>(
-    mut lhs: [T; D],
-    rhs: T,
-) -> [T; D] {
-    for i in 0..D {
-        lhs[i] += rhs;
-    }
-    lhs
-}
-
-pub fn add_array_array<const D: usize, T: std::ops::AddAssign + std::marker::Copy>(
-    mut lhs: [T; D],
-    rhs: [T; D],
-) -> [T; D] {
-    for i in 0..D {
-        lhs[i] += rhs[i];
-    }
-    lhs
-}
-
-pub fn dist_vec2(vec: &[f32; 2]) -> f32 {
-    (vec[0] * vec[0] + vec[1] * vec[1]).sqrt()
-}
-
-pub fn norm_vec2(vec: &[f32; 2]) -> Vec2 {
-    let dist = dist_vec2(vec);
-    Vec2::new(vec[0] / dist, vec[1] / dist)
-}
 
 pub fn hue_abs_distance(hue0: f32, hue1: f32) -> f32 {
     let d = (hue1 - hue0).rem_euclid(1.0);
@@ -89,24 +26,6 @@ pub fn hue_lerp(hue0: f32, hue1: f32, t: f32) -> f32 {
     let hue = lerp(hue0..=target_hue, t);
 
     hue.rem_euclid(1.0)
-}
-
-pub fn unwrap_hue(a: f32, b: f32) -> (f32, f32) {
-    let mut b = b;
-    if hue_abs_distance(a, b) > 0.5 {
-        if b > a {
-            b -= 1.0;
-        } else {
-            b += 1.0;
-        }
-    }
-    (a, b)
-}
-
-pub fn color_lerp(color_src: Color32, color_trg: Color32, t: f32) -> Color32 {
-    const C: f32 = 0.7;
-    const ALPHA: f32 = 0.1;
-    color_lerp_ex(color_src, color_trg, t, C, ALPHA)
 }
 
 pub fn color_lerp_ex(

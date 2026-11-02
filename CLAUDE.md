@@ -11,13 +11,13 @@ Z-Color-Picker is a single-binary Rust (edition 2021) desktop app built on `efra
 ```
 cargo build
 cargo run            # run from repo root: presets resolve relative to the CWD
-cargo clippy         # currently fails on a deny-level lint at preset.rs (`presets.len() <= 0`)
+cargo clippy         # exits 0; warn-level style lints remain
 cargo test
 cargo test hermite   # single test by name filter (bin crate; tests live in #[cfg(test)] modules under src/)
 ```
 
-- The crate has many existing dead-code and unused-import warnings. To check whether a change adds new ones, compare against a build of HEAD instead of expecting a clean build.
-- The only tests so far are the spline-sampling tests in `src/ui_egui/control_points.rs`. UI behavior is checked by running the app.
+- The build is warning-free. Keep it that way: delete unused code, no `#[allow]`.
+- Unit tests live in `#[cfg(test)] mod tests` in `math.rs`, `hsv_key_value.rs`, `common.rs`, `control_points.rs`, `preset.rs` (tempfile dirs, never `./presets`), `clipboard.rs`, `color_picker.rs` and `error.rs`. UI behavior is checked by running the app.
 - Line endings differ from file to file (some CRLF, some LF). Keep each file's existing endings.
 - `.vscode/launch.json` has lldb (CodeLLDB) configs for the binary and its unit tests.
 - The `accesskit` Cargo feature doesn't compile. The block it gates in `ZColorPicker::add_contents` is leftover code copied from egui's Slider.
@@ -50,7 +50,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 - Keys are placed at `t = index`, not at `ControlPoint.t`. Anything that walks segments, such as the curvature comb, must use index order too.
 - `ControlPoint.t` (edited with the T slider) doesn't affect the gradient yet; it's listed as work in progress in the README.
 - `HermiteBezier` is actually Catmull-Rom: the endpoints are duplicated as phantom keys.
-- `Polynomial` is `todo!()`.
+- There is no `Polynomial` mode; saved JSON that names it fails to parse.
 - `flatten_control_points` unwraps hue across the 0/1 boundary before interpolation.
 - The previewer (`src/ui_egui/previewer.rs`) samples with `sample_spline_normalized`, which maps x in [0,1] onto the real keys. It handles the end of a Catmull-Rom spline, where the `splines` sampler returns `None`. For non-Hermite modes, the quantized preview first remaps key `t` to the preview sizes (`modify_spline_t_to_preview_sizes`).
 - Curvature comb drawing lives in `src/ui_egui/curvature.rs` and has its own cubic evaluation. It is toggled via `ZColorPickerOptions::is_show_curvature_comb`.
@@ -58,11 +58,14 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 ### Presets
 - `src/preset.rs`: one JSON file per `PresetEntity` in `./presets/` (the `presets/` folder is gitignored). The path comes from `std::env::current_dir()`.
 - Presets are written through to disk: Create, Save, Rename and Delete in the preset bar (`WindowPreset::draw_content`, `ZApp::show_create_preset_window`) hit disk immediately via `PresetHandler`. Nothing is synced at exit.
+- Create writes the file, then adds it to the list. Rename uses `fs::rename`. Delete removes the file first, behind a confirm `Modal`.
+- Name rules, enforced by `validate_preset_name` / `PresetHandler::check_name`: not empty or whitespace; no `< > : " / \ | ? *` or control chars; no trailing dot or space; no reserved device name (CON, NUL, COM1..); at most 64 chars; no case-insensitive duplicate. The UI disables Create/Rename and shows the reason in red.
 - When `auto_save_presets` is enabled, the selected preset is rewritten only when the current control points or spline mode differ from it.
-- On startup, `init_presets` reloads the presets from disk, overriding the copy in eframe storage.
+- `PresetHandler.presets` is `#[serde(skip)]`: presets are not in eframe storage, disk is the truth. At startup `init_presets` loads them from `presets_dir` (default `./presets`), skips non-`.json` or malformed files with `log::warn`, and clamps the selection.
 
 ### Clipboard / screen capture
-Pressing the middle button stores a target rect in `pending_screenshot_rect` and requests one `ViewportCommand::Screenshot`. The target is the previewer rect under the cursor (rects come from `stored_ui_responses`), or else a 1x1 pixel. The screenshot event arrives in a later frame. `handle_screenshot_event` crops it to the stored rect and turns it into a `ClipboardCopyEvent`. That event is consumed at the start of the next `Idle` frame (`handle_clipboardcopy_event`). A single pixel is copied as text in `color_copy_format`; a larger region is copied as an image via `arboard`.
+Pressing the middle button stores a `ScreenshotTarget` in `pending_screenshot_target` and requests one `ViewportCommand::Screenshot`. The target is the previewer rect under the cursor (rects come from `stored_ui_responses`), or else the pixel under the cursor. The screenshot event arrives in a later frame. `handle_screenshot_event` crops it with `crop_screenshot` (`src/ui_egui/clipboard.rs`) and turns it into a `ClipboardCopyEvent`. A pixel target takes the physical pixel at `floor(cursor * ppp)`, clamped to the screenshot; a previewer crop is clamped too. That event is consumed at the start of the next `Idle` frame (`handle_clipboardcopy_event`). A single pixel is copied as text in `color_copy_format`; a larger region is copied as an image via `arboard`. A failed write shows `Copy failed: <error>` in the popup.
+- `format_color_as` supports all 11 `ColorStringCopy` formats, from unmultiplied sRGB; `RGB`/`RGBA` are linear.
 
 ### Misc
 - `main.rs` forces `RUST_LOG=debug`.

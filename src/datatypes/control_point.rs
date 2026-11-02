@@ -49,14 +49,6 @@ impl ControlPoint {
         Self::ControlPointSimple(default)
     }
 
-    pub fn new(val: ControlPointValue, t: ControlPointT, tangents: ControlPointTangents) -> Self {
-        let mut default = ControlPointStorage::default();
-        default.val = val;
-        default.t = t;
-        default.tangents = tangents;
-        Self::ControlPointLeftRightTangent(default)
-    }
-
     pub fn storage(&self) -> &ControlPointStorage {
         match self {
             ControlPoint::ControlPointSimple(c) | ControlPoint::ControlPointLeftRightTangent(c) => {

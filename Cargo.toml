@@ -12,7 +12,6 @@ bspline = "1.1.0"
 ecolor = {version = "0.31.0", features = ["color-hex"]}
 eframe = {version = "0.31.0", features = ["serde", "persistence"]}
 env_logger = "0.10"
-num-integer = "0.1.45"
 palette = "0.7.4"
 splines = "4.3.1"
 serde = { version = "1.0.48", features = ["derive"], optional = true}

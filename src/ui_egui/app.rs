@@ -10,9 +10,6 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
-#[cfg(windows)]
-#[allow(unused_imports)]
-use winapi::shared::winerror::ERROR_INCOMPATIBLE_SERVICE_SID_TYPE;
 
 use crate::{
     common::{ColorStringCopy, SplineMode},
@@ -29,7 +26,6 @@ use crate::{
         },
         color_picker::ZColorPickerWrapper,
         content_windows::{WindowPreset, WindowZColorPickerOptions},
-        control_points,
         debug_windows::{DebugWindowControlPoints, DebugWindowTestWindow},
         panes::{
             ColorPickerOptionsPane, ColorPickerPane, LogPane, Pane, PreviewerPane, TreeBehavior,
@@ -51,11 +47,6 @@ enum AppState {
     Startup,
     Idle,
     Exit,
-}
-
-#[derive(Debug)]
-struct MouseClickEvent {
-    mouse_pos: Pos2,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -101,8 +92,6 @@ pub struct ZColorPickerAppContext {
     debug_window_control_points: DebugWindowControlPoints,
     #[serde(skip)]
     debug_window_test: DebugWindowTestWindow,
-    #[serde(skip)]
-    double_click_event: Option<MouseClickEvent>,
     #[serde(skip)]
     pending_screenshot_target: Option<ScreenshotTarget>,
     #[serde(skip)]
@@ -193,9 +182,8 @@ impl ZColorPickerAppContext {
             z_color_picker: Rc::new(RefCell::new(z_color_picker_wrapper)),
             previewer: ZPreviewer::default(),
             color_copy_format: ColorStringCopy::default(),
-            debug_window_control_points: DebugWindowControlPoints::new(Pos2 { x: 200.0, y: 200.0 }),
-            debug_window_test: DebugWindowTestWindow::new(Pos2 { x: 200.0, y: 200.0 }),
-            double_click_event: None,
+            debug_window_control_points: DebugWindowControlPoints::new(),
+            debug_window_test: DebugWindowTestWindow::new(),
             pending_screenshot_target: None,
             clipboard_event: None,
             clipboard_copy_window: ClipboardPopup::new(
@@ -206,8 +194,8 @@ impl ZColorPickerAppContext {
             ),
             stored_ui_responses: PreviewerUiResponses::default(),
             open_tabs: HashSet::default(),
-            options_window: WindowZColorPickerOptions::new(Pos2::new(200.0, 200.0)),
-            presets_window: WindowPreset::new(Pos2::new(200.0, 200.0)),
+            options_window: WindowZColorPickerOptions::new(),
+            presets_window: WindowPreset::new(),
         }
     }
 }
@@ -609,10 +597,8 @@ impl ZApp {
                 }
 
                 // DoubleLeftClick
-                app_ctx.double_click_event = None;
                 if r.pointer.button_double_clicked(PointerButton::Primary) {
                     let mouse_pos = r.pointer.interact_pos().unwrap();
-                    app_ctx.double_click_event = Some(MouseClickEvent { mouse_pos });
                     log::info!("double click @({},{})", mouse_pos.x, mouse_pos.y);
                 }
 
@@ -623,7 +609,6 @@ impl ZApp {
                 }
 
                 // Debug toggles
-                app_ctx.double_click_event = None;
                 if r.key_pressed(egui::Key::F12) {
                     if app_ctx.debug_window_control_points.is_open() {
                         app_ctx.debug_window_control_points.close();
@@ -636,7 +621,6 @@ impl ZApp {
                         app_ctx.debug_window_control_points.is_open()
                     );
                 }
-                app_ctx.double_click_event = None;
                 if r.key_pressed(egui::Key::F11) {
                     if app_ctx.debug_window_test.is_open() {
                         app_ctx.debug_window_test.close();
@@ -679,9 +663,6 @@ impl eframe::App for ZApp {
             }
             AppState::Exit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-            _ => {
-                panic!("Not a valid state {:?}", self.state);
             }
         }
 

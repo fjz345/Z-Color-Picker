@@ -1,4 +1,3 @@
-use crate::egui::Pos2;
 use crate::ui_egui::ui_common::ContentWindow;
 use crate::{datatypes::control_point::ControlPoint, math::color_lerp_ex};
 use ecolor::HsvaGamma;
@@ -8,15 +7,13 @@ use eframe::egui::{Slider, Ui, Vec2};
 #[derive(Default, Debug)]
 pub struct DebugWindowControlPoints {
     open: bool,
-    pub position: Pos2,
     pub control_points: Vec<ControlPoint>,
 }
 
 impl DebugWindowControlPoints {
-    pub fn new(window_position: Pos2) -> Self {
+    pub fn new() -> Self {
         Self {
             open: false,
-            position: window_position,
             control_points: Vec::new(),
         }
     }
@@ -70,7 +67,6 @@ impl ContentWindow for DebugWindowControlPoints {
 #[derive(Default, Debug)]
 pub struct DebugWindowTestWindow {
     open: bool,
-    pub position: Pos2,
     debug_t: f32,
     debug_c: f32,
     debug_alpha: f32,
@@ -79,10 +75,9 @@ pub struct DebugWindowTestWindow {
 }
 
 impl DebugWindowTestWindow {
-    pub fn new(window_position: Pos2) -> Self {
+    pub fn new() -> Self {
         Self {
             open: false,
-            position: window_position,
             debug_t: 0.0,
             debug_c: 0.0,
             debug_alpha: 0.0,
