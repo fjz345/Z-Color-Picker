@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use eframe::egui;
 use eframe::egui::TextEdit;
 
@@ -150,7 +152,9 @@ impl WindowZColorPickerOptions {
                 .response
                 .on_hover_text("Spline Mode");
 
-            ui.button("Flip").clicked_by(PointerButton::Primary)
+            ui.button("Flip")
+                .on_hover_text("Reverse the point order (tangents and band widths follow)")
+                .clicked_by(PointerButton::Primary)
         })
         .inner
     }
@@ -245,6 +249,18 @@ fn combo_selected_text(name: Option<&str>, dirty: bool) -> String {
         Some(name) => name.to_string(),
         None => "<None>".to_string(),
     }
+}
+
+fn auto_save_hint(has_selection: bool) -> &'static str {
+    if has_selection {
+        "Rewrite the selected preset file after every edit"
+    } else {
+        "Select a preset to auto-save into"
+    }
+}
+
+fn no_presets_text(dir: &Path) -> String {
+    format!("No presets in {}", dir.display())
 }
 
 fn apply_preset(
@@ -377,7 +393,7 @@ impl WindowPreset {
     ) -> WindowPresetDrawResult {
         let mut draw_result = WindowPresetDrawResult::default();
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let dirty = has_unsaved_changes(preset_handler, control_points, *spline_mode);
             let combobox_selected_text_to_show = combo_selected_text(
                 selected_preset(preset_handler).map(|p| p.name.as_str()),
@@ -386,11 +402,15 @@ impl WindowPreset {
 
             let selected_index = preset_handler.preset_selected_index;
             let mut choice = None;
+            ui.label("Preset");
             let _combobox_response = egui::ComboBox::new(1232313, "")
                 .selected_text(combobox_selected_text_to_show)
                 .show_ui(ui, |ui| {
                     ui.set_min_width(60.0);
 
+                    if preset_handler.presets.is_empty() {
+                        ui.weak(no_presets_text(preset_handler.presets_dir()));
+                    }
                     let rows = preset_handler
                         .presets
                         .iter()
@@ -408,7 +428,10 @@ impl WindowPreset {
                     }
                 })
                 .response
-                .on_hover_text("Presets");
+                .on_hover_text(format!(
+                    "Presets in {}",
+                    preset_handler.presets_dir().display()
+                ));
 
             match choice {
                 Some(PresetComboChoice::New) => {
@@ -425,9 +448,9 @@ impl WindowPreset {
                 None => {}
             }
 
-            ui.checkbox(&mut preset_handler.auto_save_presets, "Auto-save")
-                .on_hover_text("Auto save preset");
             let has_selection = selected_preset(preset_handler).is_some();
+            ui.checkbox(&mut preset_handler.auto_save_presets, "Auto-save")
+                .on_hover_text(auto_save_hint(has_selection));
             let save_hover_text = if dirty {
                 "Unsaved changes"
             } else {
@@ -474,7 +497,7 @@ impl WindowPreset {
             _ => None,
         };
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let rename_button = ui.add_enabled(
                 matches!(rename_check, Some(Ok(()))),
                 egui::Button::new("Rename"),
@@ -482,10 +505,15 @@ impl WindowPreset {
 
             let mut was_text_box_enter = false;
             ui.push_id(rename_text_field_id, |ui| {
+                let rename_hint = if selected.is_some() {
+                    "New name"
+                } else {
+                    "Select a preset to rename"
+                };
                 let text_widget = TextEdit::singleline(&mut rename_text_field)
-                    .hint_text("New name")
+                    .hint_text(rename_hint)
                     .desired_width(200.0);
-                let text_response = ui.add(text_widget);
+                let text_response = ui.add_enabled(selected.is_some(), text_widget);
                 if text_response.changed() {
                     self.rename_error = None;
                 }
@@ -1120,5 +1148,39 @@ mod tests {
         assert_eq!(combo_selected_text(Some("A"), true), "A *");
         assert_eq!(combo_selected_text(None, false), "<None>");
         assert_eq!(combo_selected_text(None, true), "<None>");
+    }
+
+    #[test]
+    fn auto_save_hint_depends_on_the_selection() {
+        assert_eq!(
+            auto_save_hint(true),
+            "Rewrite the selected preset file after every edit"
+        );
+        assert_eq!(auto_save_hint(false), "Select a preset to auto-save into");
+    }
+
+    #[test]
+    fn no_presets_text_names_the_folder() {
+        let dir = Path::new("some").join("presets");
+
+        let text = no_presets_text(&dir);
+
+        assert!(text.starts_with("No presets in "), "{text:?}");
+        assert!(text.contains(&dir.display().to_string()), "{text:?}");
+    }
+
+    #[test]
+    fn draw_without_selection_keeps_rename_text_empty() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = handler_with_presets(&tmp, &["A"]);
+        let mut window = WindowPreset::new();
+        let ctx = egui::Context::default();
+
+        draw_frame(&ctx, &mut window, &mut handler);
+        draw_frame(&ctx, &mut window, &mut handler);
+
+        let rename_text = ctx.data(|d| d.get_temp::<String>(egui::Id::new(819181)));
+        assert_eq!(rename_text.unwrap_or_default(), "");
+        assert_eq!(handler.preset_selected_index, None);
     }
 }

@@ -232,6 +232,10 @@ impl PresetHandler {
         }
     }
 
+    pub fn presets_dir(&self) -> &Path {
+        &self.presets_dir
+    }
+
     pub fn check_name(
         &self,
         name: &str,
