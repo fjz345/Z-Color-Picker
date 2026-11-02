@@ -3,6 +3,7 @@ use crate::{
     datatypes::control_point::{create_tangent_for_control_point, ControlPoint},
     ui_egui::{
         app::ZColorPickerOptions,
+        auto_comb::apply_auto_comb,
         control_points::{
             control_point_outline, control_point_pos, drag_grab_offset_x, drag_t,
             gradient_color_at, insert_point, normalize_t, remove_point, t_at_pointer,
@@ -37,6 +38,7 @@ pub struct MainColorPickerCtx<'a> {
     pub color_copy_format: ColorStringCopy,
     pub last_modifying_point_index: &'a mut Option<usize>,
     pub dragging_index: &'a mut Option<usize>,
+    pub dragging_tangent: &'a mut Option<(usize, usize)>,
     pub control_point_right_clicked: &'a mut Option<usize>,
     pub copy_request: &'a mut Option<Pos2>,
     pub is_hue_middle_interpolated: bool,
@@ -126,6 +128,10 @@ pub struct ZColorPickerWrapper {
     pub options: ZColorPickerOptions,
     #[serde(skip)]
     pub copy_request: Option<Pos2>,
+    #[serde(skip)]
+    pub dragging_tangent: Option<(usize, usize)>,
+    #[serde(skip)]
+    pub auto_comb_unsolved: usize,
 }
 
 impl Default for ZColorPickerWrapper {
@@ -136,6 +142,8 @@ impl Default for ZColorPickerWrapper {
             right_clicked_on_index: None,
             options: ZColorPickerOptions::default(),
             copy_request: None,
+            dragging_tangent: None,
+            auto_comb_unsolved: 0,
         };
 
         new_color_picker
@@ -151,13 +159,19 @@ impl ZColorPickerWrapper {
         normalize_t_with_warning(control_points);
         if spline_mode == SplineMode::Bezier {
             // Force init tangents
-            for control_point in control_points {
+            for control_point in control_points.iter_mut() {
                 for tang in control_point.tangents_mut().iter_mut() {
                     if tang.is_none() {
                         *tang = Some(create_tangent_for_control_point());
                     }
                 }
             }
+        }
+        self.auto_comb_unsolved = 0;
+        if spline_mode == SplineMode::Bezier && self.options.is_auto_comb {
+            // Constrain first: a later clamp would move solved points and unsettle a loaded preset.
+            self.apply_control_point_constraints(control_points);
+            self.auto_comb_unsolved = apply_auto_comb(control_points, self.dragging_tangent);
         }
     }
 
@@ -177,6 +191,7 @@ impl ZColorPickerWrapper {
                 color_copy_format: *color_copy_format,
                 last_modifying_point_index: &mut self.last_modifying_point_index,
                 dragging_index: &mut self.dragging_index,
+                dragging_tangent: &mut self.dragging_tangent,
                 control_point_right_clicked: &mut self.right_clicked_on_index,
                 copy_request: &mut self.copy_request,
                 is_hue_middle_interpolated: self.options.is_hue_middle_interpolated,
@@ -782,6 +797,7 @@ fn handle_control_points_ui(
     }
 
     // Drag tangent
+    *ctx.dragging_tangent = None;
     if let Some(r) = dragged_tangent {
         if r.dragged_by(PointerButton::Primary) {
             if let Some(index) = *ctx.last_modifying_point_index {
@@ -789,6 +805,7 @@ fn handle_control_points_ui(
                     if let Some(tang) = &mut ctx.control_points[index].tangents_mut()[tang_idx] {
                         tang.val[0] = offset.x;
                         tang.val[1] = offset.y;
+                        *ctx.dragging_tangent = Some((index, tang_idx));
                     }
                 }
             }
@@ -1601,6 +1618,7 @@ mod tests {
         let mut last_modifying_point_index = selected;
         let mut is_modifying_index = selected;
         let mut dragging_index = None;
+        let mut dragging_tangent = None;
         let mut control_point_right_clicked = None;
         let mut copy_request = None;
         let egui_ctx = egui::Context::default();
@@ -1619,6 +1637,7 @@ mod tests {
                         color_copy_format: ColorStringCopy::HEXNOA,
                         last_modifying_point_index: &mut last_modifying_point_index,
                         dragging_index: &mut dragging_index,
+                        dragging_tangent: &mut dragging_tangent,
                         control_point_right_clicked: &mut control_point_right_clicked,
                         copy_request: &mut copy_request,
                         is_hue_middle_interpolated: false,
@@ -1921,6 +1940,142 @@ mod tests {
         assert_eq!(
             format_color_as(Color32::from_rgb(128, 128, 128), ColorStringCopy::HSV, None),
             "hsv(0, 0%, 50%)"
+        );
+    }
+
+    fn with_handles(mut points: Vec<ControlPoint>, handles: &[[[f32; 2]; 2]]) -> Vec<ControlPoint> {
+        for (cp, pair) in points.iter_mut().zip(handles) {
+            *cp.tangents_mut() = pair.map(|[s, v]| Some([s, v, 0.0].into()));
+        }
+        points
+    }
+
+    fn kinked_bezier_points() -> Vec<ControlPoint> {
+        let mut points = with_handles(
+            points_sv(&[(0.2, 0.3), (0.5, 0.5), (0.8, 0.8)]),
+            &[
+                [[-0.1, 0.0], [0.1, 0.1]],
+                [[-0.1, 0.0], [0.0, 0.1]],
+                [[-0.1, -0.05], [0.1, 0.0]],
+            ],
+        );
+        crate::ui_egui::control_points::space_t_evenly(&mut points);
+        points
+    }
+
+    fn auto_comb_picker() -> ZColorPickerWrapper {
+        ZColorPickerWrapper {
+            options: ZColorPickerOptions {
+                is_auto_comb: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn handle_unit(cp: &ControlPoint, slot: usize) -> Vec2 {
+        let offset = cp.tangents()[slot].unwrap();
+        vec2(offset[0], offset[1]).normalized()
+    }
+
+    #[test]
+    fn auto_comb_runs_before_drawing_only_in_bezier_mode() {
+        let mut picker = auto_comb_picker();
+        let mut points = kinked_bezier_points();
+        picker.pre_draw_update(&mut points, SplineMode::Linear);
+        assert_eq!(points, kinked_bezier_points());
+
+        picker.pre_draw_update(&mut points, SplineMode::Bezier);
+        let (incoming, outgoing) = (handle_unit(&points[1], 0), handle_unit(&points[1], 1));
+        assert!(
+            (incoming + outgoing).length() < 1e-4,
+            "{incoming:?} {outgoing:?}"
+        );
+    }
+
+    #[test]
+    fn bezier_handles_are_left_alone_with_auto_comb_off() {
+        let mut points = kinked_bezier_points();
+        ZColorPickerWrapper::default().pre_draw_update(&mut points, SplineMode::Bezier);
+        assert_eq!(points, kinked_bezier_points());
+    }
+
+    #[test]
+    fn auto_comb_keeps_the_dragged_handle_direction() {
+        let mut picker = auto_comb_picker();
+        picker.dragging_tangent = Some((1, 0));
+        let mut points = kinked_bezier_points();
+        picker.pre_draw_update(&mut points, SplineMode::Bezier);
+        assert!((handle_unit(&points[1], 0) - vec2(-1.0, 0.0)).length() < 1e-4);
+        assert!((handle_unit(&points[1], 1) - vec2(1.0, 0.0)).length() < 1e-4);
+    }
+
+    #[test]
+    fn auto_comb_counts_joints_it_cannot_make_continuous() {
+        let mut picker = auto_comb_picker();
+        let mut staircase = with_handles(
+            points_sv(&[(0.25, 0.33), (0.44, 0.38), (0.8, 0.6), (0.9, 0.8)]),
+            &[[[-0.01, 0.0], [0.01, 0.0]]; 4],
+        );
+        picker.pre_draw_update(&mut staircase, SplineMode::Bezier);
+        assert_eq!(picker.auto_comb_unsolved, 2);
+        picker.pre_draw_update(&mut staircase, SplineMode::Linear);
+        assert_eq!(picker.auto_comb_unsolved, 0);
+    }
+
+    #[test]
+    fn dragging_a_handle_pins_it_for_auto_comb_until_release() {
+        let ctx = egui::Context::default();
+        let mut picker = auto_comb_picker();
+        picker.last_modifying_point_index = Some(1);
+        let mut points = with_handles(
+            points_sv(&[(0.2, 0.5), (0.5, 0.5), (0.8, 0.5)]),
+            &[[[-0.15, 0.0], [0.15, 0.0]]; 3],
+        );
+        let mut run = |points: &mut Vec<ControlPoint>, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 700.0))),
+                events,
+                ..Default::default()
+            };
+            let mut square = Rect::NOTHING;
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    square = picker
+                        .draw_ui(ui, points, SplineMode::Bezier, &ColorStringCopy::HEXNOA)
+                        .rect;
+                });
+            });
+            (square, picker.dragging_tangent)
+        };
+        let (square, _) = run(&mut points, vec![]);
+        let handle = square.lerp_inside(vec2(0.65, 0.5));
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        run(&mut points, vec![egui::Event::PointerMoved(handle)]);
+        run(&mut points, vec![button(handle, true)]);
+        let mut pinned = None;
+        for dy in [3.0, 15.0, 30.0, 45.0] {
+            let (_, dragging) = run(
+                &mut points,
+                vec![egui::Event::PointerMoved(handle - vec2(0.0, dy))],
+            );
+            pinned = dragging;
+        }
+        assert_eq!(pinned, Some((1, 1)));
+        let up = handle - vec2(0.0, 45.0);
+        let (_, released) = run(&mut points, vec![button(up, false)]);
+        assert_eq!(released, None);
+
+        let (incoming, outgoing) = (handle_unit(&points[1], 0), handle_unit(&points[1], 1));
+        assert!(outgoing.y > 0.2, "{outgoing:?}");
+        assert!(
+            (incoming + outgoing).length() < 1e-4,
+            "{incoming:?} {outgoing:?}"
         );
     }
 

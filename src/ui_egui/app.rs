@@ -62,6 +62,8 @@ pub struct ZColorPickerOptions {
     pub is_show_curvature_comb: bool,
     #[serde(default = "default_curvature_comb_scale")]
     pub curvature_comb_scale: f32,
+    #[serde(default)]
+    pub is_auto_comb: bool,
 }
 
 fn default_curvature_comb_scale() -> f32 {
@@ -77,6 +79,7 @@ impl Default for ZColorPickerOptions {
             is_window_lock: true,
             is_show_curvature_comb: true,
             curvature_comb_scale: default_curvature_comb_scale(),
+            is_auto_comb: false,
         }
     }
 }
@@ -815,7 +818,7 @@ mod tests {
     }
 
     #[test]
-    fn options_json_without_comb_scale_loads_unscaled() {
+    fn options_json_without_comb_scale_or_auto_comb_loads_their_defaults() {
         let json = r#"{
             "is_curve_locked": false,
             "is_hue_middle_interpolated": true,
@@ -827,6 +830,7 @@ mod tests {
         let options: ZColorPickerOptions = serde_json::from_str(json).unwrap();
 
         assert_eq!(options.curvature_comb_scale, 1.0);
+        assert!(!options.is_auto_comb);
     }
 
     #[test]
