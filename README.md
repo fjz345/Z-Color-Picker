@@ -18,23 +18,40 @@
 
 Each control point is a value in a color space (currently only HSV).
 Hue of each individual control point can be changed in the hue bar, and saturation & value in the 2d slider.
-The control-points color is shown in the top left, and underneath displays a gradient using the selected spline mode.
-To create a new preset, click the preset combo box and select NEW
+The selected control point's color is shown in the top left. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
+To create a new preset, click the preset combo box and select `<NEW>`
 
 ## Controls
 
 - Double-click-M1: Add control-point
+- Drag-M1: Move a control-point, a Bezier tangent handle, or a hue/T gizmo
 - Right-click-M2: Remove control-point
+- Drag-M1 on a previewer key color: resize its band
 - Click the color readout or Ctrl+C: copy the selected point's color in the Copy-as format
 - Middle-click: Copy screen color as the selected format, on previewer, copies image to clipboard
 - F12: debug window with the control point values
+- Esc: quit (ignored while typing, or while a popup, dialog or the Create Preset window is open)
 
 ## Options
 
 - Lock: Apply any control point coordinate translation to all control points
-- Auto Hue: Select hue for start/end control points, middle control point's hue is automatically selected
-- Insert Direction: Change the append direction on adding new control point
-- Control Points Constrain: Constrains control-points values to their maximum (this will deform your spline "shape" if any control point touches the edge of any slider)
+- Auto hue: Select hue for start/end control points, middle control point's hue is automatically selected
+- Insert left/right: Side of the selected point where a new control point goes (start/end when none is selected)
+- Clamp: Keep control points inside the S/V square and wrap hue into 0..1
+- Comb: Show the curvature comb (Bezier only)
+- Copy as: Text format for a copied color; previewer strips are copied as images
+- Spline: Linear, Bezier (drag the tangent handles) or Hermite (Catmull-Rom, automatic tangents)
+- Flip: Reverse the control point order
+- Auto-save: Rewrite the selected preset file after every edit
+- Levels (previewer): Number of colors in the quantized gradient
+- Reset widths (previewer): Make all key color bands equal width
+
+## Presets
+
+- One JSON file per preset in `./presets`, relative to the working directory
+- The combo marks unsaved changes with `*`; `<None>` clears the selection
+- Picking another preset with unsaved changes asks to save, discard or cancel
+- Save without a selection creates a preset; Delete asks first
 
 # TODO:
 
@@ -49,11 +66,9 @@ To create a new preset, click the preset combo box and select NEW
 - Size slider for color picker spline
 - T should be modifiable by user, potentially normalized on display
 - Spline mode interactivity
-- HermiteBezier, preview gradient is black on right side
 
 #
 
-- Add confirm window for Delete Preset button
 - Add confirm window for exiting when having an unsaved preset active.
 - Regular Color pick for control points
 - Visualization curves

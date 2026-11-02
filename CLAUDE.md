@@ -17,7 +17,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 ```
 
 - The build is warning-free. Keep it that way: delete unused code, no `#[allow]`.
-- Unit tests live in `#[cfg(test)] mod tests` in `math.rs`, `hsv_key_value.rs`, `common.rs`, `control_points.rs`, `preset.rs` (tempfile dirs, never `./presets`), `clipboard.rs`, `color_picker.rs`, `error.rs` and `main.rs`. UI behavior is checked by running the app.
+- Every `src` module has a `#[cfg(test)] mod tests`, except `debug_windows.rs`, `ui_common.rs` and the `mod` files. `preset.rs` tests use tempfile dirs, never `./presets`. Shared fixtures live in `#[cfg(test)] pub mod test_support` in `control_point.rs` (`point_with_tangent`, the runaway-tangent constants) and `hsv_key_value.rs` (`assert_close`). Widget tests run a headless `egui::Context::run`; the rest of the UI is checked by running the app.
 - Line endings differ from file to file (some CRLF, some LF). Keep each file's existing endings.
 - `.vscode/launch.json` has lldb (CodeLLDB) configs for the binary and its unit tests.
 - The `accesskit` Cargo feature doesn't compile. The block it gates in `ZColorPicker::add_contents` is leftover code copied from egui's Slider.
@@ -27,8 +27,9 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 - Right-click (M2) on a point: remove it.
 - Click the color readout or Ctrl+C: copy the selected point's color in the Copy-as format.
 - Middle-click: copy the color under the cursor in the selected format. On the previewer, it copies the image instead.
+- Drag (M1): move a point, a Bezier tangent handle, a hue/T gizmo, or a previewer key band.
 - F12: debug window with the control point values.
-- Esc: quit.
+- Esc: quit, only on a first press (not a key repeat) and only when `ZApp::is_input_blocked` is false: no widget had keyboard focus last frame, and no popup, modal (delete confirm, pending switch) or Create Preset window is open. It is read before the tree is drawn, because egui drops focus and closes popups during the Esc frame. The same flag blocks Ctrl+C (`should_quit_on_escape`, `is_copy_shortcut`).
 
 ## Architecture
 
@@ -44,10 +45,10 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 ### Data model
 - `ControlPoint` (`src/datatypes/control_point.rs`) is an enum over `ControlPointStorage { val, t, tangents: [Option<_>; 2] }`.
 - `ControlPointValue` = `HsvKeyValue` (`src/datatypes/hsv_key_value.rs`), which stores `[f32; 3]`. The index order is **`[s (x), v (y), h]`, not `[h, s, v]`**: index 0/1 are the 2D picker position and index 2 is hue. `HsvKeyValue` implements `splines::Interpolate`, with hue-aware lerp from `src/math.rs`.
-- Tangents are stored as offsets relative to the point's value.
+- Tangents are stored as offsets relative to the point's value. Bezier keys, the ribbon, the comb and the drawn handles all use `bezier_handle` (point + offset with S/V clamped to the square, hue not), so a stored runaway tangent cannot wreck the curve.
 
 ### Spline evaluation
-- `control_points_to_spline` (`src/ui_egui/control_points.rs`) converts control points into a `splines::Spline`, one match arm per `SplineMode` (`src/common.rs`).
+- `control_points_to_spline` (`src/ui_egui/control_points.rs`) converts control points into a `splines::Spline`, one match arm per `SplineMode` (`src/common.rs`). `SplineMode::ALL` feeds the Spline combo and the per-mode tests; a new mode goes there too.
 - Keys are placed at `t = index`, not at `ControlPoint.t`. Anything that walks segments, such as the curvature comb, must use index order too.
 - `ControlPoint.t` (edited with the T slider) doesn't affect the gradient yet; it's listed as work in progress in the README.
 - `HermiteBezier` is actually Catmull-Rom: the endpoints are duplicated as phantom keys.
@@ -59,15 +60,17 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 ### Presets
 - `src/preset.rs`: one JSON file per `PresetEntity` in `./presets/` (the `presets/` folder is gitignored). The path comes from `std::env::current_dir()`.
 - Presets are written through to disk: Create, Save, Rename and Delete in the preset bar (`WindowPreset::draw_content`, `ZApp::show_create_preset_window`) hit disk immediately via `PresetHandler`. Nothing is synced at exit.
-- Create writes the file, then adds it to the list. Rename uses `fs::rename`. Delete removes the file first, behind a confirm `Modal`.
+- Every write goes to `<name>.json.tmp` and is renamed over the file (`fs::write_string_to_file`). Create and Rename refuse a name whose file already exists on disk (`ensure_no_preset_file`), even if it is not in the list; Rename allows a case-only change. Create writes the file, then adds it to the end of the list. Rename uses `fs::rename`. Delete removes the file first, behind a confirm `Modal`; a file that is already gone counts as deleted.
 - Name rules, enforced by `validate_preset_name` / `PresetHandler::check_name`: not empty or whitespace; no `< > : " / \ | ? *` or control chars; no trailing dot or space; no reserved device name (CON, NUL, COM1..); at most 64 chars; no case-insensitive duplicate. The UI disables Create/Rename and shows the reason in red.
 - When `auto_save_presets` is enabled, the selected preset is rewritten only when the current control points or spline mode differ from it (`PresetHandler::auto_save`), and only once no pointer button is held, so a drag writes once, on release. A failed write keeps the preset dirty, shows the error in the preset bar, and is not retried until the content changes again.
-- `PresetHandler.presets` is `#[serde(skip)]`: presets are not in eframe storage, disk is the truth. At startup `init_presets` loads them from `presets_dir` (default `./presets`), skips non-`.json` or malformed files with `log::warn`, and keeps the selection only if it is still in range (otherwise `None`).
+- `PresetHandler.presets` is `#[serde(skip)]`: presets are not in eframe storage, disk is the truth. At startup `init_presets` loads them from `presets_dir` (default `./presets`), skips non-`.json`, malformed or non-finite files (`first_non_finite_point`) with `log::warn`, and sorts them by name, case-insensitive. Only the selected preset's name is persisted (`selected_preset`); it is restored by case-insensitive name, else `None`. If the restored points differ from that file, `hold_auto_save_if_dirty` marks them as a held auto-save, so Auto-save does not overwrite the file until the next edit.
+- Unsaved changes (`has_unsaved_changes`: the selection is dirty and Auto-save is off or its last write failed) show as `name *` in the combo. Picking a preset then, or while unselected points match no preset, sets `WindowPreset::pending_switch` and opens a modal instead of applying it: Save and switch / Discard / Cancel; for the already selected preset Save / Revert to saved / Cancel; with no selection Discard / Cancel. A failed save keeps the modal open with the error. Applying a preset clears the point selection and resets the previewer band widths.
+- Save without a selection opens the Create Preset window.
 
 ### Clipboard / screen capture
-Pressing the middle button stores a `ScreenshotTarget` in `pending_screenshot_target` and requests one `ViewportCommand::Screenshot`. It closes the copy popup first, because eframe captures the frame painted in that same update. The target is the previewer rect under the cursor (rects come from `stored_ui_responses`), or else the pixel under the cursor. The screenshot event arrives in a later frame. `handle_screenshot_event` crops it with `crop_screenshot` (`src/ui_egui/clipboard.rs`) and turns it into a `ClipboardCopyEvent`. A pixel target takes the physical pixel at `floor(cursor * ppp)`, clamped to the screenshot; a previewer crop is clamped too. That event is consumed at the start of the next `Idle` frame (`handle_clipboardcopy_event`). Nothing in the app requests that frame: egui repaints right after any pass whose input has events, and the Screenshot event counts. A single pixel is copied as text in `color_copy_format`; a larger region is copied as an image via `arboard`. A failed write shows `Copy failed: <error>` in the popup.
+Pressing the middle button stores a `ScreenshotTarget` in `pending_screenshot_target` and requests one `ViewportCommand::Screenshot`. It closes the copy popup first, because eframe captures the frame painted in that same update. The target is the previewer rect under the cursor (rects come from `stored_ui_responses`), or else the pixel under the cursor. The screenshot event arrives in a later frame. `handle_screenshot_event` crops it with `crop_screenshot` (`src/ui_egui/clipboard.rs`) and turns it into a `ClipboardCopyEvent`. A pixel target takes the physical pixel at `floor(cursor * ppp)`, clamped to the screenshot; a previewer crop rounds both edges, so it takes the pixels whose centres lie inside the rect, clamped too. That event is consumed at the start of the next `Idle` frame (`handle_clipboardcopy_event`). Nothing in the app requests that frame: egui repaints right after any pass whose input has events, and the Screenshot event counts. A single pixel is copied as text in `color_copy_format`; a larger region is copied as an image via `arboard`. A failed write shows `Copy failed: <error>` in the popup.
 - `format_color_as` supports all 11 `ColorStringCopy` formats, from unmultiplied sRGB; `RGB`/`RGBA` are linear.
-- A readout click or Ctrl+C skips the screenshot: `selected_color_payload` formats the selected point and `write_payload_to_clipboard` (shared with middle-click) writes it. Ctrl+C is left to egui while a widget had keyboard focus, a popup or modal is open, or label text is selected.
+- A readout click or Ctrl+C skips the screenshot: `selected_color_payload` formats the selected point and `write_payload_to_clipboard` (shared with middle-click) writes it. Ctrl+C is left to egui while input is blocked (`is_input_blocked`, see Controls) or label text is selected.
 
 ### Misc
 - The log filter defaults to `info,z_color_picker=debug` (`DEFAULT_LOG_FILTER` in `src/logger.rs`); a set `RUST_LOG` replaces it, e.g. `RUST_LOG=debug` shows dependency debug output too.
