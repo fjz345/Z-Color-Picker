@@ -1,4 +1,5 @@
 pub mod app;
+pub mod auto_comb;
 pub mod clipboard;
 pub mod color_picker;
 pub mod content_windows;

@@ -92,6 +92,7 @@ impl WindowZColorPickerOptions {
         options: &mut ZColorPickerOptions,
         spline_mode: &mut SplineMode,
         color_copy_format: &mut ColorStringCopy,
+        auto_comb_unsolved: usize,
     ) -> bool {
         ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut options.is_curve_locked, "Lock")
@@ -121,6 +122,26 @@ impl WindowZColorPickerOptions {
             )
             .on_hover_text("Curvature comb: spikes show how sharply the Bezier curve bends")
             .on_disabled_hover_text("The comb is only drawn in Bezier mode");
+            let is_bezier = *spline_mode == SplineMode::Bezier;
+            ui.add_enabled(
+                is_bezier,
+                egui::Checkbox::new(&mut options.is_auto_comb, "Auto comb"),
+            )
+            .on_hover_text(
+                "Line up each point's two handles and solve their lengths so the comb is \
+                 continuous; drag a handle to turn it",
+            )
+            .on_disabled_hover_text("Auto comb only runs in Bezier mode");
+            if is_bezier && options.is_auto_comb && auto_comb_unsolved > 0 {
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    format!("{auto_comb_unsolved} unsolved"),
+                )
+                .on_hover_text(
+                    "Points where no handle lengths make the comb continuous with the current \
+                     handle directions; turn a handle there",
+                );
+            }
         });
 
         ui.horizontal_wrapped(|ui| {
@@ -784,17 +805,30 @@ mod tests {
     }
 
     fn options_painted_texts(is_insert_right: bool) -> Vec<String> {
-        let ctx = egui::Context::default();
-        let mut window = WindowZColorPickerOptions::new();
-        let mut options = ZColorPickerOptions {
+        let options = ZColorPickerOptions {
             is_insert_right,
             ..Default::default()
         };
-        let mut spline_mode = SplineMode::Linear;
+        painted_option_texts(options, SplineMode::Linear, 0)
+    }
+
+    fn painted_option_texts(
+        mut options: ZColorPickerOptions,
+        mut spline_mode: SplineMode,
+        auto_comb_unsolved: usize,
+    ) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let mut window = WindowZColorPickerOptions::new();
         let mut color_copy_format = ColorStringCopy::HEXNOA;
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                window.draw_content(ui, &mut options, &mut spline_mode, &mut color_copy_format);
+                window.draw_content(
+                    ui,
+                    &mut options,
+                    &mut spline_mode,
+                    &mut color_copy_format,
+                    auto_comb_unsolved,
+                );
             });
         });
         output
@@ -817,6 +851,29 @@ mod tests {
                     "{side:?} not painted with is_insert_right={is_insert_right}: {texts:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn auto_comb_unsolved_count_shows_only_while_auto_comb_runs() {
+        let options = |is_auto_comb| ZColorPickerOptions {
+            is_auto_comb,
+            ..Default::default()
+        };
+        let cases = [
+            (SplineMode::Bezier, true, 2, true),
+            (SplineMode::Bezier, true, 0, false),
+            (SplineMode::Bezier, false, 2, false),
+            (SplineMode::Linear, true, 2, false),
+        ];
+        for (spline_mode, is_auto_comb, unsolved, is_shown) in cases {
+            let texts = painted_option_texts(options(is_auto_comb), spline_mode, unsolved);
+            assert!(texts.iter().any(|text| text == "Auto comb"), "{texts:?}");
+            assert_eq!(
+                texts.iter().any(|text| text == "2 unsolved"),
+                is_shown,
+                "{spline_mode:?} {is_auto_comb} {unsolved}: {texts:?}"
+            );
         }
     }
 

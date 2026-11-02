@@ -142,8 +142,13 @@ impl ZAppPane for ColorPickerOptionsPane {
         presets_window.update();
         let mut color_copy_format = color_copy_format;
 
-        let is_flip_clicked =
-            options_window.draw_content(ui, &mut options, &mut spline_mode, &mut color_copy_format);
+        let is_flip_clicked = options_window.draw_content(
+            ui,
+            &mut options,
+            &mut spline_mode,
+            &mut color_copy_format,
+            color_picker.auto_comb_unsolved,
+        );
         if is_flip_clicked {
             flip_control_points(
                 &mut control_points,
@@ -360,6 +365,42 @@ mod tests {
             preview.points_preview_sizes,
             PreviewerData::new(4).points_preview_sizes
         );
+    }
+
+    #[test]
+    fn applying_a_preset_with_auto_comb_does_not_rewrite_it() {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = PresetHandler::new(tmp.path().into());
+        handler.auto_save_presets = true;
+        let outside_until_clamped = [(0.2, 0.2), (1.2, 0.6), (0.6, 0.9), (0.3, 0.6)]
+            .map(|(s, v)| ControlPoint::new_simple(ControlPointValue::new(s, v, 0.3), 0.0));
+        handler
+            .create_preset(&"A".to_string(), &outside_until_clamped.to_vec(), &MODE)
+            .unwrap();
+        handler.preset_selected_index = Some(0);
+        let before = fs::read(tmp.path().join("A.json")).unwrap();
+        let mut points = Vec::new();
+        let mut spline_mode = SplineMode::Linear;
+        handler.apply_selected_preset(&mut points, &mut spline_mode);
+        let mut color_picker = ZColorPickerWrapper {
+            options: crate::ui_egui::app::ZColorPickerOptions {
+                is_auto_comb: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut preview = PreviewerData::new(points.len());
+        normalize_applied_preset(
+            &mut color_picker,
+            &mut handler,
+            &mut points,
+            spline_mode,
+            &mut preview,
+        );
+
+        next_picker_frame(&mut color_picker, &mut points);
+        assert!(!handler.auto_save(&points, MODE).unwrap());
+        assert_eq!(fs::read(tmp.path().join("A.json")).unwrap(), before);
     }
 
     #[test]

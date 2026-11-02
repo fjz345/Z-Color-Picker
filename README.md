@@ -39,6 +39,7 @@ To create a new preset, click the preset combo box and select `<NEW>`
 - Insert left/right: Side of the selected point where a new control point goes (start/end when none is selected)
 - Clamp: Keep control points inside the S/V square and wrap hue into 0..1
 - Comb: Show the curvature comb (Bezier only)
+- Auto comb: Line up each point's two handles and solve their lengths so the comb is continuous (Bezier only); dragging a handle then only turns it. `N unsolved` counts points where the handle directions allow no solution
 - Copy as: Text format for a copied color; previewer strips are copied as images
 - Spline: Linear, Bezier (drag the tangent handles) or Hermite (Catmull-Rom, automatic tangents)
 - Flip: Reverse the control point order
@@ -84,4 +85,3 @@ To create a new preset, click the preset combo box and select `<NEW>`
 - Add Interpolation::Bezier with just one tanget point
 - 3D visualization
 - Screen-mouse gradient picker
-- Geometry continuity comb
