@@ -301,17 +301,6 @@ pub fn control_points_to_spline(
 
             new_spline
         }
-        SplineMode::Polynomial => todo!(),
-        _ => {
-            log::info!("Not Implemented...");
-            Spline::from_vec(
-                control_points
-                    .iter()
-                    .enumerate()
-                    .map(|(index, e)| Key::new(index as f32, *e.val(), Interpolation::Linear))
-                    .collect(),
-            )
-        }
     }
 }
 
@@ -357,5 +346,97 @@ mod tests {
         );
         let mid = sample_spline_normalized(&spline, SplineMode::Linear, 0.25).unwrap();
         assert!((mid[0] - 0.25).abs() < 1e-6 && (mid[1] - 0.25).abs() < 1e-6);
+    }
+
+    const SAMPLED_MODES: [SplineMode; 3] = [
+        SplineMode::Linear,
+        SplineMode::Bezier,
+        SplineMode::HermiteBezier,
+    ];
+
+    fn points_with_hues(hues: &[f32]) -> Vec<ControlPoint> {
+        hues.iter()
+            .enumerate()
+            .map(|(i, h)| ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, *h), i as f32))
+            .collect()
+    }
+
+    #[test]
+    fn flatten_control_points_unwraps_hue_across_boundary() {
+        let hues = [0.9, 0.1, 0.3];
+        let flattened = flatten_control_points(&points_with_hues(&hues));
+        assert_eq!(flattened.len(), hues.len());
+        for pair in flattened.windows(2) {
+            assert!((pair[1].val()[2] - pair[0].val()[2]).abs() <= 0.5);
+        }
+        for (cp, hue) in flattened.iter().zip(hues) {
+            assert!((cp.val()[2].rem_euclid(1.0) - hue).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn flatten_control_points_keeps_close_hues() {
+        let cps = points_with_hues(&[0.2, 0.4]);
+        let flattened = flatten_control_points(&cps);
+        assert_eq!(flattened.len(), cps.len());
+        for (flat, cp) in flattened.iter().zip(&cps) {
+            assert_eq!(flat.val(), cp.val());
+        }
+    }
+
+    #[test]
+    fn sample_without_control_points_is_none() {
+        for mode in SAMPLED_MODES {
+            let spline = control_points_to_spline(&[], mode);
+            for x in [0.0, 0.5, 1.0] {
+                assert_eq!(
+                    sample_spline_normalized(&spline, mode, x),
+                    None,
+                    "{mode:?} at {x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sample_single_control_point_returns_it() {
+        let cps = [ControlPoint::new_simple(
+            ControlPointValue::new(0.3, 0.6, 0.7),
+            0.0,
+        )];
+        for mode in SAMPLED_MODES {
+            let spline = control_points_to_spline(&cps, mode);
+            for x in [0.0, 0.5, 1.0] {
+                assert_eq!(
+                    sample_spline_normalized(&spline, mode, x),
+                    Some(*cps[0].val()),
+                    "{mode:?} at {x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sample_two_control_points_hits_endpoints() {
+        let cps = [
+            ControlPoint::new_simple(ControlPointValue::new(0.0, 0.2, 0.4), 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(1.0, 0.8, 0.4), 1.0),
+        ];
+        for mode in [SplineMode::Linear, SplineMode::Bezier] {
+            let spline = control_points_to_spline(&cps, mode);
+            assert_eq!(
+                sample_spline_normalized(&spline, mode, 0.0),
+                Some(*cps[0].val()),
+                "{mode:?}"
+            );
+            assert_eq!(
+                sample_spline_normalized(&spline, mode, 1.0),
+                Some(*cps[1].val()),
+                "{mode:?}"
+            );
+        }
+        let spline = control_points_to_spline(&cps, SplineMode::Linear);
+        let mid = sample_spline_normalized(&spline, SplineMode::Linear, 0.5).unwrap();
+        assert!((mid[0] - 0.5).abs() < 1e-6 && (mid[1] - 0.5).abs() < 1e-6);
     }
 }

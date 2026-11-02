@@ -22,7 +22,6 @@ pub enum SplineMode {
     Bezier,
     #[default]
     HermiteBezier,
-    Polynomial,
 }
 
 #[allow(unused_macros)]
@@ -34,4 +33,18 @@ macro_rules! offset_of {
         let member_ptr = ::core::ptr::addr_of!((*dummy_ptr).$field);
         member_ptr as usize - dummy_ptr as usize
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spline_mode_json_rejects_polynomial() {
+        assert!(serde_json::from_str::<SplineMode>("\"Polynomial\"").is_err());
+        assert_eq!(
+            serde_json::from_str::<SplineMode>("\"HermiteBezier\"").unwrap(),
+            SplineMode::HermiteBezier
+        );
+    }
 }

@@ -69,7 +69,8 @@ pub fn norm_vec2(vec: &[f32; 2]) -> Vec2 {
 }
 
 pub fn hue_abs_distance(hue0: f32, hue1: f32) -> f32 {
-    (hue1 - hue0).abs().min(1.0 - (hue1 - hue0).abs())
+    let d = (hue1 - hue0).rem_euclid(1.0);
+    d.min(1.0 - d)
 }
 
 pub fn hue_lerp(hue0: f32, hue1: f32, t: f32) -> f32 {
@@ -168,4 +169,41 @@ pub fn color_lerp_ex(
         (new_color.green * 255.0) as u8,
         (new_color.blue * 255.0) as u8,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hue_abs_distance_is_wrap_safe_beyond_one_turn() {
+        assert!((hue_abs_distance(0.1, 1.6) - 0.5).abs() < 1e-5);
+        assert!((hue_abs_distance(0.1, 2.2) - 0.1).abs() < 1e-5);
+        assert!((hue_abs_distance(0.9, -1.05) - 0.05).abs() < 1e-5);
+    }
+
+    #[test]
+    fn hue_abs_distance_takes_shortest_way_around() {
+        assert!((hue_abs_distance(0.9, 0.1) - 0.2).abs() < 1e-5);
+        assert_eq!(hue_abs_distance(0.2, 0.2), 0.0);
+        assert_eq!(hue_abs_distance(0.0, 0.5), 0.5);
+    }
+
+    #[test]
+    fn hue_lerp_follows_t_beyond_one_turn() {
+        assert!((hue_lerp(0.1, 1.3, 0.5) - 0.2).abs() < 1e-5);
+    }
+
+    #[test]
+    fn hue_lerp_wraps_across_zero() {
+        assert!((hue_lerp(0.9, 0.1, 0.25) - 0.95).abs() < 1e-5);
+        let midpoint = hue_lerp(0.9, 0.1, 0.5);
+        assert!(midpoint < 1e-5 || midpoint > 1.0 - 1e-5);
+    }
+
+    #[test]
+    fn hue_lerp_hits_endpoints() {
+        assert_eq!(hue_lerp(0.2, 0.6, 0.0), 0.2);
+        assert!((hue_lerp(0.2, 0.6, 1.0) - 0.6).abs() < 1e-5);
+    }
 }

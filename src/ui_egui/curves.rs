@@ -39,11 +39,11 @@ pub fn generate_spline_points_with_distance(
         curr_t += t_distance;
     }
 
-    let last_spline_sample = spline.clamped_sample(spline_max_t);
-    match last_spline_sample {
-        Some(key) => spline_samples.push(key),
-        None => todo!(),
-    }
+    spline_samples.push(
+        spline
+            .clamped_sample(spline_max_t)
+            .expect("clamped sample at the last key t of a non-empty spline is always Some"),
+    );
 
     spline_samples
 }

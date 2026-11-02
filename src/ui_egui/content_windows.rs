@@ -150,12 +150,6 @@ impl WindowZColorPickerOptions {
                         "Hermite",
                     );
                     *spline_mode = temp_spline_mode;
-                    // TODO: enable Polynomial combo box
-                    // ui.selectable_value(
-                    //     &mut self.spline_mode,
-                    //     SplineMode::Polynomial,
-                    //     "Polynomial(Crash)",
-                    // );
                 })
                 .response
                 .on_hover_text("Spline Mode");

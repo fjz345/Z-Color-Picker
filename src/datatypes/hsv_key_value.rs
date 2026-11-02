@@ -4,7 +4,7 @@ use ecolor::{Color32, HsvaGamma};
 use eframe::egui::{Pos2, Vec2};
 use serde::{Deserialize, Serialize};
 
-use crate::math::{hue_abs_distance, hue_lerp};
+use crate::math::hue_lerp;
 
 type HsvKeyValueInnerType = [f32; 3];
 #[repr(C)]
@@ -284,32 +284,63 @@ impl splines::interpolate::Interpolate<f32> for HsvKeyValue {
     }
 
     fn cubic_bezier(t: f32, a: Self, u: Self, v: Self, b: Self) -> Self {
-        // Choose direction
-        let res = if hue_abs_distance(a[2], b[2]) < 0.5 {
-            let one_t = 1. - t;
-            let one_t2 = one_t * one_t;
-            let one_t3 = one_t2 * one_t;
-            let t2 = t * t;
+        let one_t = 1. - t;
+        let one_t2 = one_t * one_t;
+        let one_t3 = one_t2 * one_t;
+        let t2 = t * t;
 
-            let res = a * one_t3 + (u * one_t2 * t + v * one_t * t2) * 3. + b * t2 * t;
-            res
-        } else {
-            // Other way
-            let one_t = 1. - t;
-            let one_t2 = one_t * one_t;
-            let one_t3 = one_t2 * one_t;
-            let t2 = t * t;
-
-            let dir_res = if a[2] < b[2] { 1.0 } else { -1.0 };
-
-            let mut res = a * one_t3 + (u * one_t2 * t + v * one_t * t2) * 3. + b * t2 * t;
-            res[2] = res[2] - dir_res;
-            HsvKeyValue::new(one_t, one_t, one_t)
-        };
-        res
+        a * one_t3 + (u * one_t2 * t + v * one_t * t2) * 3. + b * t2 * t
     }
 
     fn cubic_bezier_mirrored(t: f32, a: Self, u: Self, v: Self, b: Self) -> Self {
         <Self as splines::interpolate::Interpolate<f32>>::cubic_bezier(t, a, u, b + b - v, b)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use splines::interpolate::Interpolate;
+
+    fn bezier(t: f32, a: HsvKeyValue, b: HsvKeyValue) -> HsvKeyValue {
+        <HsvKeyValue as Interpolate<f32>>::cubic_bezier(t, a, a, b, b)
+    }
+
+    fn assert_close(actual: HsvKeyValue, expected: HsvKeyValue) {
+        for i in 0..3 {
+            assert!(
+                (actual[i] - expected[i]).abs() < 1e-5,
+                "{actual:?} != {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cubic_bezier_interpolates_at_half_turn_hue_distance() {
+        let a = HsvKeyValue::new(0.2, 0.3, 0.0);
+        let b = HsvKeyValue::new(0.8, 0.9, 0.5);
+        assert_close(bezier(0.0, a, b), a);
+        assert_close(bezier(1.0, a, b), b);
+        assert_close(bezier(0.5, a, b), HsvKeyValue::new(0.5, 0.6, 0.25));
+    }
+
+    #[test]
+    fn cubic_bezier_hits_endpoints() {
+        let a = HsvKeyValue::new(0.2, 0.3, 0.1);
+        let b = HsvKeyValue::new(0.8, 0.9, 0.3);
+        assert_close(bezier(0.0, a, b), a);
+        assert_close(bezier(1.0, a, b), b);
+    }
+
+    #[test]
+    fn lerp_mixes_sv_linearly_and_hue_shortest_way() {
+        let mixed = <HsvKeyValue as Interpolate<f32>>::lerp(
+            0.5,
+            HsvKeyValue::new(0.0, 0.0, 0.9),
+            HsvKeyValue::new(1.0, 1.0, 0.1),
+        );
+        assert!((mixed.s() - 0.5).abs() < 1e-5);
+        assert!((mixed.v() - 0.5).abs() < 1e-5);
+        assert!(mixed.h() < 1e-5 || mixed.h() > 1.0 - 1e-5);
     }
 }
