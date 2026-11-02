@@ -100,18 +100,19 @@ impl WindowZColorPickerOptions {
                 .on_hover_text(
                     "Only the first and last hue are editable; middle hues are interpolated",
                 );
-            let insert_label = if options.is_insert_right {
-                "Insert right"
-            } else {
-                "Insert left"
-            };
-            let insert_hover = if options.is_insert_right {
-                "New points go right of the selected point (at the end when none is selected)"
-            } else {
-                "New points go left of the selected point (at the start when none is selected)"
-            };
-            ui.checkbox(&mut options.is_insert_right, insert_label)
-                .on_hover_text(insert_hover);
+            ui.horizontal(|ui| {
+                ui.label("Insert");
+                ui.radio_value(&mut options.is_insert_right, false, "left")
+                    .on_hover_text(
+                        "New points go left of the selected point \
+                         (at the start when none is selected)",
+                    );
+                ui.radio_value(&mut options.is_insert_right, true, "right")
+                    .on_hover_text(
+                        "New points go right of the selected point \
+                         (at the end when none is selected)",
+                    );
+            });
             ui.checkbox(&mut options.is_window_lock, "Clamp")
                 .on_hover_text("Keep points inside the S/V square and wrap hue into 0..1");
             ui.add_enabled(
@@ -745,6 +746,43 @@ mod tests {
         assert_eq!(spline_mode_label(SplineMode::Linear), "Linear");
         assert_eq!(spline_mode_label(SplineMode::Bezier), "Bezier");
         assert_eq!(spline_mode_label(SplineMode::HermiteBezier), "Hermite");
+    }
+
+    fn options_painted_texts(is_insert_right: bool) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let mut window = WindowZColorPickerOptions::new();
+        let mut options = ZColorPickerOptions {
+            is_insert_right,
+            ..Default::default()
+        };
+        let mut spline_mode = SplineMode::Linear;
+        let mut color_copy_format = ColorStringCopy::HEXNOA;
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                window.draw_content(ui, &mut options, &mut spline_mode, &mut color_copy_format);
+            });
+        });
+        output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn options_show_both_insert_sides_in_either_state() {
+        for is_insert_right in [true, false] {
+            let texts = options_painted_texts(is_insert_right);
+            for side in ["left", "right"] {
+                assert!(
+                    texts.iter().any(|text| text == side),
+                    "{side:?} not painted with is_insert_right={is_insert_right}: {texts:?}"
+                );
+            }
+        }
     }
 
     #[test]
