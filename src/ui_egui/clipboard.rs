@@ -43,20 +43,23 @@ pub fn crop_screenshot(
     pixels_per_point: f32,
 ) -> ColorImage {
     let [width, height] = image.size;
-    let to_pixel = |point: f32, limit: usize| {
-        ((point * pixels_per_point).floor().max(0.0) as usize).min(limit)
+    let to_pixel = |point: f32, snap: fn(f32) -> f32, limit: usize| {
+        (snap(point * pixels_per_point).max(0.0) as usize).min(limit)
     };
     let (min, max) = match target {
         ScreenshotTarget::Pixel(p) => {
-            let x = to_pixel(p.x, width.saturating_sub(1));
-            let y = to_pixel(p.y, height.saturating_sub(1));
+            let x = to_pixel(p.x, f32::floor, width.saturating_sub(1));
+            let y = to_pixel(p.y, f32::floor, height.saturating_sub(1));
             ([x, y], [(x + 1).min(width), (y + 1).min(height)])
         }
         ScreenshotTarget::Region(r) => {
-            let min = [to_pixel(r.min.x, width), to_pixel(r.min.y, height)];
+            let min = [
+                to_pixel(r.min.x, f32::round, width),
+                to_pixel(r.min.y, f32::round, height),
+            ];
             let max = [
-                to_pixel(r.max.x, width).max(min[0]),
-                to_pixel(r.max.y, height).max(min[1]),
+                to_pixel(r.max.x, f32::round, width).max(min[0]),
+                to_pixel(r.max.y, f32::round, height).max(min[1]),
             ];
             (min, max)
         }
@@ -273,6 +276,53 @@ mod tests {
         let image = black_image(50, 50);
         let crop = crop_screenshot(&image, region(200.0, 300.0), 1.0);
         assert_eq!(crop.width() * crop.height(), 0);
+    }
+
+    fn column_red_row_green_image(side: usize) -> ColorImage {
+        let mut image = black_image(side, side);
+        for y in 0..side {
+            for x in 0..side {
+                set_pixel(&mut image, x, y, Color32::from_rgb(x as u8, y as u8, 0));
+            }
+        }
+        image
+    }
+
+    fn first_and_last_pixel(crop: &ColorImage) -> [Color32; 2] {
+        [crop.pixels[0], crop.pixels[crop.pixels.len() - 1]]
+    }
+
+    #[test]
+    fn region_crop_keeps_pixels_whose_centres_lie_inside() {
+        let image = column_red_row_green_image(40);
+
+        let wide = crop_screenshot(&image, region(10.3, 20.7), 1.0);
+        assert_eq!(wide.size, [11, 11]);
+        assert_eq!(
+            first_and_last_pixel(&wide),
+            [Color32::from_rgb(10, 10, 0), Color32::from_rgb(20, 20, 0)]
+        );
+
+        let narrow = crop_screenshot(&image, region(10.7, 20.3), 1.0);
+        assert_eq!(narrow.size, [9, 9]);
+        assert_eq!(
+            first_and_last_pixel(&narrow),
+            [Color32::from_rgb(11, 11, 0), Color32::from_rgb(19, 19, 0)]
+        );
+    }
+
+    #[test]
+    fn region_crop_at_fractional_scale_keeps_pixels_whose_centres_lie_inside() {
+        let image = column_red_row_green_image(40);
+        let target =
+            ScreenshotTarget::Region(Rect::from_min_max(pos2(8.03, 7.6), pos2(15.5, 15.2)));
+
+        let crop = crop_screenshot(&image, target, 1.333);
+        assert_eq!(crop.size, [10, 10]);
+        assert_eq!(
+            first_and_last_pixel(&crop),
+            [Color32::from_rgb(11, 10, 0), Color32::from_rgb(20, 19, 0)]
+        );
     }
 
     #[test]
