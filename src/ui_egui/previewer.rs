@@ -230,6 +230,19 @@ fn ui_previewer_curve_quantized(
     color_copy_format: ColorStringCopy,
     number_levels: usize,
 ) -> Response {
+    let quantized_colors =
+        quantized_colors(control_points, spline_mode, previewer_data, number_levels);
+
+    let response = ui_previewer_colors(ui, size, &quantized_colors, color_copy_format);
+    response
+}
+
+fn quantized_colors(
+    control_points: &[ControlPoint],
+    spline_mode: SplineMode,
+    previewer_data: &PreviewerData,
+    levels: usize,
+) -> Vec<HsvKeyValue> {
     let flatten_control_points = flatten_control_points(control_points);
     let mut spline = control_points_to_spline(&flatten_control_points[..], spline_mode);
 
@@ -238,15 +251,12 @@ fn ui_previewer_curve_quantized(
         _ => spline = modify_spline_t_to_preview_sizes(spline, spline_mode, previewer_data),
     };
 
-    let mut quantized_colors: Vec<HsvKeyValue> = Vec::new();
-    for i in 0..number_levels {
-        let x = i as f32 / (number_levels - 1).max(1) as f32;
-        let sample = sample_spline_normalized(&spline, spline_mode, x).unwrap_or_default();
-        quantized_colors.push(sample);
-    }
-
-    let response = ui_previewer_colors(ui, size, &quantized_colors, color_copy_format);
-    response
+    (0..levels)
+        .map(|i| {
+            let x = i as f32 / (levels - 1).max(1) as f32;
+            sample_spline_normalized(&spline, spline_mode, x).unwrap_or_default()
+        })
+        .collect()
 }
 
 fn previewer_strip_heights(total_height: f32, controls_height: f32) -> [f32; 3] {
@@ -254,12 +264,14 @@ fn previewer_strip_heights(total_height: f32, controls_height: f32) -> [f32; 3] 
     [0.2, 0.4, 0.4].map(|share| share * strips_height)
 }
 
+const MAX_QUANTIZE_LEVELS: usize = 32;
+
 fn ui_previewer_options(ui: &mut Ui, previewer_data: &mut PreviewerData) {
     ui.horizontal(|ui| {
         ui.label("Levels");
         ui.add(egui::Slider::new(
             &mut previewer_data.quantize_num_levels,
-            1..=previewer_data.control_points.len(),
+            1..=MAX_QUANTIZE_LEVELS,
         ))
         .on_hover_text("Number of quantized colors");
         if ui
@@ -455,5 +467,55 @@ mod tests {
         let heights = previewer_strip_heights(10.0, 27.0);
         assert!(heights.iter().all(|&height| height >= 0.0), "{heights:?}");
         assert_eq!(heights.iter().sum::<f32>(), 0.0);
+    }
+
+    fn assert_close(actual: HsvKeyValue, expected: HsvKeyValue) {
+        for c in 0..3 {
+            assert!(
+                (actual[c] - expected[c]).abs() < 1e-5,
+                "{actual:?} != {expected:?}"
+            );
+        }
+    }
+
+    fn two_points() -> Vec<ControlPoint> {
+        vec![
+            ControlPoint::new_simple(ControlPointValue::new(0.1, 0.2, 0.3), 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(0.9, 0.8, 0.3), 1.0),
+        ]
+    }
+
+    #[test]
+    fn quantized_colors_two_points_exceed_point_count() {
+        let cps = two_points();
+        let colors = quantized_colors(&cps, SplineMode::Linear, &PreviewerData::new(2), 8);
+        assert_eq!(colors.len(), 8);
+        assert_close(colors[0], *cps[0].val());
+        assert_close(colors[7], *cps[1].val());
+        assert!(colors.windows(2).all(|w| w[0].s() < w[1].s()), "{colors:?}");
+    }
+
+    #[test]
+    fn quantized_colors_one_level_is_first_point_and_zero_is_empty() {
+        let cps = two_points();
+        let data = PreviewerData::new(2);
+        let one = quantized_colors(&cps, SplineMode::Linear, &data, 1);
+        assert_eq!(one.len(), 1);
+        assert_close(one[0], *cps[0].val());
+        assert!(quantized_colors(&cps, SplineMode::Linear, &data, 0).is_empty());
+    }
+
+    #[test]
+    fn quantized_colors_levels_equal_to_points_hit_every_key() {
+        let cps = vec![
+            ControlPoint::new_simple(ControlPointValue::new(0.0, 0.0, 0.2), 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 0.2), 0.5),
+            ControlPoint::new_simple(ControlPointValue::new(1.0, 1.0, 0.2), 1.0),
+        ];
+        let colors = quantized_colors(&cps, SplineMode::Linear, &PreviewerData::new(3), 3);
+        assert_eq!(colors.len(), 3);
+        for (color, cp) in colors.iter().zip(&cps) {
+            assert_close(*color, *cp.val());
+        }
     }
 }
