@@ -8,9 +8,14 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    common::ColorStringCopy,
+    common::{ColorStringCopy, SplineMode},
+    datatypes::control_point::ControlPoint,
     logger::ui_log_window,
-    ui_egui::{app::ZColorPickerAppContext, content_windows::flip_control_points},
+    preset::PresetHandler,
+    ui_egui::{
+        app::ZColorPickerAppContext, color_picker::ZColorPickerWrapper,
+        content_windows::flip_control_points,
+    },
 };
 pub struct TreeBehavior {}
 
@@ -142,7 +147,7 @@ impl ZAppPane for ColorPickerOptionsPane {
             );
             color_picker.dragging_index = None;
         }
-        presets_window.draw_content(
+        let presets_result = presets_window.draw_content(
             ui,
             &mut preset_handler,
             &mut control_points,
@@ -150,6 +155,14 @@ impl ZAppPane for ColorPickerOptionsPane {
         );
 
         color_picker.options = options;
+        if presets_result.preset_result.should_apply.is_some() {
+            normalize_applied_preset(
+                &mut color_picker,
+                &mut preset_handler,
+                &mut control_points,
+                spline_mode,
+            );
+        }
         mut_ctx.color_copy_format = color_copy_format;
         mut_ctx.options_window = options_window;
         mut_ctx.presets_window = presets_window;
@@ -213,4 +226,99 @@ impl ZAppPane for LogPane {
     }
 
     fn update_ctx(&mut self, _new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {}
+}
+
+fn normalize_applied_preset(
+    color_picker: &mut ZColorPickerWrapper,
+    preset_handler: &mut PresetHandler,
+    control_points: &mut Vec<ControlPoint>,
+    spline_mode: SplineMode,
+) {
+    color_picker.pre_draw_update(control_points, spline_mode);
+    // Twice: the hue lerp runs before the clamp, so one pass lerps from unclamped endpoint hues.
+    color_picker.apply_control_point_constraints(control_points);
+    color_picker.apply_control_point_constraints(control_points);
+    preset_handler.set_selected_data_in_memory(control_points, spline_mode);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::datatypes::control_point::ControlPointValue;
+    use std::fs;
+    use tempfile::TempDir;
+
+    const MODE: SplineMode = SplineMode::Bezier;
+
+    fn unconstrained_points() -> Vec<ControlPoint> {
+        vec![
+            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 1.2), 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(1.2, 0.5, 0.9), 1.0),
+            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 0.1), 2.0),
+            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 0.4), 3.0),
+        ]
+    }
+
+    fn next_picker_frame(color_picker: &mut ZColorPickerWrapper, points: &mut Vec<ControlPoint>) {
+        color_picker.pre_draw_update(points, MODE);
+        color_picker.apply_control_point_constraints(points);
+    }
+
+    struct SelectedPreset {
+        tmp: TempDir,
+        handler: PresetHandler,
+        color_picker: ZColorPickerWrapper,
+        points: Vec<ControlPoint>,
+    }
+
+    impl SelectedPreset {
+        fn file_bytes(&self) -> Vec<u8> {
+            fs::read(self.tmp.path().join("A.json")).unwrap()
+        }
+    }
+
+    fn select_preset_with_auto_save() -> SelectedPreset {
+        let tmp = TempDir::new().unwrap();
+        let mut handler = PresetHandler::new(tmp.path().into());
+        handler.auto_save_presets = true;
+        handler
+            .create_preset(&"A".to_string(), &unconstrained_points(), &MODE)
+            .unwrap();
+        handler.preset_selected_index = Some(0);
+        let mut points = Vec::new();
+        let mut spline_mode = SplineMode::Linear;
+        handler.apply_selected_preset(&mut points, &mut spline_mode);
+        assert_eq!(spline_mode, MODE);
+        let mut color_picker = ZColorPickerWrapper::default();
+        normalize_applied_preset(&mut color_picker, &mut handler, &mut points, spline_mode);
+        SelectedPreset {
+            tmp,
+            handler,
+            color_picker,
+            points,
+        }
+    }
+
+    #[test]
+    fn selecting_preset_with_auto_save_does_not_rewrite_it() {
+        let mut selected = select_preset_with_auto_save();
+        assert!(!selected.handler.is_selected_dirty(&selected.points, MODE));
+        let before = selected.file_bytes();
+
+        next_picker_frame(&mut selected.color_picker, &mut selected.points);
+        assert!(!selected.handler.auto_save(&selected.points, MODE).unwrap());
+        assert!(!selected.handler.auto_save(&selected.points, MODE).unwrap());
+        assert_eq!(selected.file_bytes(), before);
+    }
+
+    #[test]
+    fn editing_selected_preset_with_auto_save_rewrites_it() {
+        let mut selected = select_preset_with_auto_save();
+        let before = selected.file_bytes();
+
+        selected.points[1].val_mut()[0] = 0.25;
+        next_picker_frame(&mut selected.color_picker, &mut selected.points);
+        assert!(selected.handler.auto_save(&selected.points, MODE).unwrap());
+        assert_ne!(selected.file_bytes(), before);
+    }
 }

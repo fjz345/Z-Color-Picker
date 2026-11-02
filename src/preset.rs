@@ -261,6 +261,18 @@ impl PresetHandler {
         }
     }
 
+    pub fn set_selected_data_in_memory(
+        &mut self,
+        control_points: &[ControlPoint],
+        spline_mode: SplineMode,
+    ) {
+        let preset = self
+            .preset_selected_index
+            .and_then(|s| self.presets.get_mut(s))
+            .expect("an applied preset is selected");
+        preset.data = (control_points.to_vec(), spline_mode).into();
+    }
+
     pub fn init_presets(&mut self) {
         self.presets = load_presets(&self.presets_dir);
         if self
