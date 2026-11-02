@@ -62,7 +62,6 @@ pub struct ZColorPickerOptions {
     pub is_insert_right: bool,
     pub is_window_lock: bool,
     pub is_show_curvature_comb: bool,
-    pub is_curvature_friendly: bool,
 }
 
 impl Default for ZColorPickerOptions {
@@ -73,7 +72,6 @@ impl Default for ZColorPickerOptions {
             is_insert_right: true,
             is_window_lock: true,
             is_show_curvature_comb: true,
-            is_curvature_friendly: true,
         }
     }
 }
@@ -267,10 +265,15 @@ impl ZApp {
 
         let visuals: egui::Visuals = egui::Visuals::dark();
         ctx.set_visuals(visuals);
-        log::info!("pixels_per_point{:?}", ctx.pixels_per_point());
-        log::info!("native_pixels_per_point{:?}", ctx.native_pixels_per_point());
         ctx.set_pixels_per_point(self.scale_factor); // Maybe mult native_pixels_per_point?
                                                      // ctx.set_debug_on_hover(true);
+        let native = ctx
+            .native_pixels_per_point()
+            .map_or_else(|| "unknown".to_owned(), |ppp| format!("{ppp:.2}"));
+        log::info!(
+            "UI scale {:.2} (native pixels_per_point {native})",
+            ctx.pixels_per_point()
+        );
 
         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
     }
@@ -689,14 +692,13 @@ fn receive_screenshot(app_ctx: &mut ZColorPickerAppContext, ui: &egui::Ui) {
 
 impl eframe::App for ZApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        log::info!("SAVING...");
-
-        #[cfg(feature = "serde")]
-        if let Ok(json) = serde_json::to_string(self) {
-            log::debug!("SAVED with state: {:?}", self.state);
-            storage.set_string(eframe::APP_KEY, json);
+        match serde_json::to_string(self) {
+            Ok(json) => {
+                storage.set_string(eframe::APP_KEY, json);
+                log::debug!("Saved app state");
+            }
+            Err(e) => log::error!("Could not save app state: {e}"),
         }
-        log::info!("SAVED!");
     }
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -766,6 +768,26 @@ mod tests {
         assert!(!should_quit_on_escape(&release, false));
         assert!(!should_quit_on_escape(&other_key, false));
         assert!(!should_quit_on_escape(&[], false));
+    }
+
+    #[test]
+    fn options_json_with_removed_field_still_loads() {
+        let json = r#"{
+            "is_curve_locked": true,
+            "is_hue_middle_interpolated": false,
+            "is_insert_right": false,
+            "is_window_lock": false,
+            "is_show_curvature_comb": false,
+            "is_curvature_friendly": true
+        }"#;
+
+        let options: ZColorPickerOptions = serde_json::from_str(json).unwrap();
+
+        assert!(options.is_curve_locked);
+        assert!(!options.is_hue_middle_interpolated);
+        assert!(!options.is_insert_right);
+        assert!(!options.is_window_lock);
+        assert!(!options.is_show_curvature_comb);
     }
 
     #[test]

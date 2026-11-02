@@ -17,7 +17,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 ```
 
 - The build is warning-free. Keep it that way: delete unused code, no `#[allow]`.
-- Unit tests live in `#[cfg(test)] mod tests` in `math.rs`, `hsv_key_value.rs`, `common.rs`, `control_points.rs`, `preset.rs` (tempfile dirs, never `./presets`), `clipboard.rs`, `color_picker.rs` and `error.rs`. UI behavior is checked by running the app.
+- Unit tests live in `#[cfg(test)] mod tests` in `math.rs`, `hsv_key_value.rs`, `common.rs`, `control_points.rs`, `preset.rs` (tempfile dirs, never `./presets`), `clipboard.rs`, `color_picker.rs`, `error.rs` and `main.rs`. UI behavior is checked by running the app.
 - Line endings differ from file to file (some CRLF, some LF). Keep each file's existing endings.
 - `.vscode/launch.json` has lldb (CodeLLDB) configs for the binary and its unit tests.
 - The `accesskit` Cargo feature doesn't compile. The block it gates in `ZColorPicker::add_contents` is leftover code copied from egui's Slider.
@@ -38,7 +38,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 - Because everything shares one `RefCell`, borrow conflicts are the main runtime hazard. The existing code clones data out, drops the borrow, draws, then re-borrows mutably to write back. Examples are the `ui()` methods in `panes.rs` and `show_create_preset_window`. Follow that pattern.
 - Any cloned state has to be written back explicitly, or the edits are lost without any error. For example, `ColorPickerOptionsPane::ui` has to assign `options_window`, `presets_window` and `preset_handler` back to the context.
 - The preset bar (`WindowPreset`) is drawn only in the options pane. The "Create Preset" window is drawn from `ZApp::draw_ui_tree` before the tile tree.
-- Fields marked `#[serde(skip)]` are transient UI/event state. Anything without it is persisted in eframe storage, so changing a persisted type's shape can break loading of existing saved state. Loading falls back silently to defaults on a parse failure.
+- Fields marked `#[serde(skip)]` are transient UI/event state. Anything without it is persisted in eframe storage, so changing a persisted type's shape can break loading of existing saved state. On a parse failure, loading logs a warning (`Ignoring stored app state`) and falls back to defaults.
 
 ### Data model
 - `ControlPoint` (`src/datatypes/control_point.rs`) is an enum over `ControlPointStorage { val, t, tangents: [Option<_>; 2] }`.
