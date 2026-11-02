@@ -53,7 +53,15 @@ impl<'a> ZColorPicker<'a> {
     }
 
     fn picker_ui(&mut self, ui: &mut Ui) -> Response {
-        let desired_size = vec2(200.0, 500.0);
+        let spacing = ui.spacing();
+        let strip_ratio = spacing.interact_size.y / spacing.slider_width;
+        let label_row_height = spacing.interact_size.y;
+        // Must match main_color_picker's stack: swatch, label, hue, T, square, and the overlays' add_space(8.0).
+        let gap_count = 4.0;
+        let overlay_space = 2.0 * 8.0;
+        let fixed_height = label_row_height + gap_count * spacing.item_spacing.y + overlay_space;
+        let side = picker_side(ui.available_size(), strip_ratio, fixed_height);
+        let desired_size = vec2(side, side);
         if let Some(last_modified_index) = *self.ctx.last_modifying_point_index {
             if self.ctx.control_points.len() == 0 {
                 *self.ctx.last_modifying_point_index = None;
@@ -534,6 +542,11 @@ pub fn main_color_picker(
 }
 
 // -------------------- Helper Functions --------------------
+fn picker_side(available: Vec2, strip_ratio: f32, fixed_height: f32) -> f32 {
+    let height_limited_side = (available.y - fixed_height) / (1.0 + 3.0 * strip_ratio);
+    available.x.min(height_limited_side).clamp(160.0, 800.0)
+}
+
 fn handle_additive_blending(ui: &mut Ui, color: &mut HsvaGamma, alpha: Alpha) {
     if alpha == Alpha::BlendOrAdditive {
         let a = &mut color.a;
@@ -965,6 +978,56 @@ mod tests {
 
     fn format_orange(format: ColorStringCopy) -> String {
         format_color_as(orange(), format, None)
+    }
+
+    const STRIP_RATIO: f32 = 0.18;
+    const FIXED_HEIGHT: f32 = 46.0;
+
+    fn picker_height(side: f32) -> f32 {
+        side * (1.0 + 3.0 * STRIP_RATIO) + FIXED_HEIGHT
+    }
+
+    #[test]
+    fn picker_side_width_limited_fills_width() {
+        assert_eq!(
+            picker_side(vec2(300.0, 2000.0), STRIP_RATIO, FIXED_HEIGHT),
+            300.0
+        );
+    }
+
+    #[test]
+    fn picker_side_height_limited_fills_height() {
+        let side = picker_side(vec2(2000.0, 400.0), STRIP_RATIO, FIXED_HEIGHT);
+        assert!((picker_height(side) - 400.0).abs() < 1e-3, "side {side}");
+    }
+
+    #[test]
+    fn picker_side_tiny_pane_clamps_to_min() {
+        assert_eq!(
+            picker_side(vec2(50.0, 50.0), STRIP_RATIO, FIXED_HEIGHT),
+            160.0
+        );
+    }
+
+    #[test]
+    fn picker_side_huge_pane_clamps_to_max() {
+        assert_eq!(
+            picker_side(vec2(5000.0, 5000.0), STRIP_RATIO, FIXED_HEIGHT),
+            800.0
+        );
+    }
+
+    #[test]
+    fn picker_side_unclamped_fits_available() {
+        for w in [170.0, 250.0, 480.0, 799.0, 1200.0] {
+            for h in [300.0, 420.0, 700.0, 1300.0] {
+                let side = picker_side(vec2(w, h), STRIP_RATIO, FIXED_HEIGHT);
+                if side > 160.0 && side < 800.0 {
+                    assert!(side <= w, "{w}x{h}: side {side}");
+                    assert!(picker_height(side) <= h + 1e-3, "{w}x{h}: side {side}");
+                }
+            }
+        }
     }
 
     #[test]
