@@ -667,6 +667,7 @@ mod tests {
                 val: ControlPointValue::new(0.25, 0.5, 0.75),
                 t: 0.0,
                 tangents: [None, Some(ControlPointValue::new(0.125, -0.25, 0.0))],
+                curvature: None,
             }),
             ControlPoint::ControlPointLeftRightTangent(ControlPointStorage {
                 val: ControlPointValue::new(0.5, 0.25, 0.125),
@@ -675,6 +676,7 @@ mod tests {
                     Some(ControlPointValue::new(-0.5, 0.0, 0.0)),
                     Some(ControlPointValue::new(0.5, 0.0, 0.0)),
                 ],
+                curvature: None,
             }),
         ]
     }

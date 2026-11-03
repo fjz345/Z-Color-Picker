@@ -9,7 +9,7 @@ use crate::{
     },
     ui_egui::{
         app::ZColorPickerOptions,
-        auto_comb::apply_auto_comb,
+        auto_comb::{apply_auto_comb, drag_handle_to, CombEdit},
         color_readout::{color_readout, color_readout_height},
         content_windows::{comb_row, picker_space_combo, points_row},
         control_points::{
@@ -181,6 +181,8 @@ pub struct ZColorPickerWrapper {
     pub dragging_tangent: Option<(usize, usize)>,
     #[serde(skip)]
     pub auto_comb_unsolved: usize,
+    #[serde(skip)]
+    pub was_auto_comb_running: bool,
 }
 
 impl Default for ZColorPickerWrapper {
@@ -193,10 +195,19 @@ impl Default for ZColorPickerWrapper {
             copy_request: None,
             dragging_tangent: None,
             auto_comb_unsolved: 0,
+            was_auto_comb_running: false,
         };
 
         new_color_picker
     }
+}
+
+fn is_auto_comb_running(
+    spline_mode: SplineMode,
+    blend_space: BlendSpace,
+    options: &ZColorPickerOptions,
+) -> bool {
+    spline_mode == SplineMode::Bezier && blend_space == BlendSpace::Picker && options.is_auto_comb
 }
 
 impl ZColorPickerWrapper {
@@ -218,14 +229,18 @@ impl ZColorPickerWrapper {
             }
         }
         self.auto_comb_unsolved = 0;
-        if spline_mode == SplineMode::Bezier
-            && blend_space == BlendSpace::Picker
-            && self.options.is_auto_comb
-        {
+        let is_running = is_auto_comb_running(spline_mode, blend_space, &self.options);
+        if is_running {
             // Constrain first: a later clamp would move solved points and unsettle a loaded preset.
             self.apply_control_point_constraints(control_points);
-            self.auto_comb_unsolved = apply_auto_comb(control_points, self.dragging_tangent);
+            let edit = CombEdit {
+                dragged_point: self.dragging_index,
+                dragged_handle: self.dragging_tangent,
+                is_reseed: !self.was_auto_comb_running,
+            };
+            self.auto_comb_unsolved = apply_auto_comb(control_points, edit);
         }
+        self.was_auto_comb_running = is_running;
     }
 
     pub fn draw_ui(
@@ -924,10 +939,17 @@ fn handle_control_points_ui(
         if r.dragged_by(PointerButton::Primary) {
             if let Some(index) = *ctx.last_modifying_point_index {
                 if let (Some(tang_idx), Some(offset)) = (selected_tangent, dragged_tangent_offset) {
-                    if let Some(tang) = &mut ctx.control_points[index].tangents_mut()[tang_idx] {
-                        tang.val[0] = offset.x;
-                        tang.val[1] = offset.y;
-                        *ctx.dragging_tangent = Some((index, tang_idx));
+                    let cp = &ctx.control_points[index];
+                    if let Some(tangent) = cp.tangents()[tang_idx] {
+                        let target = *cp.val() + HsvKeyValue::new(offset.x, offset.y, tangent.h());
+                        drag_handle_to(
+                            ctx.control_points,
+                            index,
+                            tang_idx,
+                            target,
+                            is_auto_comb_running(ctx.spline_mode, ctx.blend_space, ctx.options),
+                            ctx.dragging_tangent,
+                        );
                     }
                 }
             }
@@ -2359,16 +2381,48 @@ mod tests {
     }
 
     #[test]
-    fn auto_comb_counts_joints_it_cannot_make_continuous() {
+    fn auto_comb_counts_segments_it_cannot_solve() {
         let mut picker = auto_comb_picker();
-        let mut staircase = with_handles(
-            points_sv(&[(0.25, 0.33), (0.44, 0.38), (0.8, 0.6), (0.9, 0.8)]),
-            &[[[-0.01, 0.0], [0.01, 0.0]]; 4],
+        let mut arc = with_handles(
+            points_sv(&[(0.2, 0.5), (0.5, 0.2), (0.8, 0.5)]),
+            &[
+                [[0.0, 0.1], [0.0, -0.1]],
+                [[-0.1, 0.0], [0.1, 0.0]],
+                [[0.0, -0.1], [0.0, 0.1]],
+            ],
         );
-        picker.pre_draw_update(&mut staircase, SplineMode::Bezier, BlendSpace::Picker);
-        assert_eq!(picker.auto_comb_unsolved, 2);
-        picker.pre_draw_update(&mut staircase, SplineMode::Linear, BlendSpace::Picker);
+        picker.pre_draw_update(&mut arc, SplineMode::Bezier, BlendSpace::Picker);
         assert_eq!(picker.auto_comb_unsolved, 0);
+        *arc[1].curvature_mut() = Some(1.0e4);
+        picker.pre_draw_update(&mut arc, SplineMode::Bezier, BlendSpace::Picker);
+        assert_eq!(picker.auto_comb_unsolved, 2);
+        picker.pre_draw_update(&mut arc, SplineMode::Linear, BlendSpace::Picker);
+        assert_eq!(picker.auto_comb_unsolved, 0);
+    }
+
+    #[test]
+    fn enabling_auto_comb_reseeds_curvatures_the_handles_no_longer_meet() {
+        let mut picker = auto_comb_picker();
+        let mut arc = with_handles(
+            points_sv(&[(0.2, 0.5), (0.5, 0.2), (0.8, 0.5)]),
+            &[
+                [[0.0, 0.1], [0.0, -0.1]],
+                [[-0.1, 0.0], [0.1, 0.0]],
+                [[0.0, -0.1], [0.0, 0.1]],
+            ],
+        );
+        picker.pre_draw_update(&mut arc, SplineMode::Bezier, BlendSpace::Picker);
+        let combed = arc.clone();
+        for cp in arc.iter_mut() {
+            *cp.curvature_mut() = Some(1.0e4);
+        }
+        picker.pre_draw_update(&mut arc, SplineMode::Linear, BlendSpace::Picker);
+        picker.pre_draw_update(&mut arc, SplineMode::Bezier, BlendSpace::Picker);
+        assert_eq!(picker.auto_comb_unsolved, 0);
+        for (reseeded, original) in arc.iter().zip(&combed) {
+            assert_eq!(reseeded.tangents(), original.tangents());
+            assert_ne!(reseeded.curvature(), Some(1.0e4));
+        }
     }
 
     #[test]

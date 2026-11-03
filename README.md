@@ -66,7 +66,7 @@ Points row (under the square):
 Comb row (under the Points row):
 - Show: Show the curvature comb (Bezier and Hermite, Picker blend)
 - Scale: Length of the comb spikes
-- Auto comb: Line up each point's two handles and solve their lengths so the comb is continuous (Bezier only); dragging a handle then only turns it. `N unsolved` counts points where the handle directions allow no solution
+- Auto comb: Keep a curvature on each point and solve the handle lengths so the comb is continuous (Bezier only). Moving a point keeps the curvatures (the dragged point gives way when its segments can't meet its curvature); turning a handle turns its partner too; pulling a handle longer or shorter changes its point's curvature. `N unsolved` counts segments whose handle lengths can't meet their points' curvatures, which are left as they were
 
 Previewer:
 - Levels: Number of colors in the quantized gradient

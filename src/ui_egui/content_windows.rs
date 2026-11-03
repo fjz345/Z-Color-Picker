@@ -190,8 +190,9 @@ pub fn comb_row(
             egui::Checkbox::new(&mut options.is_auto_comb, "Auto comb"),
         )
         .on_hover_text(
-            "Line up each point's two handles and solve their lengths so the comb is \
-             continuous; drag a handle to turn it",
+            "Keep each point's curvature: handle lengths are solved so the comb is \
+             continuous. Turn a handle to turn its point; pull it longer or shorter to \
+             change the point's curvature",
         )
         .on_disabled_hover_text(if is_picker_blend {
             "Auto comb only runs in Bezier mode"
@@ -204,8 +205,8 @@ pub fn comb_row(
                 format!("{auto_comb_unsolved} unsolved"),
             )
             .on_hover_text(
-                "Points where no handle lengths make the comb continuous with the current \
-                 handle directions; turn a handle there",
+                "Segments whose handle lengths can't meet their points' curvatures with the \
+                 current handle directions; turn a handle or change a curvature there",
             );
         }
     });
@@ -255,6 +256,9 @@ pub fn copy_format_combo(ui: &mut Ui, color_copy_format: &mut ColorStringCopy) {
 pub fn flip_control_points(points: &mut [ControlPoint], selected: &mut Option<usize>) {
     for cp in points.iter_mut() {
         cp.flip_tangents();
+        if let Some(k) = cp.curvature_mut() {
+            *k = -*k;
+        }
     }
     points.reverse();
     mirror_t(points);
@@ -1459,6 +1463,7 @@ mod tests {
                         Some(ControlPointValue::new(0.05 * (f + 1.0), 0.0, 0.0)),
                         None,
                     ],
+                    curvature: None,
                 })
             })
             .collect()
