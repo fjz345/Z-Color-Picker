@@ -1,0 +1,34 @@
+{
+  "state": "Idle",
+  "app_ctx": {
+    "control_points": [
+      {"ControlPointSimple": {"val": {"val": [0.14781064, 0.9237354, 0.32381573]}, "t": 0.0, "tangents": [{"val": [0.0, 0.0, 0.0]}, {"val": [0.5472308, 0.0762399, 0.0]}]}},
+      {"ControlPointSimple": {"val": {"val": [0.17079292, 0.20525914, 0.818255]}, "t": 1.0, "tangents": [{"val": [0.1072336, -0.0110125, 0.0]}, {"val": [0.0, 0.0, 0.0]}]}}
+    ],
+    "spline_mode": "Bezier",
+    "preset_handler": {"auto_save_presets": false, "selected_preset": null},
+    "z_color_picker": {"last_modifying_point_index": 1, "dragging_index": null, "right_clicked_on_index": null, "options": {"is_curve_locked": false, "is_hue_middle_interpolated": true, "is_insert_right": true, "is_window_lock": true, "is_show_curvature_comb": true, "curvature_comb_scale": 1.0, "is_auto_comb": true}},
+    "previewer": {"data": {"control_points": [], "spline_mode": "Bezier", "quantize_num_levels": 2}},
+    "color_copy_format": "HEXNOA",
+    "open_tabs": []
+  },
+  "tree": {
+    "id": 6548801023460913313,
+    "root": 7,
+    "tiles": {
+      "next_tile_id": 9,
+      "tiles": {
+        "1": {"Pane": {"ColorPicker": {"title": null, "ctx": {"control_points": [], "spline_mode": "Bezier", "preset_handler": {"auto_save_presets": false, "selected_preset": null}, "z_color_picker": {"last_modifying_point_index": 1, "dragging_index": null, "right_clicked_on_index": null, "options": {"is_curve_locked": false, "is_hue_middle_interpolated": true, "is_insert_right": true, "is_window_lock": true, "is_show_curvature_comb": true, "curvature_comb_scale": 1.0, "is_auto_comb": true}}, "previewer": {"data": {"control_points": [], "spline_mode": "Bezier", "quantize_num_levels": 2}}, "color_copy_format": "HEXNOA", "open_tabs": []}}}},
+        "2": {"Pane": {"ColorPickerOptionsPane": {"title": null, "ctx": {"control_points": [], "spline_mode": "Bezier", "preset_handler": {"auto_save_presets": false, "selected_preset": null}, "z_color_picker": {"last_modifying_point_index": 1, "dragging_index": null, "right_clicked_on_index": null, "options": {"is_curve_locked": false, "is_hue_middle_interpolated": true, "is_insert_right": true, "is_window_lock": true, "is_show_curvature_comb": true, "curvature_comb_scale": 1.0, "is_auto_comb": true}}, "previewer": {"data": {"control_points": [], "spline_mode": "Bezier", "quantize_num_levels": 2}}, "color_copy_format": "HEXNOA", "open_tabs": []}}}},
+        "3": {"Pane": {"Previewer": {"title": null, "ctx": {"control_points": [], "spline_mode": "Bezier", "preset_handler": {"auto_save_presets": false, "selected_preset": null}, "z_color_picker": {"last_modifying_point_index": 1, "dragging_index": null, "right_clicked_on_index": null, "options": {"is_curve_locked": false, "is_hue_middle_interpolated": true, "is_insert_right": true, "is_window_lock": true, "is_show_curvature_comb": true, "curvature_comb_scale": 1.0, "is_auto_comb": true}}, "previewer": {"data": {"control_points": [], "spline_mode": "Bezier", "quantize_num_levels": 2}}, "color_copy_format": "HEXNOA", "open_tabs": []}}}},
+        "4": {"Pane": {"Log": {"title": "Log", "log_buffer": ["[INFO] Found previous app storage"]}}},
+        "5": {"Container": {"Linear": {"children": [1, 2], "dir": "Vertical", "shares": {"shares": {"1": 1.6568701, "2": 0.34313136}}}}},
+        "6": {"Container": {"Linear": {"children": [5, 3], "dir": "Horizontal", "shares": {"shares": {}}}}},
+        "7": {"Container": {"Linear": {"children": [6, 4], "dir": "Vertical", "shares": {"shares": {"6": 1.4872184, "4": 0.51278156}}}}}
+      },
+      "invisible": []
+    },
+    "height": null,
+    "width": null
+  }
+}

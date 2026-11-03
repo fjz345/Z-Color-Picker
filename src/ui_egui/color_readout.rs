@@ -245,7 +245,7 @@ mod tests {
         ctx: &egui::Context,
         picker: &mut ZColorPickerWrapper,
         points: &mut Vec<ControlPoint>,
-        picker_space: PickerSpace,
+        mut picker_space: PickerSpace,
         events: Vec<egui::Event>,
     ) -> Vec<(String, Rect)> {
         let input = egui::RawInput {
@@ -259,7 +259,7 @@ mod tests {
                     ui,
                     points,
                     SplineMode::Linear,
-                    picker_space,
+                    &mut picker_space,
                     BlendSpace::Picker,
                     &ColorStringCopy::HSV,
                 );

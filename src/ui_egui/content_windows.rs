@@ -29,24 +29,6 @@ impl Default for WindowPresetDrawResult {
     }
 }
 
-impl ContentWindow for WindowZColorPickerOptions {
-    fn title(&self) -> &str {
-        "ZColorPicker Options"
-    }
-
-    fn is_open(&self) -> bool {
-        return self.open;
-    }
-
-    fn close(&mut self) {
-        self.open = false;
-    }
-
-    fn open(&mut self) {
-        self.open = true;
-    }
-}
-
 impl ContentWindow for WindowPreset {
     fn title(&self) -> &str {
         "Preset"
@@ -77,169 +59,153 @@ impl Default for PresetDrawResult {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct WindowZColorPickerOptions {
-    pub open: bool,
+pub fn picker_space_combo(ui: &mut Ui, picker_space: &mut PickerSpace) {
+    ui.label("Space");
+    egui::ComboBox::from_id_salt("picker_space")
+        .selected_text(picker_space_label(*picker_space))
+        .show_ui(ui, |ui| {
+            ui.set_min_width(60.0);
+            for space in PickerSpace::ALL {
+                ui.selectable_value(picker_space, space, picker_space_label(space))
+                    .on_hover_text(picker_space_hover_text(space));
+            }
+        })
+        .response
+        .on_hover_text(
+            "Color space of the square and the hue bar; switching converts every point \
+             and keeps its color",
+        );
 }
 
-impl WindowZColorPickerOptions {
-    pub fn new() -> Self {
-        Self { open: false }
-    }
+pub fn points_row(ui: &mut Ui, options: &mut ZColorPickerOptions) {
+    ui.horizontal_wrapped(|ui| {
+        ui.strong("Points");
+        ui.checkbox(&mut options.is_curve_locked, "Lock")
+            .on_hover_text("Move all control points together, also for S/V edits in the inspector");
+        ui.checkbox(&mut options.is_window_lock, "Clamp")
+            .on_hover_text("Keep points inside the S/V square and wrap hue into 0..1");
+        ui.checkbox(&mut options.is_hue_middle_interpolated, "Auto hue")
+            .on_hover_text(
+                "Only the first and last hue are editable; middle hues are interpolated",
+            );
+        ui.horizontal(|ui| {
+            ui.label("Insert");
+            ui.radio_value(&mut options.is_insert_right, false, "left")
+                .on_hover_text(
+                    "New points go left of the selected point \
+                     (at the start when none is selected)",
+                );
+            ui.radio_value(&mut options.is_insert_right, true, "right")
+                .on_hover_text(
+                    "New points go right of the selected point \
+                     (at the end when none is selected)",
+                );
+        });
+    });
+}
 
-    pub fn update(&mut self) {}
+pub fn curve_controls(
+    ui: &mut Ui,
+    spline_mode: &mut SplineMode,
+    blend_space: &mut BlendSpace,
+) -> bool {
+    ui.label("Spline");
+    egui::ComboBox::from_id_salt("spline_mode")
+        .selected_text(spline_mode_label(*spline_mode))
+        .show_ui(ui, |ui| {
+            ui.set_min_width(60.0);
+            for mode in SplineMode::ALL {
+                ui.selectable_value(spline_mode, mode, spline_mode_label(mode))
+                    .on_hover_text(spline_mode_hover_text(mode));
+            }
+        })
+        .response
+        .on_hover_text(spline_mode_hover_text(*spline_mode));
 
-    pub fn draw_content(
-        &mut self,
-        ui: &mut Ui,
-        options: &mut ZColorPickerOptions,
-        spline_mode: &mut SplineMode,
-        picker_space: &mut PickerSpace,
-        blend_space: &mut BlendSpace,
-        auto_comb_unsolved: usize,
-    ) -> bool {
-        ui.horizontal_wrapped(|ui| {
-            ui.strong("Points");
-            ui.label("Space");
-            egui::ComboBox::from_id_salt("picker_space")
-                .selected_text(picker_space_label(*picker_space))
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(60.0);
-                    for space in PickerSpace::ALL {
-                        ui.selectable_value(picker_space, space, picker_space_label(space))
-                            .on_hover_text(picker_space_hover_text(space));
-                    }
-                })
-                .response
-                .on_hover_text(
-                    "Color space of the square and the hue bar; switching converts every point \
-                     and keeps its color",
-                );
-            ui.checkbox(&mut options.is_curve_locked, "Lock")
-                .on_hover_text(
-                    "Move all control points together, also for S/V edits in the inspector",
-                );
-            ui.checkbox(&mut options.is_window_lock, "Clamp")
-                .on_hover_text("Keep points inside the S/V square and wrap hue into 0..1");
-            ui.checkbox(&mut options.is_hue_middle_interpolated, "Auto hue")
-                .on_hover_text(
-                    "Only the first and last hue are editable; middle hues are interpolated",
-                );
-            ui.horizontal(|ui| {
-                ui.label("Insert");
-                ui.radio_value(&mut options.is_insert_right, false, "left")
-                    .on_hover_text(
-                        "New points go left of the selected point \
-                         (at the start when none is selected)",
-                    );
-                ui.radio_value(&mut options.is_insert_right, true, "right")
-                    .on_hover_text(
-                        "New points go right of the selected point \
-                         (at the end when none is selected)",
-                    );
+    ui.label("Blend");
+    egui::ComboBox::from_id_salt("blend_space")
+        .selected_text(blend_space_label(*blend_space))
+        .show_ui(ui, |ui| {
+            ui.set_min_width(60.0);
+            for space in BlendSpace::ALL {
+                ui.selectable_value(blend_space, space, blend_space_label(space))
+                    .on_hover_text(blend_space_hover_text(space));
+            }
+        })
+        .response
+        .on_hover_text(
+            "Color space the gradient is interpolated in; the points keep their \
+             colors. Any blend but Picker turns off the comb and Auto comb",
+        );
+
+    ui.button("Flip")
+        .on_hover_text("Reverse the point order (tangents and T follow)")
+        .clicked_by(PointerButton::Primary)
+}
+
+pub fn comb_row(
+    ui: &mut Ui,
+    options: &mut ZColorPickerOptions,
+    spline_mode: SplineMode,
+    blend_space: BlendSpace,
+    auto_comb_unsolved: usize,
+) {
+    let enabled = comb_controls_enabled(spline_mode, blend_space, options.is_show_curvature_comb);
+    let is_picker_blend = blend_space == BlendSpace::Picker;
+    let straight_hint = "Linear segments are straight: there is no curvature to show";
+    let comb_off_hint = if is_picker_blend {
+        straight_hint
+    } else {
+        NON_PICKER_BLEND_COMB_HINT
+    };
+    ui.horizontal_wrapped(|ui| {
+        ui.strong("Comb");
+        ui.add_enabled(
+            enabled.show,
+            egui::Checkbox::new(&mut options.is_show_curvature_comb, "Show"),
+        )
+        .on_hover_text("Curvature comb: spikes show how sharply the curve bends")
+        .on_disabled_hover_text(comb_off_hint);
+        ui.add_enabled_ui(enabled.scale, |ui| {
+            ui.label("Scale");
+            ui.add(
+                egui::Slider::new(&mut options.curvature_comb_scale, COMB_SCALE_RANGE)
+                    .logarithmic(true)
+                    .fixed_decimals(2)
+                    .suffix("×"),
+            )
+            .on_hover_text("Length of the comb spikes")
+            .on_disabled_hover_text(if enabled.show {
+                "Turn on Show first"
+            } else {
+                comb_off_hint
             });
         });
 
-        let enabled =
-            comb_controls_enabled(*spline_mode, *blend_space, options.is_show_curvature_comb);
-        let is_picker_blend = *blend_space == BlendSpace::Picker;
-        let is_flip_clicked = ui
-            .horizontal_wrapped(|ui| {
-                ui.strong("Curve");
-                ui.label("Spline");
-                egui::ComboBox::from_id_salt("spline_mode")
-                    .selected_text(spline_mode_label(*spline_mode))
-                    .show_ui(ui, |ui| {
-                        ui.set_min_width(60.0);
-                        for mode in SplineMode::ALL {
-                            ui.selectable_value(spline_mode, mode, spline_mode_label(mode))
-                                .on_hover_text(spline_mode_hover_text(mode));
-                        }
-                    })
-                    .response
-                    .on_hover_text(spline_mode_hover_text(*spline_mode));
-
-                ui.label("Blend");
-                egui::ComboBox::from_id_salt("blend_space")
-                    .selected_text(blend_space_label(*blend_space))
-                    .show_ui(ui, |ui| {
-                        ui.set_min_width(60.0);
-                        for space in BlendSpace::ALL {
-                            ui.selectable_value(blend_space, space, blend_space_label(space))
-                                .on_hover_text(blend_space_hover_text(space));
-                        }
-                    })
-                    .response
-                    .on_hover_text(
-                        "Color space the gradient is interpolated in; the points keep their \
-                         colors. Any blend but Picker turns off the comb and Auto comb",
-                    );
-
-                let is_flip_clicked = ui
-                    .button("Flip")
-                    .on_hover_text("Reverse the point order (tangents and T follow)")
-                    .clicked_by(PointerButton::Primary);
-
-                ui.add_enabled(
-                    enabled.auto,
-                    egui::Checkbox::new(&mut options.is_auto_comb, "Auto comb"),
-                )
-                .on_hover_text(
-                    "Line up each point's two handles and solve their lengths so the comb is \
-                     continuous; drag a handle to turn it",
-                )
-                .on_disabled_hover_text(if is_picker_blend {
-                    "Auto comb only runs in Bezier mode"
-                } else {
-                    NON_PICKER_BLEND_COMB_HINT
-                });
-                if enabled.auto && options.is_auto_comb && auto_comb_unsolved > 0 {
-                    ui.colored_label(
-                        ui.visuals().warn_fg_color,
-                        format!("{auto_comb_unsolved} unsolved"),
-                    )
-                    .on_hover_text(
-                        "Points where no handle lengths make the comb continuous with the current \
-                         handle directions; turn a handle there",
-                    );
-                }
-                is_flip_clicked
-            })
-            .inner;
-
-        let straight_hint = "Linear segments are straight: there is no curvature to show";
-        let comb_off_hint = if is_picker_blend {
-            straight_hint
+        ui.add_enabled(
+            enabled.auto,
+            egui::Checkbox::new(&mut options.is_auto_comb, "Auto comb"),
+        )
+        .on_hover_text(
+            "Line up each point's two handles and solve their lengths so the comb is \
+             continuous; drag a handle to turn it",
+        )
+        .on_disabled_hover_text(if is_picker_blend {
+            "Auto comb only runs in Bezier mode"
         } else {
             NON_PICKER_BLEND_COMB_HINT
-        };
-        ui.horizontal_wrapped(|ui| {
-            ui.strong("Comb");
-            ui.add_enabled(
-                enabled.show,
-                egui::Checkbox::new(&mut options.is_show_curvature_comb, "Show"),
-            )
-            .on_hover_text("Curvature comb: spikes show how sharply the curve bends")
-            .on_disabled_hover_text(comb_off_hint);
-            ui.add_enabled_ui(enabled.scale, |ui| {
-                ui.label("Scale");
-                ui.add(
-                    egui::Slider::new(&mut options.curvature_comb_scale, COMB_SCALE_RANGE)
-                        .logarithmic(true)
-                        .fixed_decimals(2)
-                        .suffix("×"),
-                )
-                .on_hover_text("Length of the comb spikes")
-                .on_disabled_hover_text(if enabled.show {
-                    "Turn on Show first"
-                } else {
-                    comb_off_hint
-                });
-            });
         });
-
-        is_flip_clicked
-    }
+        if enabled.auto && options.is_auto_comb && auto_comb_unsolved > 0 {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                format!("{auto_comb_unsolved} unsolved"),
+            )
+            .on_hover_text(
+                "Points where no handle lengths make the comb continuous with the current \
+                 handle directions; turn a handle there",
+            );
+        }
+    });
 }
 
 const NON_PICKER_BLEND_COMB_HINT: &str =
@@ -1207,23 +1173,17 @@ mod tests {
 
     fn painted_option_texts(
         mut options: ZColorPickerOptions,
-        mut spline_mode: SplineMode,
+        spline_mode: SplineMode,
         auto_comb_unsolved: usize,
     ) -> Vec<String> {
         let ctx = egui::Context::default();
-        let mut window = WindowZColorPickerOptions::new();
-        let output = ctx.run(egui::RawInput::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                window.draw_content(
-                    ui,
-                    &mut options,
-                    &mut spline_mode,
-                    &mut PickerSpace::Hsv,
-                    &mut BlendSpace::Picker,
-                    auto_comb_unsolved,
-                );
-            });
-        });
+        let output = draw_options_frame(
+            &ctx,
+            Vec::new(),
+            &mut options,
+            spline_mode,
+            auto_comb_unsolved,
+        );
         output
             .shapes
             .iter()
@@ -1238,22 +1198,22 @@ mod tests {
         ctx: &egui::Context,
         events: Vec<egui::Event>,
         options: &mut ZColorPickerOptions,
-        mut spline_mode: SplineMode,
+        spline_mode: SplineMode,
+        auto_comb_unsolved: usize,
     ) -> egui::FullOutput {
-        let mut window = WindowZColorPickerOptions::new();
         let input = egui::RawInput {
             events,
             ..Default::default()
         };
         ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                window.draw_content(
+                points_row(ui, options);
+                comb_row(
                     ui,
                     options,
-                    &mut spline_mode,
-                    &mut PickerSpace::Hsv,
-                    &mut BlendSpace::Picker,
-                    0,
+                    spline_mode,
+                    BlendSpace::Picker,
+                    auto_comb_unsolved,
                 );
             });
         })
@@ -1275,9 +1235,9 @@ mod tests {
     fn click_comb(spline_mode: SplineMode) -> ZColorPickerOptions {
         let ctx = egui::Context::default();
         let mut options = ZColorPickerOptions::default();
-        let output = draw_options_frame(&ctx, Vec::new(), &mut options, spline_mode);
+        let output = draw_options_frame(&ctx, Vec::new(), &mut options, spline_mode, 0);
         for events in primary_click(painted_text_center(&output, "Show")) {
-            draw_options_frame(&ctx, events, &mut options, spline_mode);
+            draw_options_frame(&ctx, events, &mut options, spline_mode, 0);
         }
         options
     }
@@ -1327,24 +1287,14 @@ mod tests {
     }
 
     #[test]
-    fn blend_combo_sits_in_the_curve_row() {
-        let texts = options_painted_texts(true);
-        let position = |wanted: &str| texts.iter().position(|text| text == wanted);
-        let [curve, blend, picker, comb] = ["Curve", "Blend", "Picker", "Comb"].map(position);
-        assert!(curve < blend && blend < comb, "{texts:?}");
-        assert_eq!(picker, blend.map(|i| i + 1), "{texts:?}");
-    }
-
-    #[test]
     fn options_rows_start_with_their_group_labels() {
         let texts = options_painted_texts(true);
-        for label in ["Points", "Curve", "Comb"] {
-            assert!(
-                texts.iter().any(|text| text == label),
-                "{label:?}: {texts:?}"
-            );
+        let position = |wanted: &str| texts.iter().position(|text| text == wanted);
+        assert_eq!(position("Points"), Some(0), "{texts:?}");
+        assert!(position("Comb").is_some(), "{texts:?}");
+        for moved in ["Space", "Spline", "Blend", "Flip", "Copy as"] {
+            assert_eq!(position(moved), None, "{moved:?}: {texts:?}");
         }
-        assert!(!texts.iter().any(|text| text == "Copy as"), "{texts:?}");
     }
 
     #[test]

@@ -11,8 +11,7 @@ use crate::{
     ui_egui::{
         app::ZColorPickerAppContext,
         color_picker::ZColorPickerWrapper,
-        content_windows::{copy_format_combo, flip_control_points},
-        control_points::convert_picker_space,
+        content_windows::{copy_format_combo, curve_controls, flip_control_points},
         view_3d::View3d,
     },
 };
@@ -65,12 +64,7 @@ impl ZAppPane for Pane {
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
         match self {
             Pane::ColorPicker(pane) => pane.ui(ui),
-            Pane::ColorPickerOptionsPane(pane) => {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| pane.ui(ui))
-                    .inner
-            }
+            Pane::ColorPickerOptionsPane(pane) => pane.ui(ui),
             Pane::View3d(pane) => pane.ui(ui),
             Pane::Previewer(pane) => pane.ui(ui),
             Pane::Log(pane) => pane.ui(ui),
@@ -102,7 +96,7 @@ impl ZAppPane for ColorPickerPane {
         let color_copy_format = mut_ctx.color_copy_format;
         let mut control_points = mut_ctx.control_points.clone();
         let spline_mode = mut_ctx.spline_mode;
-        let picker_space = mut_ctx.picker_space;
+        let mut picker_space = mut_ctx.picker_space;
         let blend_space = mut_ctx.blend_space;
 
         // ui.painter().rect_filled(ui.max_rect(), 0.0, Color32::WHITE);
@@ -111,7 +105,7 @@ impl ZAppPane for ColorPickerPane {
                 ui,
                 &mut control_points,
                 spline_mode,
-                picker_space,
+                &mut picker_space,
                 blend_space,
                 &color_copy_format,
             );
@@ -120,61 +114,7 @@ impl ZAppPane for ColorPickerPane {
         });
 
         mut_ctx.control_points = control_points;
-
-        return egui_tiles::UiResponse::None;
-    }
-
-    fn update_ctx(&mut self, new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {
-        self.ctx = new_ctx.clone();
-    }
-}
-#[derive(Serialize, Deserialize)]
-pub struct ColorPickerOptionsPane {
-    pub title: Option<String>,
-    pub ctx: Rc<RefCell<ZColorPickerAppContext>>,
-}
-impl ZAppPane for ColorPickerOptionsPane {
-    fn title(&self) -> String {
-        self.title.clone().unwrap_or(format!("Pane"))
-    }
-    fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
-        // TODO: FIX BORROWING HERE
-        let mut color_picker = self.ctx.borrow().z_color_picker.borrow().clone();
-        let mut mut_ctx = self.ctx.borrow_mut();
-        let mut control_points = mut_ctx.control_points.clone();
-        let mut spline_mode = mut_ctx.spline_mode;
-        let mut picker_space = mut_ctx.picker_space;
-        let mut blend_space = mut_ctx.blend_space;
-
-        let mut options = color_picker.options.clone();
-        let mut options_window = mut_ctx.options_window.clone();
-        options_window.update();
-
-        let is_flip_clicked = options_window.draw_content(
-            ui,
-            &mut options,
-            &mut spline_mode,
-            &mut picker_space,
-            &mut blend_space,
-            color_picker.auto_comb_unsolved,
-        );
-        convert_picker_space(&mut control_points, mut_ctx.picker_space, picker_space);
-        if is_flip_clicked {
-            flip_control_points(
-                &mut control_points,
-                &mut color_picker.last_modifying_point_index,
-            );
-            color_picker.dragging_index = None;
-        }
-
-        color_picker.options = options;
-        mut_ctx.options_window = options_window;
-        mut_ctx.control_points = control_points;
-        mut_ctx.spline_mode = spline_mode;
         mut_ctx.picker_space = picker_space;
-        mut_ctx.blend_space = blend_space;
-
-        *mut_ctx.z_color_picker.borrow_mut() = color_picker;
 
         return egui_tiles::UiResponse::None;
     }
@@ -182,6 +122,17 @@ impl ZAppPane for ColorPickerOptionsPane {
     fn update_ctx(&mut self, new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {
         self.ctx = new_ctx.clone();
     }
+}
+
+// Parses the options tile of old saved state; ZApp::upgrade_layout drops it with the old tree.
+#[derive(Serialize, Deserialize)]
+pub struct ColorPickerOptionsPane {}
+impl ZAppPane for ColorPickerOptionsPane {
+    fn ui(&mut self, _ui: &mut egui::Ui) -> egui_tiles::UiResponse {
+        egui_tiles::UiResponse::None
+    }
+
+    fn update_ctx(&mut self, _new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {}
 }
 #[derive(Serialize, Deserialize)]
 pub struct View3dPane {
@@ -261,7 +212,7 @@ impl ZAppPane for PreviewerPane {
     }
 }
 
-// Parses the Log tile of old saved state; ZApp::startup removes it from the tree.
+// Parses the Log tile of old saved state; ZApp::upgrade_layout drops it with the old tree.
 #[derive(Serialize, Deserialize)]
 pub struct LogPane {}
 impl ZAppPane for LogPane {
@@ -307,6 +258,20 @@ pub fn preset_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egu
     mut_ctx.picker_space = picker_space;
     mut_ctx.blend_space = blend_space;
     mut_ctx.preset_handler = preset_handler;
+}
+
+pub fn curve_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egui::Ui) {
+    let mut mut_ctx = app_ctx.borrow_mut();
+    let ctx = &mut *mut_ctx;
+    let is_flip_clicked = curve_controls(ui, &mut ctx.spline_mode, &mut ctx.blend_space);
+    if is_flip_clicked {
+        let mut color_picker = ctx.z_color_picker.borrow_mut();
+        flip_control_points(
+            &mut ctx.control_points,
+            &mut color_picker.last_modifying_point_index,
+        );
+        color_picker.dragging_index = None;
+    }
 }
 
 pub fn copy_format_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egui::Ui) {
@@ -606,7 +571,7 @@ mod tests {
                 .collect()
         };
         let before = colors(PickerSpace::Hsv);
-        let mut pane = ColorPickerOptionsPane {
+        let mut pane = ColorPickerPane {
             title: None,
             ctx: ctx.clone(),
         };

@@ -26,12 +26,12 @@ use crate::{
             FAILED_COPY_POPUP_SECONDS,
         },
         color_picker::ZColorPickerWrapper,
-        content_windows::{WindowPreset, WindowZColorPickerOptions},
+        content_windows::WindowPreset,
         control_points::normalize_t,
         debug_windows::DebugWindowControlPoints,
         panes::{
-            copy_format_bar_ui, preset_bar_ui, ColorPickerOptionsPane, ColorPickerPane, Pane,
-            PreviewerPane, TreeBehavior, View3dPane, ZAppPane,
+            copy_format_bar_ui, curve_bar_ui, preset_bar_ui, ColorPickerPane, Pane, PreviewerPane,
+            TreeBehavior, View3dPane, ZAppPane,
         },
         previewer::{PreviewerUiResponses, ZPreviewer},
         ui_common::ContentWindow,
@@ -39,7 +39,7 @@ use crate::{
     },
 };
 use eframe::epaint::{Pos2, Vec2};
-use egui_tiles::{Tile, TileId};
+use egui_tiles::Tile;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 enum AppState {
@@ -116,8 +116,6 @@ pub struct ZColorPickerAppContext {
     pub stored_ui_responses: PreviewerUiResponses,
     open_tabs: HashSet<String>,
 
-    #[serde(skip)]
-    pub options_window: WindowZColorPickerOptions,
     #[serde(skip)]
     pub presets_window: WindowPreset,
 }
@@ -209,7 +207,6 @@ impl ZColorPickerAppContext {
             ),
             stored_ui_responses: PreviewerUiResponses::default(),
             open_tabs: HashSet::default(),
-            options_window: WindowZColorPickerOptions::new(),
             presets_window: WindowPreset::new(),
         }
     }
@@ -222,12 +219,15 @@ pub struct ZApp {
     tree: egui_tiles::Tree<Pane>,
     #[serde(default)]
     is_log_expanded: bool,
+    #[serde(default)]
+    layout_version: u32,
     #[serde(skip)]
     log_buffer: Arc<Mutex<Vec<String>>>,
     #[serde(skip)]
     had_keyboard_focus: bool,
 }
 
+const LAYOUT_VERSION: u32 = 1;
 const HARDCODED_MONITOR_SIZE: Vec2 = Vec2::new(2560.0, 1440.0);
 const UI_SCALE_REFERENCE_HEIGHT: f32 = 1080.0;
 const LOG_DRAWER_DEFAULT_HEIGHT: f32 = 200.0;
@@ -257,9 +257,22 @@ impl ZApp {
             tree: Self::create_tree(app_ctx.clone()),
             app_ctx: app_ctx,
             is_log_expanded: false,
+            layout_version: LAYOUT_VERSION,
             log_buffer: log_buffer,
             had_keyboard_focus: false,
         }
+    }
+
+    fn upgrade_layout(&mut self) {
+        if self.layout_version >= LAYOUT_VERSION {
+            return;
+        }
+        log::info!(
+            "Replacing the pane layout of version {} with the default of version {LAYOUT_VERSION}",
+            self.layout_version
+        );
+        self.tree = Self::create_tree(self.app_ctx.clone());
+        self.layout_version = LAYOUT_VERSION;
     }
 
     fn init(&mut self) {
@@ -283,7 +296,7 @@ impl ZApp {
         // Fix startup not having correct references
         {
             self.log_buffer = LogCollector::init().expect("Failed to init logger");
-            remove_log_tiles(&mut self.tree);
+            self.upgrade_layout();
 
             for tile in &mut self.tree.tiles.iter_mut() {
                 if let Tile::Pane(p) = tile.1 {
@@ -334,10 +347,6 @@ impl ZApp {
             title: None,
             ctx: ctx.clone(),
         };
-        let pane_options = ColorPickerOptionsPane {
-            title: None,
-            ctx: ctx.clone(),
-        };
         let pane_previewer = PreviewerPane {
             title: None,
             ctx: ctx.clone(),
@@ -349,18 +358,11 @@ impl ZApp {
         };
 
         let tile_color_picker = tiles.insert_pane(Pane::ColorPicker(pane_color_picker));
-        let tile_options = tiles.insert_pane(Pane::ColorPickerOptionsPane(pane_options));
         let tile_view_3d = tiles.insert_pane(Pane::View3d(pane_view_3d));
         let tile_previewer = tiles.insert_pane(Pane::Previewer(pane_previewer));
 
-        const PICKER_FRACTION: f32 = 0.85;
         const PICKER_COLUMN_FRACTION: f32 = 0.3;
-        const VIEW_3D_FRACTION: f32 = 0.5;
-        let vertical_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
-            egui_tiles::LinearDir::Vertical,
-            [tile_color_picker, tile_options],
-            PICKER_FRACTION,
-        ));
+        const VIEW_3D_FRACTION: f32 = 0.55;
         let right_column_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
             egui_tiles::LinearDir::Vertical,
             [tile_view_3d, tile_previewer],
@@ -368,7 +370,7 @@ impl ZApp {
         ));
         let master_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
             egui_tiles::LinearDir::Horizontal,
-            [vertical_tile, right_column_tile],
+            [tile_color_picker, right_column_tile],
             PICKER_COLUMN_FRACTION,
         ));
         tabs.push(master_tile);
@@ -485,6 +487,8 @@ impl ZApp {
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 preset_bar_ui(&self.app_ctx, ui);
+                ui.separator();
+                curve_bar_ui(&self.app_ctx, ui);
                 ui.separator();
                 copy_format_bar_ui(&self.app_ctx, ui);
                 ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
@@ -697,18 +701,6 @@ impl ZApp {
     }
 }
 
-fn remove_log_tiles(tree: &mut egui_tiles::Tree<Pane>) {
-    let log_ids: Vec<TileId> = tree
-        .tiles
-        .iter()
-        .filter(|(_, tile)| matches!(tile, Tile::Pane(Pane::Log(_))))
-        .map(|(id, _)| *id)
-        .collect();
-    for id in log_ids {
-        tree.remove_recursively(id);
-    }
-}
-
 fn should_quit_on_escape(events: &[egui::Event], esc_blocked: bool) -> bool {
     let esc_first_press = events.iter().any(|event| {
         matches!(
@@ -848,7 +840,6 @@ impl eframe::App for ZApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui_egui::panes::LogPane;
     use ecolor::Color32;
 
     fn key_event(key: egui::Key, pressed: bool, repeat: bool) -> egui::Event {
@@ -1027,6 +1018,7 @@ mod tests {
             tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
             is_log_expanded: false,
+            layout_version: LAYOUT_VERSION,
             log_buffer,
             had_keyboard_focus: false,
         }
@@ -1049,13 +1041,6 @@ mod tests {
         })
     }
 
-    fn lay_out(app: &mut ZApp) {
-        let ctx = egui::Context::default();
-        for _ in 0..3 {
-            draw_toolbar_and_tree(app, &ctx, Vec::new());
-        }
-    }
-
     fn pane_rect(tree: &egui_tiles::Tree<Pane>, is_pane: fn(&Pane) -> bool) -> Option<Rect> {
         let (id, _) = tree
             .tiles
@@ -1070,35 +1055,96 @@ mod tests {
     }
 
     #[test]
-    fn default_layout_fits_the_picker_and_widens_the_previewer() {
-        const MIN_PICKER_PANE_HEIGHT: f32 = 323.0;
+    fn default_layout_fits_the_picker_column_beside_the_3d_view_over_the_previewer() {
         const MIN_PICKER_PANE_WIDTH: f32 = 383.0;
-        const MIN_OPTIONS_PANE_HEIGHT: f32 = 70.0;
         let mut app = test_app();
-        lay_out(&mut app);
+        let ctx = egui::Context::default();
+        laid_out_picker_height(&mut app, &ctx);
+        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
 
         let picker = pane_rect(&app.tree, is_picker_pane).unwrap();
-        let options = pane_rect(&app.tree, |pane| {
-            matches!(pane, Pane::ColorPickerOptionsPane(_))
-        })
-        .unwrap()
-        .height();
-        let previewer = pane_rect(&app.tree, |pane| matches!(pane, Pane::Previewer(_)))
-            .unwrap()
-            .width();
-        assert!(
-            picker.height() >= MIN_PICKER_PANE_HEIGHT,
-            "picker pane {picker:?}"
-        );
+        let view_3d = pane_rect(&app.tree, |pane| matches!(pane, Pane::View3d(_))).unwrap();
+        let previewer = pane_rect(&app.tree, |pane| matches!(pane, Pane::Previewer(_))).unwrap();
+        let last_row = text_centers(&output, "Comb")[0];
         assert!(
             picker.width() >= MIN_PICKER_PANE_WIDTH,
             "picker pane {picker:?}"
         );
+        assert!(picker.contains(last_row), "{last_row:?} in {picker:?}");
         assert!(
-            previewer >= 0.6 * DEFAULT_SCREEN.width(),
-            "previewer pane {previewer}"
+            previewer.width() >= 0.6 * DEFAULT_SCREEN.width(),
+            "previewer pane {previewer:?}"
         );
-        assert!(options >= MIN_OPTIONS_PANE_HEIGHT, "options pane {options}");
+        assert!(
+            view_3d.bottom() <= previewer.top(),
+            "{view_3d:?} {previewer:?}"
+        );
+        assert!(
+            view_3d.height() > previewer.height(),
+            "{view_3d:?} {previewer:?}"
+        );
+        assert_eq!(
+            app.tree.tiles.iter().filter(|(_, t)| t.is_pane()).count(),
+            3
+        );
+    }
+
+    #[test]
+    fn toolbar_groups_run_preset_curve_copy_then_log() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        laid_out_picker_height(&mut app, &ctx);
+        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
+
+        let toolbar_x = |text| {
+            let centers = text_centers(&output, text);
+            assert!(!centers.is_empty(), "{text:?} not painted");
+            assert!(
+                centers[0].y < 2.0 * ctx.style().spacing.interact_size.y,
+                "{text:?}"
+            );
+            centers[0].x
+        };
+        let order = [
+            "Preset", "Spline", "Blend", "Picker", "Flip", "Copy as", "Log",
+        ];
+        let xs = order.map(toolbar_x);
+        assert!(
+            xs.windows(2).all(|pair| pair[0] < pair[1]),
+            "{order:?} at {xs:?}"
+        );
+    }
+
+    #[test]
+    fn toolbar_flip_reverses_the_points_and_ends_a_drag() {
+        let mut app = test_app();
+        let values = [[0.1, 0.2, 0.3], [0.5, 0.5, 0.5], [0.9, 0.8, 0.7]];
+        app.app_ctx.borrow_mut().control_points = values
+            .iter()
+            .zip([0.0, 0.4, 1.0])
+            .map(|(&value, t)| ControlPoint::new_simple(value.into(), t))
+            .collect();
+        app.app_ctx
+            .borrow()
+            .z_color_picker
+            .borrow_mut()
+            .dragging_index = Some(0);
+        let ctx = egui::Context::default();
+        laid_out_picker_height(&mut app, &ctx);
+
+        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
+        click(&mut app, &ctx, text_centers(&output, "Flip")[0]);
+
+        let app_ctx = app.app_ctx.borrow();
+        let sv = |value: [f32; 3]| [value[0], value[1]];
+        let flipped: Vec<[f32; 2]> = app_ctx
+            .control_points
+            .iter()
+            .map(|cp| sv(cp.val().val))
+            .collect();
+        let reversed: Vec<[f32; 2]> = values.iter().rev().map(|&value| sv(value)).collect();
+        assert_eq!(flipped, reversed);
+        assert_eq!(app_ctx.z_color_picker.borrow().dragging_index, None);
     }
 
     fn round_trip(app: &ZApp) -> ZApp {
@@ -1222,79 +1268,72 @@ mod tests {
         assert_eq!(laid_out_picker_height(&mut app, &ctx), collapsed_picker);
     }
 
-    fn old_tree_with_a_visible_log(
-        ctx: Rc<RefCell<ZColorPickerAppContext>>,
-    ) -> egui_tiles::Tree<Pane> {
-        let mut tiles = egui_tiles::Tiles::default();
-        let picker = tiles.insert_pane(Pane::ColorPicker(ColorPickerPane {
-            title: None,
-            ctx: ctx.clone(),
-        }));
-        let options = tiles.insert_pane(Pane::ColorPickerOptionsPane(ColorPickerOptionsPane {
-            title: None,
-            ctx: ctx.clone(),
-        }));
-        let previewer = tiles.insert_pane(Pane::Previewer(PreviewerPane { title: None, ctx }));
-        let log = tiles.insert_pane(Pane::Log(LogPane {}));
-        let mut binary = |dir, children, fraction| {
-            tiles.insert_container(egui_tiles::Linear::new_binary(dir, children, fraction))
-        };
-        let vertical = binary(egui_tiles::LinearDir::Vertical, [picker, options], 0.85);
-        let master = binary(
-            egui_tiles::LinearDir::Horizontal,
-            [vertical, previewer],
-            0.3,
-        );
-        let with_log = binary(egui_tiles::LinearDir::Vertical, [master, log], 0.8);
-        let root = tiles.insert_tab_tile(vec![with_log]);
-        egui_tiles::Tree::new("my_tree", root, tiles)
-    }
+    const OLD_LAYOUT_APP_JSON: &str = include_str!("testdata/old_layout_app.json");
 
     fn laid_out_pane_rects(app: &mut ZApp) -> [Option<Rect>; 3] {
         laid_out_picker_height(app, &egui::Context::default());
         [
             pane_rect(&app.tree, is_picker_pane),
-            pane_rect(&app.tree, |pane| {
-                matches!(pane, Pane::ColorPickerOptionsPane(_))
-            }),
+            pane_rect(&app.tree, |pane| matches!(pane, Pane::View3d(_))),
             pane_rect(&app.tree, |pane| matches!(pane, Pane::Previewer(_))),
         ]
     }
 
+    fn panes_share_the_app_context(app: &ZApp) -> bool {
+        app.tree.tiles.iter().all(|(_, tile)| match tile {
+            Tile::Pane(Pane::ColorPicker(pane)) => Rc::ptr_eq(&pane.ctx, &app.app_ctx),
+            Tile::Pane(Pane::View3d(pane)) => Rc::ptr_eq(&pane.ctx, &app.app_ctx),
+            Tile::Pane(Pane::Previewer(pane)) => Rc::ptr_eq(&pane.ctx, &app.app_ctx),
+            Tile::Pane(_) => false,
+            Tile::Container(_) => true,
+        })
+    }
+
     #[test]
-    fn restored_tree_with_an_old_log_pane_drops_it_and_keeps_the_other_panes() {
-        let mut old_app = test_app();
-        old_app.tree = old_tree_with_a_visible_log(old_app.app_ctx.clone());
-        let mut json = serde_json::to_value(&old_app).unwrap();
-        let old_log_tile = json["tree"]["tiles"]["tiles"]
-            .as_object_mut()
-            .unwrap()
-            .values_mut()
-            .find(|tile| tile["Pane"].get("Log").is_some())
-            .unwrap();
-        old_log_tile["Pane"]["Log"] =
-            serde_json::json!({"title": "Log", "log_buffer": ["[INFO] old line"]});
+    fn old_layout_state_gets_the_default_layout_and_keeps_its_points() {
+        let mut restored: ZApp = serde_json::from_str(OLD_LAYOUT_APP_JSON).unwrap();
+        assert_eq!(restored.layout_version, 0);
+        let old_points = restored.app_ctx.borrow().control_points.clone();
+        assert_eq!(old_points.len(), 2);
 
-        let mut restored: ZApp = serde_json::from_value(json).unwrap();
-        remove_log_tiles(&mut restored.tree);
+        restored.upgrade_layout();
 
-        assert!(!restored
+        assert_eq!(restored.layout_version, LAYOUT_VERSION);
+        assert_eq!(restored.app_ctx.borrow().control_points, old_points);
+        assert!(panes_share_the_app_context(&restored));
+        assert_eq!(
+            laid_out_pane_rects(&mut restored),
+            laid_out_pane_rects(&mut test_app())
+        );
+        assert_eq!(round_trip(&restored).layout_version, LAYOUT_VERSION);
+    }
+
+    #[test]
+    fn current_layout_state_keeps_its_tree() {
+        let mut app = test_app();
+        let (&master_id, _) = app
             .tree
             .tiles
             .iter()
-            .any(|(_, tile)| matches!(tile, Tile::Pane(Pane::Log(_)))));
-        let restored_rects = laid_out_pane_rects(&mut restored);
-        assert!(
-            restored_rects.iter().all(Option::is_some),
-            "{restored_rects:?}"
-        );
-        let mut default_app = test_app();
-        let mut expected = laid_out_pane_rects(&mut default_app);
-        let view_3d = pane_rect(&default_app.tree, |pane| matches!(pane, Pane::View3d(_)));
-        expected[2] = view_3d
-            .zip(expected[2])
-            .map(|(view_3d, previewer)| view_3d.union(previewer));
-        assert_eq!(restored_rects, expected);
+            .find(|(_, tile)| {
+                matches!(tile, Tile::Container(egui_tiles::Container::Linear(linear))
+                    if linear.dir == egui_tiles::LinearDir::Horizontal)
+            })
+            .unwrap();
+        let Some(Tile::Container(egui_tiles::Container::Linear(master))) =
+            app.tree.tiles.get_mut(master_id)
+        else {
+            unreachable!();
+        };
+        let picker_column = master.children[0];
+        master.shares.set_share(picker_column, 0.2);
+        let resized = laid_out_pane_rects(&mut app);
+
+        let mut restored = round_trip(&app);
+        restored.upgrade_layout();
+
+        assert_eq!(laid_out_pane_rects(&mut restored), resized);
+        assert_ne!(resized, laid_out_pane_rects(&mut test_app()));
     }
 
     #[test]
@@ -1321,6 +1360,7 @@ mod tests {
             tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
             is_log_expanded: false,
+            layout_version: LAYOUT_VERSION,
             log_buffer,
             had_keyboard_focus: false,
         };
@@ -1370,6 +1410,7 @@ mod tests {
             tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
             is_log_expanded: false,
+            layout_version: LAYOUT_VERSION,
             log_buffer,
             had_keyboard_focus: false,
         };
@@ -1407,6 +1448,7 @@ mod tests {
             tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
             is_log_expanded: false,
+            layout_version: LAYOUT_VERSION,
             log_buffer,
             had_keyboard_focus: false,
         };
