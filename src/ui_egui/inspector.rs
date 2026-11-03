@@ -152,6 +152,9 @@ pub fn apply_inspector_edit(
     value: f32,
     opts: InspectorOptions,
 ) {
+    if !value.is_finite() {
+        return;
+    }
     match field {
         InspectorField::H => {
             let hue = &mut points[index].val_mut().val[2];
@@ -182,6 +185,11 @@ fn set_sv(
     apply_group_delta_sv(points, delta_sv);
 }
 
+// A DragValue left after focusing re-commits its rounded display text.
+fn is_shown_value(committed: f32, shown: f32, max_decimals: usize) -> bool {
+    (committed - shown).abs() < 0.5 * 10f32.powi(-(max_decimals as i32))
+}
+
 pub fn point_inspector(
     ui: &mut Ui,
     points: &mut [ControlPoint],
@@ -210,7 +218,11 @@ pub fn point_inspector(
                 if let Some(reason) = state.disabled_reason {
                     response = response.on_disabled_hover_text(reason);
                 }
-                if let (true, Some(index)) = (response.changed(), selected) {
+                let is_edited = response.dragged()
+                    || state
+                        .value
+                        .is_some_and(|shown| !is_shown_value(value, shown, field.max_decimals()));
+                if let (true, true, Some(index)) = (response.changed(), is_edited, selected) {
                     apply_inspector_edit(points, index, field, value, opts);
                 }
             }
@@ -558,6 +570,90 @@ mod tests {
                 assert_eq!(json(&points), json(&original), "{opts:?} {selected:?}");
             }
         }
+    }
+
+    #[test]
+    fn non_finite_edits_change_nothing() {
+        let locked = InspectorOptions {
+            is_curve_locked: true,
+            ..FREE
+        };
+        for opts in [FREE, locked] {
+            for field in InspectorField::ALL {
+                for value in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+                    let mut points = three_points();
+                    apply_inspector_edit(&mut points, 1, field, value, opts);
+                    assert_eq!(points, three_points(), "{field:?} {value} {opts:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn typing_inf_without_clamp_changes_nothing() {
+        let ctx = egui::Context::default();
+        let mut points = three_points();
+
+        type_into(&ctx, &mut points, Some(1), S, "inf");
+        inspector_frame(&ctx, &mut points, Some(1), vec![key_press(egui::Key::Enter)]);
+        inspector_frame(&ctx, &mut points, Some(1), Vec::new());
+
+        assert_eq!(points, three_points());
+    }
+
+    #[test]
+    fn focusing_fields_and_leaving_them_unedited_writes_nothing() {
+        let precise = points_at(&[
+            (0.2, 0.3, 0.1, 0.0),
+            (0.123_456, 0.654_321, 0.987_654, 0.333_333_3),
+            (0.8, 0.8, 0.5, 1.0),
+        ]);
+        let click_away = |ctx: &egui::Context, points: &mut Vec<ControlPoint>| {
+            for events in primary_click(Pos2::new(500.0, 250.0)) {
+                inspector_frame(ctx, points, Some(1), events);
+            }
+            inspector_frame(ctx, points, Some(1), Vec::new());
+        };
+        for field in InspectorField::ALL {
+            let ctx = egui::Context::default();
+            let mut points = precise.clone();
+            click_field(&ctx, &mut points, Some(1), field);
+            click_away(&ctx, &mut points);
+            assert_eq!(points, precise, "{field:?}");
+        }
+
+        let ctx = egui::Context::default();
+        let mut points = precise.clone();
+        click_field(&ctx, &mut points, Some(1), H);
+        for _ in 0..3 {
+            inspector_frame(&ctx, &mut points, Some(1), vec![key_press(egui::Key::Tab)]);
+        }
+        click_away(&ctx, &mut points);
+        assert_eq!(points, precise, "tabbing through every field");
+    }
+
+    #[test]
+    fn dragging_a_field_moves_its_value() {
+        let ctx = egui::Context::default();
+        let mut points = three_points();
+        let start = field_pos(&inspector_frame(&ctx, &mut points, Some(1), Vec::new()), S);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let end = start + vec2(20.0, 0.0);
+        for events in [
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+            vec![egui::Event::PointerMoved(start + vec2(10.0, 0.0))],
+            vec![egui::Event::PointerMoved(end)],
+            vec![button(end, false)],
+        ] {
+            inspector_frame(&ctx, &mut points, Some(1), events);
+        }
+
+        assert!(points[1].val()[0] > 0.5, "{:?}", points[1].val());
     }
 
     #[test]
