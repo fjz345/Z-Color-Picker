@@ -2,7 +2,7 @@ use crate::color_space::{BlendSpace, PickerSpace};
 use crate::common::SplineMode;
 use crate::datatypes::control_point::{ControlPoint, ControlPointValue};
 use crate::ui_egui::blend::Gradient;
-use crate::ui_egui::control_points::{bezier_handle, flatten_control_points, unit_to_screen};
+use crate::ui_egui::control_points::{bezier_handle, unit_to_screen};
 use crate::ui_egui::ui_common::black_or_white_against;
 use eframe::egui::{self, Sense, Ui};
 use eframe::emath;
@@ -98,8 +98,7 @@ pub fn ui_ordered_spline_gradient(
     );
 
     let square = response.rect;
-    let flattened_points = flatten_control_points(control_points);
-    let length_bound_px = ribbon_segment_length_bound_px(&flattened_points, spline_mode, square);
+    let length_bound_px = ribbon_segment_length_bound_px(control_points, spline_mode, square);
     let spline_points = generate_spline_points(
         &Gradient::new(control_points, spline_mode, picker_space, blend_space),
         ribbon_samples_per_segment(length_bound_px),
