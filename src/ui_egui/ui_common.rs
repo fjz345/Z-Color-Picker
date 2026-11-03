@@ -3,7 +3,7 @@ use eframe::egui::Window;
 use eframe::{
     egui::{Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
     emath::remap_clamp,
-    epaint::{vec2, Color32, Mesh, Rect, Rgba, Shape, StrokeKind, Vec2},
+    epaint::{vec2, Color32, Mesh, Pos2, Rect, Rgba, Shape, StrokeKind, Vec2},
 };
 
 use crate::ui_egui::gradient::color_function_gradient;
@@ -74,38 +74,76 @@ pub fn color_strip(
 }
 
 const COLOR_FIELD_CELLS: u32 = 32;
+const COLOR_FIELD_EDGE_SUB_CELLS: u32 = 8;
 
-fn color_field_mesh(rect: Rect, cells: u32, color_at: impl Fn(f32, f32) -> Color32) -> Mesh {
-    assert!(cells > 0);
-    let fraction = |i: u32| i as f32 / cells as f32;
-    let mut mesh = Mesh::default();
+// `area` is in field fractions, x right and y down.
+fn add_grid_vertices(
+    mesh: &mut Mesh,
+    rect: Rect,
+    area: Rect,
+    cells: u32,
+    color_at: &impl Fn(f32, f32) -> Color32,
+) -> u32 {
+    let first = mesh.vertices.len() as u32;
     for row in 0..=cells {
-        let down = fraction(row);
         for column in 0..=cells {
-            let x = fraction(column);
-            mesh.colored_vertex(rect.lerp_inside(vec2(x, down)), color_at(x, 1.0 - down));
+            let unit = area.lerp_inside(vec2(column as f32, row as f32) / cells as f32);
+            mesh.colored_vertex(
+                rect.lerp_inside(unit.to_vec2()),
+                color_at(unit.x, 1.0 - unit.y),
+            );
         }
     }
-    let row_stride = cells + 1;
+    first
+}
+
+fn add_grid_cell(mesh: &mut Mesh, first: u32, cells: u32, row: u32, column: u32) {
+    let top_left = first + row * (cells + 1) + column;
+    let bottom_left = top_left + cells + 1;
+    mesh.add_triangle(top_left, top_left + 1, bottom_left);
+    mesh.add_triangle(top_left + 1, bottom_left + 1, bottom_left);
+}
+
+// A cell with blank (alpha 0) and colored corners is drawn as a finer grid in the second mesh, so
+// the color fades into the blank over one sub-cell instead of the whole cell.
+fn color_field_mesh(rect: Rect, cells: u32, color_at: impl Fn(f32, f32) -> Color32) -> [Mesh; 2] {
+    assert!(cells > 0);
+    let mut field = Mesh::default();
+    let mut edges = Mesh::default();
+    let unit = Rect::from_min_size(Pos2::ZERO, Vec2::splat(1.0));
+    add_grid_vertices(&mut field, rect, unit, cells, &color_at);
     for row in 0..cells {
         for column in 0..cells {
-            let top_left = row * row_stride + column;
-            let bottom_left = top_left + row_stride;
-            mesh.add_triangle(top_left, top_left + 1, bottom_left);
-            mesh.add_triangle(top_left + 1, bottom_left + 1, bottom_left);
+            let is_blank = [(0, 0), (0, 1), (1, 0), (1, 1)].map(|(down, right)| {
+                let corner = (row + down) * (cells + 1) + column + right;
+                field.vertices[corner as usize].color.a() == 0
+            });
+            if !(is_blank.contains(&true) && is_blank.contains(&false)) {
+                add_grid_cell(&mut field, 0, cells, row, column);
+                continue;
+            }
+            let min = Pos2::new(column as f32, row as f32) / cells as f32;
+            let area = Rect::from_min_size(min, Vec2::splat(1.0 / cells as f32));
+            let sub_cells = COLOR_FIELD_EDGE_SUB_CELLS;
+            let first = add_grid_vertices(&mut edges, rect, area, sub_cells, &color_at);
+            for sub_row in 0..sub_cells {
+                for sub_column in 0..sub_cells {
+                    add_grid_cell(&mut edges, first, sub_cells, sub_row, sub_column);
+                }
+            }
         }
     }
-    mesh
+    [field, edges]
 }
 
 pub fn color_field(ui: &mut Ui, size: Vec2, color_at: impl Fn(f32, f32) -> Color32) -> Response {
     let (rect, response) = ui.allocate_at_least(size, Sense::click());
     if ui.is_rect_visible(rect) {
-        ui.painter().add(Shape::mesh(color_field_mesh(
-            rect,
-            COLOR_FIELD_CELLS,
-            color_at,
-        )));
+        for mesh in color_field_mesh(rect, COLOR_FIELD_CELLS, color_at) {
+            if !mesh.vertices.is_empty() {
+                ui.painter().add(Shape::mesh(mesh));
+            }
+        }
         paint_outline(ui, &response);
     }
     response
@@ -345,6 +383,35 @@ mod tests {
                 "{corner:?}"
             );
         }
+    }
+
+    #[test]
+    fn field_fades_into_blank_cells_over_one_edge_sub_cell_only() {
+        let boundary = 0.3;
+        let unit = Rect::from_min_size(Pos2::ZERO, Vec2::splat(1.0));
+        let meshes = color_field_mesh(unit, COLOR_FIELD_CELLS, |x, _| {
+            if x < boundary {
+                Color32::WHITE
+            } else {
+                Color32::TRANSPARENT
+            }
+        });
+        let sub_cell = 1.0 / (COLOR_FIELD_CELLS * COLOR_FIELD_EDGE_SUB_CELLS) as f32;
+        let mut mixed = 0;
+        for mesh in &meshes {
+            for triangle in mesh.indices.chunks(3) {
+                let vertices = triangle.iter().map(|&i| mesh.vertices[i as usize]);
+                let blank = vertices.clone().filter(|v| v.color.a() == 0).count();
+                if blank == 0 || blank == 3 {
+                    continue;
+                }
+                mixed += 1;
+                let xs = vertices.map(|v| v.pos.x);
+                let width = xs.clone().fold(f32::MIN, f32::max) - xs.fold(f32::MAX, f32::min);
+                assert!(width <= sub_cell + 1e-6, "{width}");
+            }
+        }
+        assert!(mixed > 0);
     }
 
     #[test]
