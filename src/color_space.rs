@@ -1,4 +1,4 @@
-use std::f32::consts::TAU;
+use std::{f32::consts::TAU, sync::LazyLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -370,23 +370,40 @@ impl HuePlane {
         oklab_to_linear([l, c * a, c * b])
     }
 
-    // The black edge is straight: at a fixed c / l linear RGB only scales with l^3, so a channel
-    // reaches 0 at one c / l.
-    fn black_edge_slope(self) -> f32 {
-        let [a, b] = self.dir;
-        // At sRGB blue both region tests are 1: a strict f32 test there picks blue's fit, and red's
-        // finds a zero short of blue. Green goes first, with a margin; 3 Halley steps reach blue.
-        let fit = CHANNEL_REGION_FITS
-            .iter()
-            .find(|(region, _)| region[0] * a + region[1] * b > 1.0 - BRANCH_TIE)
-            .map_or(&BLUE_CHANNEL_FIT, |(_, fit)| fit);
-        let weights = LMS_TO_LINEAR[fit.channel];
-        let mut slope = fit.initial_slope(a, b);
-        for _ in 0..HALLEY_STEPS {
-            let channel = channel_along(weights, [1.0; 3], self.lms_cbrt_per_chroma, slope);
-            slope -= channel[0] * halley_rate(channel);
+    // Between two primaries' hues the black edge lies on the cube face where the third channel is 0.
+    fn black_edge_channel(self) -> usize {
+        let [red, green, blue] = *PRIMARIES_AB;
+        // Near sRGB blue's hue red's first zero falls short of blue, so green's face takes that hue.
+        if cross(blue, self.dir) > -BRANCH_TIE && cross(self.dir, red) > 0.0 {
+            1
+        } else if cross(red, self.dir) >= 0.0 && cross(self.dir, green) > 0.0 {
+            2
+        } else {
+            0
         }
-        slope
+    }
+
+    // The black edge is straight: at a fixed c / l linear RGB only scales with l^3, so the face's
+    // channel reaches 0 at one c / l.
+    fn black_edge_slope(self) -> f32 {
+        let weights = LMS_TO_LINEAR[self.black_edge_channel()];
+        let channel_at =
+            |slope| channel_along(weights, [1.0; 3], self.lms_cbrt_per_chroma, slope)[0];
+        let mut outside = BLACK_EDGE_SCAN_STEP;
+        while channel_at(outside) > 0.0 {
+            outside += BLACK_EDGE_SCAN_STEP;
+            assert!(outside <= 1.0, "no black edge along {:?}", self.dir);
+        }
+        let mut inside = outside - BLACK_EDGE_SCAN_STEP;
+        for _ in 0..GAMUT_BISECTION_STEPS {
+            let mid = 0.5 * (inside + outside);
+            if channel_at(mid) > 0.0 {
+                inside = mid;
+            } else {
+                outside = mid;
+            }
+        }
+        inside
     }
 
     fn cusp(self) -> Cusp {
@@ -445,11 +462,6 @@ impl EdgeSlopes {
         [l * self.black, (1.0 - l) * self.white]
     }
 
-    fn chroma(self, l: f32) -> f32 {
-        let [black, white] = self.edge_chromas(l);
-        black.min(white)
-    }
-
     // Soft minimum of the edge chromas, sharper as p grows.
     fn rounded_chroma(self, l: f32, p: i32) -> f32 {
         let [black, white] = self.edge_chromas(l);
@@ -457,105 +469,21 @@ impl EdgeSlopes {
     }
 }
 
-// Ottosson's fits: in a channel's region, region . (a, b) > 1, that channel leaves sRGB first along
-// the black edge, and the polynomial in 1, a, b, a^2, ab guesses the edge's slope.
-struct BlackEdgeFit {
-    channel: usize,
-    coefficients: [f32; 5],
+const BRANCH_TIE: f32 = 1e-6;
+const BLACK_EDGE_SCAN_STEP: f32 = 1.0 / 32.0;
+
+static PRIMARIES_AB: LazyLock<[[f32; 2]; 3]> = LazyLock::new(|| {
+    [0, 1, 2].map(|channel| {
+        let mut linear = [0.0; 3];
+        linear[channel] = 1.0;
+        let [_, a, b] = linear_to_oklab(linear);
+        [a, b]
+    })
+});
+
+fn cross([ux, uy]: [f32; 2], [vx, vy]: [f32; 2]) -> f32 {
+    ux * vy - uy * vx
 }
-
-impl BlackEdgeFit {
-    fn initial_slope(&self, a: f32, b: f32) -> f32 {
-        [1.0, a, b, a * a, a * b]
-            .iter()
-            .zip(self.coefficients)
-            .map(|(monomial, k)| monomial * k)
-            .sum()
-    }
-}
-
-const BRANCH_TIE: f32 = 1e-4;
-const HALLEY_STEPS: usize = 3;
-
-const CHANNEL_REGION_FITS: [([f32; 2], BlackEdgeFit); 2] = [
-    (
-        [1.814_441_1, -1.194_452_8],
-        BlackEdgeFit {
-            channel: 1,
-            coefficients: [
-                0.739_565_15,
-                -0.459_544_04,
-                0.082_854_27,
-                0.125_410_7,
-                0.145_032_04,
-            ],
-        },
-    ),
-    (
-        [-1.881_703_3, -0.809_364_9],
-        BlackEdgeFit {
-            channel: 0,
-            coefficients: [
-                1.190_862_8,
-                1.765_767_3,
-                0.596_626_4,
-                0.755_152,
-                0.567_712_4,
-            ],
-        },
-    ),
-];
-
-const BLUE_CHANNEL_FIT: BlackEdgeFit = BlackEdgeFit {
-    channel: 2,
-    coefficients: [
-        1.357_336_5,
-        -0.009_157_99,
-        -1.151_302_1,
-        -0.505_596_06,
-        0.006_921_67,
-    ],
-};
-
-// Ottosson's fits for the edge slopes of the rounder triangle that sets Okhsl's mid chroma.
-struct MidSlopeFit {
-    floor: f32,
-    terms: [[f32; 2]; 4],
-    quartic: f32,
-}
-
-impl MidSlopeFit {
-    fn eval(&self, a: f32, b: f32) -> f32 {
-        let denominator = self
-            .terms
-            .iter()
-            .rev()
-            .fold(self.quartic, |acc, &[p, q]| acc * a + (p + q * b));
-        self.floor + 1.0 / denominator
-    }
-}
-
-const MID_BLACK_SLOPE: MidSlopeFit = MidSlopeFit {
-    floor: 0.115_169_93,
-    terms: [
-        [7.447_789_7, 4.159_012_3],
-        [-2.195_573_6, 1.751_984],
-        [-2.137_049_4, -10.023_01],
-        [-4.248_945_7, 5.387_708],
-    ],
-    quartic: 4.698_91,
-};
-
-const MID_WHITE_SLOPE: MidSlopeFit = MidSlopeFit {
-    floor: 0.112_396_42,
-    terms: [
-        [1.613_203_2, -0.681_243_8],
-        [0.403_706_12, 0.901_481_2],
-        [-0.270_879_43, 0.612_239_9],
-        [0.002_992_15, -0.453_995_68],
-    ],
-    quartic: -0.146_618_72,
-};
 
 // A linear channel along lms_cbrt = origin + t * velocity, and its first two derivatives in t.
 fn channel_along(weights: [f32; 3], origin: [f32; 3], velocity: [f32; 3], t: f32) -> [f32; 3] {
@@ -671,76 +599,21 @@ impl Ramp {
     fn param_of(self, value: f32) -> f32 {
         value / (self.start_slope + self.bend() * value)
     }
-
-    fn end_slope(self) -> f32 {
-        self.end * self.end / self.start_slope
-    }
 }
 
-const OKHSL_MID_S: f32 = 0.8;
-const OKHSL_MID_SCALE: f32 = 0.9;
 const OKHSL_GRAY_EDGES: EdgeSlopes = EdgeSlopes {
     black: 0.4,
     white: 0.8,
 };
-// Below it the rounded chromas' c^-4 overflows f32 into NaN; the color is black far past display precision.
+// Below it the gray edges' c^-2 overflows f32 into NaN; the color is black far past display precision.
 const OKHSL_BLACK_L: f32 = 1e-6;
 
-// Okhsl's s at one lightness: a ramp from 0 to `mid` chroma up to s 0.8, then one from `mid` to the
-// gamut's `max`, continuing its slope; `gray_slope` is dc/ds at s 0.
-#[derive(Clone, Copy)]
-struct OkhslChromas {
-    gray_slope: f32,
-    mid: f32,
-    max: f32,
-}
-
-impl OkhslChromas {
-    fn at(plane: HuePlane, l: f32) -> Self {
-        let cusp = plane.cusp();
-        let max = plane.max_chroma(l, cusp);
-        let bulge = max / cusp.slopes().chroma(l);
-        let [a, b] = plane.dir;
-        let mid_edges = EdgeSlopes {
-            black: MID_BLACK_SLOPE.eval(a, b),
-            white: MID_WHITE_SLOPE.eval(a, b),
-        };
-        Self {
-            gray_slope: OKHSL_GRAY_EDGES.rounded_chroma(l, 2),
-            mid: OKHSL_MID_SCALE * bulge * mid_edges.rounded_chroma(l, 4),
-            max,
-        }
-    }
-
-    fn lower(self) -> Ramp {
-        Ramp {
-            start_slope: OKHSL_MID_S * self.gray_slope,
-            end: self.mid,
-        }
-    }
-
-    fn upper(self) -> Ramp {
-        let span = 1.0 - OKHSL_MID_S;
-        Ramp {
-            start_slope: self.lower().end_slope() * span / OKHSL_MID_S,
-            end: self.max - self.mid,
-        }
-    }
-
-    fn chroma(self, s: f32) -> f32 {
-        if s < OKHSL_MID_S {
-            self.lower().at(s / OKHSL_MID_S)
-        } else {
-            self.mid + self.upper().at((s - OKHSL_MID_S) / (1.0 - OKHSL_MID_S))
-        }
-    }
-
-    fn saturation(self, c: f32) -> f32 {
-        if c < self.mid {
-            OKHSL_MID_S * self.lower().param_of(c)
-        } else {
-            OKHSL_MID_S + (1.0 - OKHSL_MID_S) * self.upper().param_of(c - self.mid)
-        }
+// Okhsl's s at one lightness: 0 is gray, 1 the gamut's edge, and dc/ds at gray is the same for every
+// hue. The reference Okhsl bends it through a fitted mid chroma at s 0.8; this has no fitted data.
+fn okhsl_ramp(plane: HuePlane, l: f32) -> Ramp {
+    Ramp {
+        start_slope: OKHSL_GRAY_EDGES.rounded_chroma(l, 2),
+        end: plane.max_chroma(l, plane.cusp()),
     }
 }
 
@@ -753,7 +626,7 @@ fn okhsl_to_linear([h, s, l]: [f32; 3]) -> [f32; 3] {
     }
     let plane = HuePlane::at_turns(h);
     let lightness = lr_to_l(l);
-    plane.linear(lightness, OkhslChromas::at(plane, lightness).chroma(s))
+    plane.linear(lightness, okhsl_ramp(plane, lightness).at(s))
 }
 
 fn linear_to_okhsl(linear: [f32; 3]) -> [f32; 3] {
@@ -764,7 +637,7 @@ fn linear_to_okhsl(linear: [f32; 3]) -> [f32; 3] {
         return [0.0, 0.0, l];
     }
     let plane = HuePlane::of_oklab(lab, c);
-    [hue, OkhslChromas::at(plane, lightness).saturation(c), l]
+    [hue, okhsl_ramp(plane, lightness).param_of(c), l]
 }
 
 #[cfg(test)]
@@ -1327,17 +1200,17 @@ mod tests {
         ];
         let okhsl = [
             [0.081_205_234, 1.000_000_1, 0.568_084_66],
-            [0.395_820_3, 0.999_999_5, 0.844_528_9],
-            [0.733_477_83, 1.0, 0.366_565_35],
-            [0.304_914_53, 1.000_000_2, 0.962_704_36],
-            [0.664_781_87, 0.634_880_54, 0.728_885_53],
-            [0.142_707_87, 0.871_654_7, 0.644_672_4],
-            [0.759_291_8, 0.906_801_8, 0.071_106_44],
-            [0.238_234_45, 0.792_122_1, 0.923_288_4],
+            [0.395_820_3, 0.999_999_6, 0.844_528_9],
+            [0.733_477_83, 0.999_999_9, 0.366_565_35],
+            [0.304_914_53, 1.000_000_5, 0.962_704_36],
+            [0.664_781_87, 0.638_132_15, 0.728_885_53],
+            [0.142_707_87, 0.873_138_55, 0.644_672_4],
+            [0.759_291_8, 0.834_617_44, 0.071_106_44],
+            [0.238_234_45, 0.881_802_7, 0.923_288_4],
             [0.0, 0.0, 0.518_359_9],
             [0.734_082_1, 1.0, 0.367_082_27],
-            [0.733_526_95, 1.0, 0.367_772_94],
-            [0.781_116_5, 1.0, 0.010_860_868],
+            [0.733_526_95, 0.999_999_9, 0.367_772_94],
+            [0.781_116_5, 0.999_999_94, 0.010_860_868],
         ];
         for ((linear, okhsv), okhsl) in linear.into_iter().zip(okhsv).zip(okhsl) {
             assert_close(linear_to_picker(PickerSpace::Okhsv, linear), okhsv, 1e-5);
@@ -1372,13 +1245,13 @@ mod tests {
             [3.900_751_5e-5, 0.0, 0.236_089_6],
         ];
         let from_okhsl = [
-            [0.457_966_77, 0.080_632_67, 0.173_722_57],
-            [0.999_999_76, 0.346_061_14, 0.060_888_53],
-            [0.062_535_88, 0.039_643_68, 0.003_302_786_5],
-            [0.596_745_55, 0.828_321_93, 0.770_853_9],
-            [0.000_780_519_56, 0.009_931_075, 0.015_867_969],
-            [7.986_945e-5, 9.678_812e-5, 0.000_156_971_86],
-            [0.515_329_5, 0.014_381_923, 0.479_517_46],
+            [0.441_911_16, 0.086_602_13, 0.174_281_3],
+            [0.999_999_76, 0.346_061_1, 0.060_888_648],
+            [0.062_449_228, 0.039_661_374, 0.003_412_794_3],
+            [0.602_683_2, 0.826_024_8, 0.770_601_9],
+            [0.000_834_318_8, 0.009_919_64, 0.015_795_808],
+            [7.913_408_6e-5, 9.667_095e-5, 0.000_159_802_37],
+            [0.491_493_17, 0.026_785_381, 0.456_093_34],
             [0.022_931_725, 0.131_387_6, 1.000_002],
             [0.023_161_933, 0.131_292_15, 1.000_007_6],
             [0.023_392_767, 0.131_197_36, 1.000_007_6],
