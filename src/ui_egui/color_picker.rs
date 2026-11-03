@@ -1,4 +1,5 @@
 use crate::{
+    color_space::{linear_to_oklab, oklab_to_oklch, srgb_to_hsl, srgb_to_linear},
     common::{ColorStringCopy, SplineMode},
     datatypes::control_point::{create_tangent_for_control_point, ControlPoint},
     ui_egui::{
@@ -391,7 +392,9 @@ pub fn format_color_as(
 ) -> String {
     let [r, g, b, a] = color.to_srgba_unmultiplied();
     let alpha = a as f32 / 255.0;
-    let [linear_r, linear_g, linear_b] = [r, g, b].map(ecolor::linear_f32_from_gamma_u8);
+    let srgb = [r, g, b].map(|c| c as f32 / 255.0);
+    let linear = srgb_to_linear(srgb);
+    let [linear_r, linear_g, linear_b] = linear;
     let [hue, saturation, value] = srgb_to_rounded_hsv(r, g, b);
     match format_type {
         ColorStringCopy::HEX if no_alpha == Some(true) => format!("{r:02X}{g:02X}{b:02X}"),
@@ -413,6 +416,30 @@ pub fn format_color_as(
             g as f32 / 255.0,
             b as f32 / 255.0
         ),
+        // Fewest decimals that map every 8-bit color back to itself.
+        ColorStringCopy::HSL => {
+            let [h, s, l] = srgb_to_hsl(srgb);
+            let [h, s, l] = [h * 360.0, s * 100.0, l * 100.0].map(|v| css_number(v, 1));
+            format!("hsl({h} {s}% {l}%)")
+        }
+        ColorStringCopy::OKLAB => {
+            let [ok_l, ok_a, ok_b] = linear_to_oklab(linear).map(|v| css_number(v, 5));
+            format!("oklab({ok_l} {ok_a} {ok_b})")
+        }
+        ColorStringCopy::OKLCH => {
+            let [l, c, h] = oklab_to_oklch(linear_to_oklab(linear));
+            let [l, c, h] = [css_number(l, 5), css_number(c, 5), css_number(h * 360.0, 2)];
+            format!("oklch({l} {c} {h})")
+        }
+    }
+}
+
+fn css_number(value: f32, decimals: usize) -> String {
+    assert!(decimals > 0);
+    let fixed = format!("{value:.decimals$}");
+    match fixed.trim_end_matches('0').trim_end_matches('.') {
+        "-0" => "0".to_owned(),
+        trimmed => trimmed.to_owned(),
     }
 }
 
@@ -1955,6 +1982,41 @@ mod tests {
             format_color_as(Color32::from_rgb(128, 128, 128), ColorStringCopy::HSV, None),
             "hsv(0, 0%, 50%)"
         );
+    }
+
+    fn format_rgb(rgb: [u8; 3], format: ColorStringCopy) -> String {
+        format_color_as(Color32::from_rgb(rgb[0], rgb[1], rgb[2]), format, None)
+    }
+
+    #[test]
+    fn format_color_as_hsl() {
+        assert_eq!(format_orange(ColorStringCopy::HSL), "hsl(30.1 100% 50%)");
+        assert_eq!(
+            format_rgb([51, 102, 153], ColorStringCopy::HSL),
+            "hsl(210 50% 40%)"
+        );
+        assert_eq!(format_rgb([0; 3], ColorStringCopy::HSL), "hsl(0 0% 0%)");
+        assert_eq!(format_rgb([255; 3], ColorStringCopy::HSL), "hsl(0 0% 100%)");
+    }
+
+    #[test]
+    fn format_color_as_oklab() {
+        assert_eq!(
+            format_rgb([255, 0, 0], ColorStringCopy::OKLAB),
+            "oklab(0.62796 0.22486 0.12585)"
+        );
+        assert_eq!(format_rgb([0; 3], ColorStringCopy::OKLAB), "oklab(0 0 0)");
+        assert_eq!(format_rgb([255; 3], ColorStringCopy::OKLAB), "oklab(1 0 0)");
+    }
+
+    #[test]
+    fn format_color_as_oklch() {
+        assert_eq!(
+            format_rgb([255, 0, 0], ColorStringCopy::OKLCH),
+            "oklch(0.62796 0.25768 29.23)"
+        );
+        assert_eq!(format_rgb([0; 3], ColorStringCopy::OKLCH), "oklch(0 0 0)");
+        assert_eq!(format_rgb([255; 3], ColorStringCopy::OKLCH), "oklch(1 0 0)");
     }
 
     fn with_handles(mut points: Vec<ControlPoint>, handles: &[[[f32; 2]; 2]]) -> Vec<ControlPoint> {

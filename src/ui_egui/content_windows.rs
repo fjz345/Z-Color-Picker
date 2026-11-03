@@ -253,7 +253,7 @@ pub struct WindowPreset {
     pending_switch: Option<usize>,
 }
 
-const COPY_FORMATS: [ColorStringCopy; 11] = [
+const COPY_FORMATS: [ColorStringCopy; 14] = [
     ColorStringCopy::HEX,
     ColorStringCopy::HEXNOA,
     ColorStringCopy::SRGBHEX,
@@ -265,6 +265,9 @@ const COPY_FORMATS: [ColorStringCopy; 11] = [
     ColorStringCopy::SRGB,
     ColorStringCopy::RGBA,
     ColorStringCopy::SRGBA,
+    ColorStringCopy::HSL,
+    ColorStringCopy::OKLAB,
+    ColorStringCopy::OKLCH,
 ];
 
 const COPY_FORMAT_SAMPLE: egui::Color32 = egui::Color32::from_rgb(255, 128, 0);

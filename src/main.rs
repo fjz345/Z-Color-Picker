@@ -6,6 +6,7 @@ use eframe::egui::{self};
 
 use crate::{logger::LogCollector, ui_egui::app::ZApp};
 
+mod color_space;
 mod common;
 mod datatypes;
 mod error;

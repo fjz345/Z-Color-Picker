@@ -37,7 +37,7 @@ To create a new preset, click the preset combo box and select `<NEW>`
 ## Toolbar
 
 - Preset: Pick a preset, then Save, Rename... (opens a name field; Enter renames), Delete, Auto-save (rewrite the selected preset file after every edit). A failed save shows its error at the end of the row
-- Copy as: Text format for a copied color; previewer strips are copied as images
+- Copy as: Text format for a copied color, including CSS `hsl()`, `oklab()` and `oklch()`; previewer strips are copied as images
 - Log (right end): Show or hide the log pane; hidden by default
 
 ## Options
