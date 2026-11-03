@@ -21,7 +21,7 @@ use crate::{
     ui_egui::{
         auto_comb::drag_handle_to,
         blend::Gradient,
-        color_picker::format_color_as,
+        color_picker::{apply_group_delta_sv, format_color_as, limit_group_delta},
         control_points::{bezier_handle, clip_points_to_srgb, control_point_outline},
     },
 };
@@ -642,27 +642,61 @@ fn picker_value_from_linear(
     ControlPointValue::new(s.clamp(0.0, 1.0), y.clamp(0.0, 1.0), z)
 }
 
-pub fn move_point_to_linear(
+// A value outside sRGB is shown at its gamut-mapped color, so it moves by the target's offset from there.
+fn picker_value_after_drag(
+    value: ControlPointValue,
+    [shown, target]: [[f32; 3]; 2],
+    picker_space: PickerSpace,
+) -> ControlPointValue {
+    let moved = picker_value_from_linear(picker_space, target, value.h());
+    if value.is_in_srgb(picker_space) {
+        return moved;
+    }
+    let dragged = value + moved - picker_value_from_linear(picker_space, shown, value.h());
+    let z = if picker_space.is_z_hue() {
+        dragged.h()
+    } else {
+        picker_space.z_on_bar(dragged.h())
+    };
+    ControlPointValue::new(dragged.s().clamp(0.0, 1.0), dragged.v().clamp(0.0, 1.0), z)
+}
+
+pub fn move_point_by_linear(
     control_points: &mut [ControlPoint],
     index: usize,
-    linear: [f32; 3],
-    picker_space: PickerSpace,
+    shown_and_target: [[f32; 3]; 2],
+    curve: CurveSettings,
 ) {
-    let value = control_points[index].val_mut();
-    *value = picker_value_from_linear(picker_space, linear, value.h());
-    clip_points_to_srgb(&mut control_points[index..=index], picker_space);
+    let picker_space = curve.picker_space;
+    let value = *control_points[index].val();
+    let moved = picker_value_after_drag(value, shown_and_target, picker_space);
+    if !curve.is_curve_locked {
+        *control_points[index].val_mut() = moved;
+        clip_points_to_srgb(&mut control_points[index..=index], picker_space);
+        return;
+    }
+    // Like the square and the inspector: Lock moves every point's S/V, z only the dragged point's.
+    let delta_sv = Vec2::new(moved.s() - value.s(), moved.v() - value.v());
+    let delta_sv = if curve.is_window_lock {
+        limit_group_delta(control_points, delta_sv)
+    } else {
+        delta_sv
+    };
+    apply_group_delta_sv(control_points, delta_sv);
+    control_points[index].val_mut()[2] = moved.h();
+    clip_points_to_srgb(control_points, picker_space);
 }
 
 pub fn move_handle_to_linear(
     control_points: &mut [ControlPoint],
     index: usize,
     side: usize,
-    linear: [f32; 3],
+    shown_and_target: [[f32; 3]; 2],
     picker_space: PickerSpace,
     is_auto_comb_running: bool,
 ) {
     let previous = bezier_handle(&control_points[index], side);
-    let handle = picker_value_from_linear(picker_space, linear, previous.h());
+    let handle = picker_value_after_drag(previous, shown_and_target, picker_space);
     drag_handle_to(control_points, index, side, handle, is_auto_comb_running);
 }
 
@@ -859,6 +893,8 @@ pub struct CurveSettings {
     pub picker_space: PickerSpace,
     pub blend_space: BlendSpace,
     pub is_auto_comb_running: bool,
+    pub is_curve_locked: bool,
+    pub is_window_lock: bool,
 }
 
 impl View3d {
@@ -1010,16 +1046,16 @@ impl View3d {
         let moved = self
             .camera
             .unproject(target, dragged.projected.depth, response.rect);
-        let linear = self.space.linear_at(moved);
+        let shown_and_target = [dragged.linear, self.space.linear_at(moved)];
         match drag.item {
             View3dItem::Point(index) => {
-                move_point_to_linear(control_points, index, linear, curve.picker_space)
+                move_point_by_linear(control_points, index, shown_and_target, curve)
             }
             View3dItem::Handle(index, side) => move_handle_to_linear(
                 control_points,
                 index,
                 side,
-                linear,
+                shown_and_target,
                 curve.picker_space,
                 curve.is_auto_comb_running,
             ),
@@ -1234,11 +1270,32 @@ mod tests {
         cp
     }
 
+    fn unlocked(picker_space: PickerSpace) -> CurveSettings {
+        CurveSettings {
+            spline_mode: SplineMode::Bezier,
+            picker_space,
+            blend_space: BlendSpace::Picker,
+            is_auto_comb_running: false,
+            is_curve_locked: false,
+            is_window_lock: false,
+        }
+    }
+
+    fn move_point_to_linear(
+        points: &mut [ControlPoint],
+        index: usize,
+        target: [f32; 3],
+        curve: CurveSettings,
+    ) {
+        let shown = points[index].val().linear(curve.picker_space);
+        move_point_by_linear(points, index, [shown, target], curve);
+    }
+
     #[test]
     fn moving_a_point_to_a_color_keeps_its_t_tangents_and_hue_turn() {
         let mut points = vec![point_with_tangents([0.5, 0.5, 1.2], 0.0)];
         let target = [0.8, 0.6, 0.2];
-        move_point_to_linear(&mut points, 0, target, PickerSpace::Okhsl);
+        move_point_to_linear(&mut points, 0, target, unlocked(PickerSpace::Okhsl));
         assert_close(points[0].val().linear(PickerSpace::Okhsl), target);
         assert!(points[0].val().h() > 1.0 && points[0].val().h() < 2.0);
         assert_eq!(*points[0].t(), 0.0);
@@ -1251,9 +1308,69 @@ mod tests {
     #[test]
     fn moving_a_point_to_a_gray_keeps_its_hue() {
         let mut points = vec![point_with_tangents([0.5, 0.5, 0.3], 0.0)];
-        move_point_to_linear(&mut points, 0, [0.2; 3], PickerSpace::Hsv);
+        move_point_to_linear(&mut points, 0, [0.2; 3], unlocked(PickerSpace::Hsv));
         assert_eq!(points[0].val().h(), 0.3);
         assert_eq!(points[0].val().s(), 0.0);
+    }
+
+    fn hsv_points(values: [[f32; 3]; 3]) -> Vec<ControlPoint> {
+        values
+            .into_iter()
+            .zip([0.0, 0.5, 1.0])
+            .map(|(value, t)| point_with_tangents(value, t))
+            .collect()
+    }
+
+    #[test]
+    fn dragging_a_point_under_lock_moves_every_point_in_s_and_v_and_only_its_own_hue() {
+        let original = hsv_points([[0.2, 0.3, 0.1], [0.5, 0.5, 0.4], [0.6, 0.2, 0.7]]);
+        let mut points = original.clone();
+        let target = ControlPointValue::new(0.7, 0.6, 0.45).linear(PickerSpace::Hsv);
+        let locked = CurveSettings {
+            is_curve_locked: true,
+            ..unlocked(PickerSpace::Hsv)
+        };
+        move_point_to_linear(&mut points, 1, target, locked);
+        for (index, (point, before)) in points.iter().zip(&original).enumerate() {
+            let [s, v, h] = point.val().val;
+            let [s0, v0, h0] = before.val().val;
+            assert_close([s - s0, v - v0, 0.0], [0.2, 0.1, 0.0]);
+            if index != 1 {
+                assert_eq!(h, h0);
+            }
+        }
+        assert_close([points[1].val().h(), 0.0, 0.0], [0.45, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn dragging_a_point_under_window_lock_stops_the_group_at_the_square_edge() {
+        let mut points = hsv_points([[0.9, 0.3, 0.1], [0.5, 0.5, 0.4], [0.6, 0.2, 0.7]]);
+        let target = ControlPointValue::new(0.8, 0.5, 0.4).linear(PickerSpace::Hsv);
+        let window_locked = CurveSettings {
+            is_curve_locked: true,
+            is_window_lock: true,
+            ..unlocked(PickerSpace::Hsv)
+        };
+        move_point_to_linear(&mut points, 1, target, window_locked);
+        let s: Vec<f32> = points.iter().map(|point| point.val().s()).collect();
+        assert_close([s[0], s[1], s[2]], [1.0, 0.6, 0.7]);
+    }
+
+    #[test]
+    fn dragging_a_point_outside_srgb_keeps_its_offset_from_the_shown_color() {
+        let oklch = PickerSpace::Oklch {
+            clip_to_srgb: false,
+        };
+        let value = ControlPointValue::new(0.9, 0.6, 0.4);
+        assert!(!value.is_in_srgb(oklch));
+        let mut points = vec![point_with_tangents(value.val, 0.0)];
+        let shown = value.linear(oklch);
+        let [l, a, b] = linear_to_oklab(shown);
+        let lighter = oklab_to_linear([l + 0.05, a, b]);
+        move_point_by_linear(&mut points, 0, [shown, lighter], unlocked(oklch));
+        let moved = *points[0].val();
+        assert!(!moved.is_in_srgb(oklch), "{moved:?}");
+        assert_close([moved.s(), moved.v(), moved.h()], [0.9, 0.65, 0.4]);
     }
 
     #[test]
@@ -1261,7 +1378,8 @@ mod tests {
         let original = point_with_tangents([0.5, 0.5, 0.3], 0.5);
         let mut points = vec![original.clone()];
         let target = [0.1, 0.5, 0.7];
-        move_handle_to_linear(&mut points, 0, 1, target, PickerSpace::Hsl, false);
+        let shown = bezier_handle(&points[0], 1).linear(PickerSpace::Hsl);
+        move_handle_to_linear(&mut points, 0, 1, [shown, target], PickerSpace::Hsl, false);
         assert_close(
             bezier_handle(&points[0], 1).linear(PickerSpace::Hsl),
             target,
@@ -1280,7 +1398,7 @@ mod tests {
     fn moving_a_point_in_oklab_sets_its_lightness_instead_of_turning_a_hue() {
         let mut points = vec![point_with_tangents([0.5, 0.5, 0.95], 0.0)];
         let dark_gray = [0.01; 3];
-        move_point_to_linear(&mut points, 0, dark_gray, OKLAB);
+        move_point_to_linear(&mut points, 0, dark_gray, unlocked(OKLAB));
         let value = *points[0].val();
         assert!(
             (value.h() - linear_to_oklab(dark_gray)[0]).abs() < 1e-4,
@@ -1297,13 +1415,14 @@ mod tests {
             clip_to_srgb: false,
         };
         for space in [oklch, OKLAB] {
-            let mut kept = vec![point_with_tangents([0.5, 0.5, 0.5], 0.0)];
-            move_point_to_linear(&mut kept, 0, outside, space);
+            let gray = picker_value_from_linear(space, [0.2; 3], 0.5).val;
+            let mut kept = vec![point_with_tangents(gray, 0.0)];
+            move_point_to_linear(&mut kept, 0, outside, unlocked(space));
             assert_close(kept[0].val().unmapped_linear(space), outside);
 
             let clipping = space.with_clip_to_srgb(true);
-            let mut clipped = vec![point_with_tangents([0.5, 0.5, 0.5], 0.0)];
-            move_point_to_linear(&mut clipped, 0, outside, clipping);
+            let mut clipped = vec![point_with_tangents(gray, 0.0)];
+            move_point_to_linear(&mut clipped, 0, outside, unlocked(clipping));
             assert!(clipped[0].val().is_in_srgb(clipping), "{space:?}");
             assert_eq!(*clipped[0].val(), kept[0].val().clipped_to_srgb(clipping));
         }
