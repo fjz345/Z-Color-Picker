@@ -1,7 +1,10 @@
 use crate::{
-    color_space::{linear_to_oklab, oklab_to_oklch, srgb_to_hsl, srgb_to_linear},
+    color_space::{linear_to_oklab, oklab_to_oklch, srgb_to_hsl, srgb_to_linear, PickerSpace},
     common::{ColorStringCopy, SplineMode},
-    datatypes::control_point::{create_tangent_for_control_point, ControlPoint},
+    datatypes::{
+        control_point::{create_tangent_for_control_point, ControlPoint},
+        hsv_key_value::HsvKeyValue,
+    },
     ui_egui::{
         app::ZColorPickerOptions,
         auto_comb::apply_auto_comb,
@@ -23,7 +26,7 @@ use eframe::{
         PointerButton, Pos2, Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind, TextStyle,
         Ui, Widget, WidgetInfo,
     },
-    epaint::{vec2, Color32, HsvaGamma, Vec2},
+    epaint::{vec2, Color32, Vec2},
 };
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -37,6 +40,7 @@ use crate::{
 pub struct MainColorPickerCtx<'a> {
     pub control_points: &'a mut Vec<ControlPoint>,
     pub spline_mode: SplineMode,
+    pub picker_space: PickerSpace,
     pub color_copy_format: ColorStringCopy,
     pub last_modifying_point_index: &'a mut Option<usize>,
     pub dragging_index: &'a mut Option<usize>,
@@ -183,6 +187,7 @@ impl ZColorPickerWrapper {
         ui: &mut Ui,
         control_points: &mut Vec<ControlPoint>,
         spline_mode: SplineMode,
+        picker_space: PickerSpace,
         color_copy_format: &ColorStringCopy,
     ) -> Response {
         let inner_response = ui.vertical(|ui| {
@@ -191,6 +196,7 @@ impl ZColorPickerWrapper {
             let mut ctx = MainColorPickerCtx {
                 control_points: control_points,
                 spline_mode: spline_mode,
+                picker_space,
                 color_copy_format: *color_copy_format,
                 last_modifying_point_index: &mut self.last_modifying_point_index,
                 dragging_index: &mut self.dragging_index,
@@ -486,14 +492,13 @@ pub fn main_color_picker(
             Vec2::new(ui.spacing().slider_width, ui.spacing().interact_size.y) * scale_factor;
 
         let mut is_modifying_index = ctx.dragging_index.or(*ctx.last_modifying_point_index);
-        let selected_color = is_modifying_index
+        let selected_value = is_modifying_index
             .and_then(|i| ctx.control_points.get(i))
-            .map(|cp| cp.val().hsv());
+            .map(|cp| *cp.val());
+        let selected_color = selected_value.map(|value| value.color(ctx.picker_space));
 
         selected_color_swatch(ui, selected_color, slider_2d_rect_size);
-        if let Some(anchor) =
-            selected_color_readout(ui, selected_color.map(Color32::from), ctx.color_copy_format)
-        {
+        if let Some(anchor) = selected_color_readout(ui, selected_color, ctx.color_copy_format) {
             *ctx.copy_request = Some(anchor);
         }
         point_inspector(
@@ -504,19 +509,15 @@ pub fn main_color_picker(
                 is_hue_middle_interpolated: ctx.is_hue_middle_interpolated,
                 is_curve_locked: ctx.is_curve_locked,
                 is_window_lock: ctx.is_window_lock,
+                picker_space: ctx.picker_space,
             },
         );
 
-        let mut color_to_show = selected_color.unwrap_or(HsvaGamma {
-            h: 0.0,
-            s: 0.0,
-            v: 0.0,
-            a: 1.0,
-        });
+        let hue_to_show = selected_value.map_or(0.0, |value| value.h().rem_euclid(1.0));
 
         let delta_hue = handle_hue_slider(
             ui,
-            &mut color_to_show,
+            hue_to_show,
             slider_2d_rect_size,
             ctx,
             &mut is_modifying_index,
@@ -532,12 +533,13 @@ pub fn main_color_picker(
 
         handle_t_strip(ui, slider_2d_rect_size, ctx, &mut is_modifying_index);
 
+        let [mut picked_x, mut picked_y, _] = selected_value.unwrap_or_default().val;
         let slider_2d_response = color_slider_2d(
             ui,
             desired_size_slider_2d,
-            &mut color_to_show.s,
-            &mut color_to_show.v,
-            main_color_picker_color_at_function(color_to_show.h, 1.0),
+            &mut picked_x,
+            &mut picked_y,
+            main_color_picker_color_at_function(ctx.picker_space, hue_to_show),
         );
         if ctx.control_points.is_empty() {
             paint_empty_picker_hint(ui, slider_2d_response.rect);
@@ -557,6 +559,7 @@ pub fn main_color_picker(
             ui,
             ctx.control_points,
             ctx.spline_mode,
+            ctx.picker_space,
             &slider_2d_response,
         );
         if let (SplineMode::HermiteBezier, Some(index)) = (ctx.spline_mode, is_modifying_index) {
@@ -591,7 +594,7 @@ fn picker_layout(available: Vec2, strip_ratio: f32, fixed_height: f32) -> (f32, 
     (side, margin)
 }
 
-fn selected_color_swatch(ui: &mut Ui, color: Option<HsvaGamma>, size: Vec2) {
+fn selected_color_swatch(ui: &mut Ui, color: Option<Color32>, size: Vec2) {
     match color {
         Some(color) => {
             show_color(ui, color, size).on_hover_text("Selected color");
@@ -690,7 +693,7 @@ fn t_gizmo_hint(index: usize, count: usize, t: f32) -> String {
 
 fn handle_hue_slider(
     ui: &mut Ui,
-    color: &mut HsvaGamma,
+    shown_hue: f32,
     slider_size: Vec2,
     ctx: &mut MainColorPickerCtx,
     is_modifying_index: &mut Option<usize>,
@@ -699,21 +702,18 @@ fn handle_hue_slider(
     let mut pick_hue_unused = 0.0;
     let pick_hue = Some(&mut pick_hue_unused);
 
-    let hue_response = color_slider_1d(ui, slider_size, pick_hue, |h| {
-        HsvaGamma {
-            h,
-            s: 1.0,
-            v: 1.0,
-            a: 1.0,
-        }
-        .into()
-    })
+    let hue_response = color_slider_1d(
+        ui,
+        slider_size,
+        pick_hue,
+        hue_strip_color_at_function(ctx.picker_space),
+    )
     .on_hover_text(strip_hint(Strip::Hue, is_modifying_index.is_some()));
 
     if hue_response.clicked_by(PointerButton::Primary)
         || hue_response.dragged_by(PointerButton::Primary)
     {
-        delta_hue = Some(color.h - pick_hue_unused);
+        delta_hue = Some(shown_hue - pick_hue_unused);
     }
 
     let (_hue_response_cp, hue_selected_index) = ui_hue_control_points_overlay(
@@ -722,6 +722,7 @@ fn handle_hue_slider(
         ctx.control_points,
         *is_modifying_index,
         ctx.is_hue_middle_interpolated,
+        ctx.picker_space,
     );
 
     if let Some(new_index) = hue_selected_index {
@@ -770,6 +771,7 @@ fn handle_control_points_ui(
         ctx.is_hue_middle_interpolated,
         &slider_2d_response,
         ctx.spline_mode == SplineMode::Bezier,
+        ctx.picker_space,
     );
 
     let ControlPointUiResult {
@@ -854,15 +856,20 @@ fn handle_control_points_ui(
     }
 }
 
-fn main_color_picker_color_at_function(hue: f32, alpha: f32) -> impl Fn(f32, f32) -> Color32 {
-    let color = HsvaGamma {
-        h: hue,
-        s: 0.0,
-        v: 0.0,
-        a: alpha,
-    };
+fn main_color_picker_color_at_function(
+    picker_space: PickerSpace,
+    hue: f32,
+) -> impl Fn(f32, f32) -> Color32 {
+    move |x, y| HsvKeyValue::new(x, y, hue).color(picker_space)
+}
 
-    return move |s, v| HsvaGamma { s, v, ..color }.into();
+fn hue_strip_color_at_function(picker_space: PickerSpace) -> impl Fn(f32) -> Color32 {
+    let y = if picker_space.is_y_lightness() {
+        0.5
+    } else {
+        1.0
+    };
+    move |hue| HsvKeyValue::new(1.0, y, hue).color(picker_space)
 }
 
 pub const HUE_DRAG_MAX_FRACTION: f32 = 1.0 - 1e-4;
@@ -885,6 +892,7 @@ pub fn ui_hue_control_points_overlay(
     control_points: &mut [ControlPoint],
     modifying_control_point_index: Option<usize>,
     is_hue_middle_interpolated: bool,
+    picker_space: PickerSpace,
 ) -> (Response, Option<usize>) {
     let container_response =
         ui.allocate_rect(parent_response.rect, Sense::focusable_noninteractive());
@@ -899,7 +907,7 @@ pub fn ui_hue_control_points_overlay(
     for i in 0..control_points.len() {
         let gizmo = hue_gizmo(i, control_points.len(), is_hue_middle_interpolated);
         let val = hue_strip_x_fraction(control_points[i].val().h());
-        let picked_color = control_points[i].val().color();
+        let picked_color = control_points[i].val().color(picker_space);
         // Show where the slider is at:
         let x = lerp(
             container_response.rect.left()..=container_response.rect.right(),
@@ -1027,11 +1035,16 @@ fn handle_t_strip(
     ctx: &mut MainColorPickerCtx,
     is_modifying_index: &mut Option<usize>,
 ) {
-    let gradient = gradient_color_at(ctx.control_points, ctx.spline_mode);
+    let gradient = gradient_color_at(ctx.control_points, ctx.spline_mode, ctx.picker_space);
     let t_response = color_function_gradient(ui, slider_size, gradient)
         .on_hover_text(strip_hint(Strip::T, is_modifying_index.is_some()));
-    let (_, t_selected_index) =
-        ui_t_control_points_overlay(ui, &t_response, ctx.control_points, *is_modifying_index);
+    let (_, t_selected_index) = ui_t_control_points_overlay(
+        ui,
+        &t_response,
+        ctx.control_points,
+        *is_modifying_index,
+        ctx.picker_space,
+    );
     if let Some(new_index) = t_selected_index {
         *is_modifying_index = Some(new_index);
     }
@@ -1086,6 +1099,7 @@ pub fn ui_t_control_points_overlay(
     parent_response: &Response,
     control_points: &mut [ControlPoint],
     selected: Option<usize>,
+    picker_space: PickerSpace,
 ) -> (Response, Option<usize>) {
     let container_response =
         ui.allocate_rect(parent_response.rect, Sense::focusable_noninteractive());
@@ -1126,7 +1140,7 @@ pub fn ui_t_control_points_overlay(
             }
         }
 
-        let color = control_points[i].val().color();
+        let color = control_points[i].val().color(picker_space);
         let x = lerp(strip.x_range(), *control_points[i].t());
         let emphasized = selected == Some(i) || selected_key_frame == Some(i);
         ui.painter().add(Shape::convex_polygon(
@@ -1272,6 +1286,7 @@ mod tests {
                             ui,
                             &mut points,
                             SplineMode::HermiteBezier,
+                            PickerSpace::Hsv,
                             &ColorStringCopy::HEXNOA,
                         )
                         .rect;
@@ -1365,6 +1380,32 @@ mod tests {
     }
 
     #[test]
+    fn hsv_square_and_hue_strip_colors_are_the_hsva_gamma_colors() {
+        let steps: Vec<f32> = (0..=12).map(|i| i as f32 / 12.0).collect();
+        let hsva = |h, s, v| Color32::from(ecolor::HsvaGamma { h, s, v, a: 1.0 });
+        let strip_color_at = hue_strip_color_at_function(PickerSpace::Hsv);
+        for &h in &steps {
+            assert_eq!(strip_color_at(h), hsva(h, 1.0, 1.0), "h {h}");
+            let square_color_at = main_color_picker_color_at_function(PickerSpace::Hsv, h);
+            for &s in &steps {
+                for &v in &steps {
+                    assert_eq!(square_color_at(s, v), hsva(h, s, v), "h {h} s {s} v {v}");
+                }
+            }
+        }
+    }
+
+    fn hue_overlay(
+        ui: &mut Ui,
+        strip: &Response,
+        points: &mut [ControlPoint],
+        selected: Option<usize>,
+        auto_hue: bool,
+    ) -> Option<usize> {
+        ui_hue_control_points_overlay(ui, strip, points, selected, auto_hue, PickerSpace::Hsv).1
+    }
+
+    #[test]
     fn clicking_hue_gizmo_selects_its_point_without_changing_hue() {
         let mut points = two_strip_points();
         let r = STRIP_RECT.height() / 4.0;
@@ -1375,7 +1416,7 @@ mod tests {
         let selected = run_strip_overlay(
             &mut points,
             primary_click_frames(first_gizmo_center),
-            |ui, strip, points| ui_hue_control_points_overlay(ui, strip, points, Some(1), false).1,
+            |ui, strip, points| hue_overlay(ui, strip, points, Some(1), false),
         );
         assert_eq!(selected, Some(0));
         assert_eq!(points[0].val().h(), 0.25);
@@ -1394,7 +1435,7 @@ mod tests {
 
     fn run_t_overlay(points: &mut [ControlPoint], frames: Vec<Vec<egui::Event>>) -> Option<usize> {
         run_strip_overlay(points, frames, |ui, strip, points| {
-            ui_t_control_points_overlay(ui, strip, points, None).1
+            ui_t_control_points_overlay(ui, strip, points, None, PickerSpace::Hsv).1
         })
     }
 
@@ -1432,7 +1473,7 @@ mod tests {
         let selected = run_strip_overlay(
             &mut points,
             primary_click_frames(first_gizmo_center),
-            |ui, strip, points| ui_hue_control_points_overlay(ui, strip, points, Some(1), false).1,
+            |ui, strip, points| hue_overlay(ui, strip, points, Some(1), false),
         );
         assert_eq!(selected, Some(0));
         assert_eq!(points[0].val().h(), -0.75);
@@ -1482,9 +1523,7 @@ mod tests {
             run_strip_overlay(
                 &mut three_hue_strip_points(),
                 primary_click_frames(pos),
-                move |ui, strip, points| {
-                    ui_hue_control_points_overlay(ui, strip, points, selected, auto_hue).1
-                },
+                move |ui, strip, points| hue_overlay(ui, strip, points, selected, auto_hue),
             )
         };
         assert_eq!(click(raised_middle_center, Some(1), false), Some(1));
@@ -1503,7 +1542,7 @@ mod tests {
         let output = ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 let strip = ui.allocate_rect(STRIP_RECT, Sense::hover());
-                ui_hue_control_points_overlay(ui, &strip, &mut points, selected, auto_hue);
+                hue_overlay(ui, &strip, &mut points, selected, auto_hue);
             });
         });
         output
@@ -1598,7 +1637,7 @@ mod tests {
         run_strip_overlay(
             &mut points,
             primary_drag_frames(start, start + vec2(dx, 0.0)),
-            |ui, strip, points| ui_hue_control_points_overlay(ui, strip, points, Some(1), false).1,
+            |ui, strip, points| hue_overlay(ui, strip, points, Some(1), false),
         );
         points[0].val().h()
     }
@@ -1675,6 +1714,7 @@ mod tests {
                     let mut ctx = MainColorPickerCtx {
                         control_points: &mut *points,
                         spline_mode: SplineMode::Linear,
+                        picker_space: PickerSpace::Hsv,
                         color_copy_format: ColorStringCopy::HEXNOA,
                         last_modifying_point_index: &mut last_modifying_point_index,
                         dragging_index: &mut dragging_index,
@@ -1737,11 +1777,9 @@ mod tests {
                 _ => None,
             })
             .expect("gradient mesh");
-        assert_eq!(
-            mesh.vertices.first().unwrap().color,
-            points[0].val().color()
-        );
-        assert_eq!(mesh.vertices.last().unwrap().color, points[2].val().color());
+        let color = |i: usize| points[i].val().color(PickerSpace::Hsv);
+        assert_eq!(mesh.vertices.first().unwrap().color, color(0));
+        assert_eq!(mesh.vertices.last().unwrap().color, color(2));
         let gizmos = closed_paths(&shapes);
         assert_eq!(gizmos.len(), 3);
         assert!(gizmos.iter().all(|(i, _)| mesh_index < *i));
@@ -1803,7 +1841,13 @@ mod tests {
         };
         let output = ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                picker.draw_ui(ui, points, SplineMode::Linear, &ColorStringCopy::HEXNOA);
+                picker.draw_ui(
+                    ui,
+                    points,
+                    SplineMode::Linear,
+                    PickerSpace::Hsv,
+                    &ColorStringCopy::HEXNOA,
+                );
             });
         });
         output.shapes.iter().any(|clipped| match &clipped.shape {
@@ -1886,7 +1930,13 @@ mod tests {
         };
         let output = ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                picker.draw_ui(ui, points, SplineMode::Linear, &ColorStringCopy::HEXNOA);
+                picker.draw_ui(
+                    ui,
+                    points,
+                    SplineMode::Linear,
+                    PickerSpace::Hsv,
+                    &ColorStringCopy::HEXNOA,
+                );
             });
         });
         output.shapes.iter().any(|clipped| match &clipped.shape {
@@ -1898,8 +1948,10 @@ mod tests {
     #[test]
     fn readout_placeholder_is_painted_without_selection() {
         let mut points = points_sv(&[(0.5, 0.5)]);
-        let selected_text =
-            readout_text(Some(points[0].val().hsv().into()), ColorStringCopy::HEXNOA);
+        let selected_text = readout_text(
+            Some(points[0].val().color(PickerSpace::Hsv)),
+            ColorStringCopy::HEXNOA,
+        );
         assert!(paints_text(&mut points, None, NO_SELECTION_READOUT));
         assert!(!paints_text(&mut points, None, &selected_text));
         assert!(paints_text(&mut points, Some(0), &selected_text));
@@ -2118,7 +2170,13 @@ mod tests {
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     square = picker
-                        .draw_ui(ui, points, SplineMode::Bezier, &ColorStringCopy::HEXNOA)
+                        .draw_ui(
+                            ui,
+                            points,
+                            SplineMode::Bezier,
+                            PickerSpace::Hsv,
+                            &ColorStringCopy::HEXNOA,
+                        )
                         .rect;
                 });
             });
@@ -2419,7 +2477,13 @@ mod tests {
         let _ = ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 square = picker
-                    .draw_ui(ui, points, SplineMode::Linear, &ColorStringCopy::HEXNOA)
+                    .draw_ui(
+                        ui,
+                        points,
+                        SplineMode::Linear,
+                        PickerSpace::Hsv,
+                        &ColorStringCopy::HEXNOA,
+                    )
                     .rect;
             });
         });

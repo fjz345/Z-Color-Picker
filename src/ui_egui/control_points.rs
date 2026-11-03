@@ -7,6 +7,7 @@ use eframe::{
 use splines::{Interpolation, Key, Spline};
 
 use crate::{
+    color_space::{linear_to_picker, PickerSpace},
     common::SplineMode,
     datatypes::control_point::{ControlPoint, ControlPointValue},
     math::shortest_hue_delta,
@@ -58,6 +59,7 @@ pub fn ui_ordered_control_points(
     _is_middle_interpolated: bool,
     parent_response: &egui::Response,
     show_bezier_tangents: bool,
+    picker_space: PickerSpace,
 ) -> ControlPointUiResult {
     use egui::PointerButton::Primary;
 
@@ -142,7 +144,7 @@ pub fn ui_ordered_control_points(
             Shape::circle_filled(
                 point_in_screen,
                 FILL_RADIUS_SCALE * control_point_radius,
-                cp.val().color(),
+                cp.val().color(picker_space),
             )
         })
         .collect();
@@ -154,7 +156,7 @@ pub fn ui_ordered_control_points(
         .map(|(i, cp)| {
             let point = to_screen_pos(&to_screen, cp);
             let emphasized = hovered_index == Some(i) || marked_control_point_index == Some(i);
-            let outline = control_point_outline(cp.val().color(), emphasized);
+            let outline = control_point_outline(cp.val().color(picker_space), emphasized);
 
             if i == 0 || i == control_points.len() - 1 {
                 Shape::rect_stroke(
@@ -193,7 +195,7 @@ pub fn ui_ordered_control_points(
         ui.painter().add(Shape::rect_stroke(
             Rect::from_center_size(point, Vec2::splat(control_point_radius * 0.5)),
             0.0,
-            control_point_outline(marked_point.val().color(), true),
+            control_point_outline(marked_point.val().color(picker_space), true),
             egui::StrokeKind::Middle,
         ));
     }
@@ -402,11 +404,12 @@ pub fn sample_spline_normalized(
 pub fn gradient_color_at(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
+    picker_space: PickerSpace,
 ) -> impl Fn(f32) -> Color32 {
     let spline = control_points_to_spline(&flatten_control_points(control_points), spline_mode);
     move |x| {
         sample_spline_normalized(&spline, spline_mode, x)
-            .map_or(Color32::TRANSPARENT, |sample| sample.color())
+            .map_or(Color32::TRANSPARENT, |sample| sample.color(picker_space))
     }
 }
 
@@ -415,6 +418,46 @@ pub fn bezier_handle(cp: &ControlPoint, slot: usize) -> ControlPointValue {
     handle[0] = handle[0].clamp(0.0, 1.0);
     handle[1] = handle[1].clamp(0.0, 1.0);
     handle
+}
+
+pub fn convert_picker_space(points: &mut [ControlPoint], from: PickerSpace, to: PickerSpace) {
+    if from == to {
+        return;
+    }
+    for cp in points {
+        let old = *cp.val();
+        let handles = [0, 1].map(|slot| bezier_handle(cp, slot));
+        let new = value_in_picker_space(old, from, to);
+        *cp.val_mut() = new;
+        let value_hue_shift = shortest_hue_delta(old.h(), new.h());
+        for (tangent, handle) in cp.tangents_mut().iter_mut().zip(handles) {
+            let Some(tangent) = tangent else {
+                continue;
+            };
+            let new_handle = value_in_picker_space(handle, from, to);
+            let handle_hue_shift = shortest_hue_delta(handle.h(), new_handle.h());
+            *tangent = ControlPointValue::new(
+                new_handle.s() - new.s(),
+                new_handle.v() - new.v(),
+                tangent.h() + handle_hue_shift - value_hue_shift,
+            );
+        }
+    }
+}
+
+fn value_in_picker_space(
+    value: ControlPointValue,
+    from: PickerSpace,
+    to: PickerSpace,
+) -> ControlPointValue {
+    let [hue, s, y] = linear_to_picker(to, value.linear(from));
+    assert!(
+        [hue, s, y].iter().all(|c| c.is_finite()),
+        "{value:?} {from:?} -> {to:?}: {hue}, {s}, {y}"
+    );
+    let is_achromatic = s <= 0.0;
+    let hue = if is_achromatic { value.h() } else { hue };
+    ControlPointValue::new(s.clamp(0.0, 1.0), y.clamp(0.0, 1.0), hue)
 }
 
 pub fn control_points_to_spline(
@@ -970,14 +1013,120 @@ mod tests {
     #[test]
     fn gradient_color_at_hits_the_point_colors_at_their_t() {
         let cps = points_with_t(&[0.0, 0.3, 1.0]);
-        let color_at = gradient_color_at(&cps, SplineMode::Linear);
-        for cp in &cps {
-            assert_eq!(color_at(*cp.t()), cp.val().color());
+        for space in PickerSpace::ALL {
+            let color_at = gradient_color_at(&cps, SplineMode::Linear, space);
+            for cp in &cps {
+                assert_eq!(color_at(*cp.t()), cp.val().color(space), "{space:?}");
+            }
         }
         assert_eq!(
-            gradient_color_at(&[], SplineMode::Linear)(0.5),
+            gradient_color_at(&[], SplineMode::Linear, PickerSpace::Hsv)(0.5),
             Color32::TRANSPARENT
         );
+    }
+
+    fn space_switch_points() -> Vec<ControlPoint> {
+        [
+            (0.8, 0.91, 0.05),
+            (0.3, 0.6, 0.62),
+            (1.0, 1.0, 0.67),
+            (0.0, 0.52, 0.37),
+            (0.6, 0.0, 0.2),
+            (0.4, 1.0, 0.5),
+            (0.5, 0.25, 0.95),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, (s, v, h))| {
+            let mut cp = ControlPoint::new_simple(ControlPointValue::new(s, v, h), i as f32 / 6.0);
+            *cp.tangents_mut() = [
+                Some(ControlPointValue::new(-0.1, 0.05, 0.02)),
+                Some(ControlPointValue::new(0.15, -0.2, -0.03)),
+            ];
+            cp
+        })
+        .collect()
+    }
+
+    fn assert_linear_close(actual: [f32; 3], expected: [f32; 3], context: &str) {
+        for c in 0..3 {
+            assert!(
+                (actual[c] - expected[c]).abs() < 1e-3,
+                "{context}: {actual:?} != {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn switching_space_keeps_key_colors() {
+        for from in PickerSpace::ALL {
+            for to in PickerSpace::ALL {
+                let mut points = space_switch_points();
+                let before: Vec<Color32> = points.iter().map(|cp| cp.val().color(from)).collect();
+                convert_picker_space(&mut points, from, to);
+                let after: Vec<Color32> = points.iter().map(|cp| cp.val().color(to)).collect();
+                assert_eq!(after, before, "{from:?} -> {to:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn switching_space_keeps_tangent_handle_colors() {
+        for from in PickerSpace::ALL {
+            for to in PickerSpace::ALL {
+                let mut points = space_switch_points();
+                let handles = |points: &[ControlPoint], space| -> Vec<[f32; 3]> {
+                    points
+                        .iter()
+                        .flat_map(|cp| [0, 1].map(|slot| bezier_handle(cp, slot).linear(space)))
+                        .collect()
+                };
+                let before = handles(&points, from);
+                convert_picker_space(&mut points, from, to);
+                for (i, (after, before)) in handles(&points, to).into_iter().zip(before).enumerate()
+                {
+                    assert_linear_close(after, before, &format!("{from:?} -> {to:?} #{i}"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn switching_space_keeps_the_hue_of_gray_points() {
+        for from in PickerSpace::ALL {
+            for to in PickerSpace::ALL {
+                for (s, y) in [(0.0, 0.5), (0.7, 0.0)] {
+                    let mut points = [ControlPoint::new_simple(
+                        ControlPointValue::new(s, y, 0.37),
+                        0.0,
+                    )];
+                    convert_picker_space(&mut points, from, to);
+                    assert_eq!(points[0].val().h(), 0.37, "{from:?} -> {to:?} ({s}, {y})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn switching_to_the_same_space_changes_nothing() {
+        for space in PickerSpace::ALL {
+            let mut points = space_switch_points();
+            convert_picker_space(&mut points, space, space);
+            assert_eq!(points, space_switch_points(), "{space:?}");
+        }
+    }
+
+    #[test]
+    fn switching_space_keeps_tangent_hue_turns_across_zero() {
+        for offset in [0.03, 1.5, -2.25] {
+            let mut points = [point_with_tangent([0.8, 0.9, 0.99], 1, [0.0, 0.0, offset])];
+            convert_picker_space(&mut points, PickerSpace::Hsv, PickerSpace::Okhsl);
+            let new_offset = points[0].tangents()[1].unwrap().h();
+            assert!(
+                (new_offset - offset).abs() < 0.1,
+                "{offset} -> {new_offset}"
+            );
+        }
     }
 
     #[test]
@@ -1146,7 +1295,15 @@ mod tests {
             output = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let parent = ui.allocate_rect(PICKER_RECT, Sense::click_and_drag());
-                    result = ui_ordered_control_points(ui, &points, Some(1), false, &parent, true);
+                    result = ui_ordered_control_points(
+                        ui,
+                        &points,
+                        Some(1),
+                        false,
+                        &parent,
+                        true,
+                        PickerSpace::Hsv,
+                    );
                 });
             });
         }

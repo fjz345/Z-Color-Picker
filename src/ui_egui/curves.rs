@@ -1,5 +1,6 @@
 //https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
 
+use crate::color_space::PickerSpace;
 use crate::common::SplineMode;
 use crate::datatypes::control_point::{ControlPoint, ControlPointValue};
 use crate::ui_egui::control_points::{
@@ -87,6 +88,7 @@ pub fn ui_ordered_spline_gradient(
     ui: &mut Ui,
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
+    picker_space: PickerSpace,
     parent_response: &egui::Response,
 ) -> Option<egui::Response> {
     let num_control_points = control_points.len();
@@ -125,7 +127,7 @@ pub fn ui_ordered_spline_gradient(
             ribbon_screen_pos(&to_screen, first),
             ribbon_screen_pos(&to_screen, next),
         ];
-        let fill = Stroke::new(control_point_radius * 1.6, first.color());
+        let fill = Stroke::new(control_point_radius * 1.6, first.color(picker_space));
         halos.push(Shape::line_segment(
             segment,
             ribbon_halo_stroke(fill.color, fill.width),

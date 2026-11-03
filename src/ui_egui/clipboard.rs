@@ -4,8 +4,8 @@ use arboard::{Clipboard, ImageData};
 use eframe::egui::{self, pos2, vec2, Color32, ColorImage, Pos2, Rect, Vec2};
 
 use crate::{
-    common::ColorStringCopy, datatypes::control_point::ControlPoint, error::Result,
-    ui_egui::color_picker::format_color_as,
+    color_space::PickerSpace, common::ColorStringCopy, datatypes::control_point::ControlPoint,
+    error::Result, ui_egui::color_picker::format_color_as,
 };
 
 pub fn write_string_to_clipboard(text: String) -> Result<()> {
@@ -232,11 +232,12 @@ pub fn clipboard_payload(image: &ColorImage, format: ColorStringCopy) -> Option<
 pub fn selected_color_payload(
     points: &[ControlPoint],
     selected: Option<usize>,
+    picker_space: PickerSpace,
     format: ColorStringCopy,
 ) -> Option<ClipboardPayload> {
     let point = points.get(selected?)?;
     Some(ClipboardPayload::Text(format_color_as(
-        Color32::from(point.val().hsv()),
+        point.val().color(picker_space),
         format,
         None,
     )))
@@ -539,15 +540,20 @@ mod tests {
             .to_vec()
     }
 
+    fn payload(
+        points: &[ControlPoint],
+        selected: Option<usize>,
+        format: ColorStringCopy,
+    ) -> Option<ClipboardPayload> {
+        selected_color_payload(points, selected, PickerSpace::Hsv, format)
+    }
+
     #[test]
     fn selected_color_payload_without_a_valid_selection_is_none() {
         let points = red_and_green_points();
+        assert_eq!(payload(&points, None, ColorStringCopy::HEXNOA), None);
         assert_eq!(
-            selected_color_payload(&points, None, ColorStringCopy::HEXNOA),
-            None
-        );
-        assert_eq!(
-            selected_color_payload(&points, Some(points.len()), ColorStringCopy::HEXNOA),
+            payload(&points, Some(points.len()), ColorStringCopy::HEXNOA),
             None
         );
     }
@@ -556,12 +562,29 @@ mod tests {
     fn selected_color_payload_is_the_selected_point_as_text_in_the_copy_format() {
         let points = red_and_green_points();
         assert_eq!(
-            selected_color_payload(&points, Some(1), ColorStringCopy::HEXNOA),
+            payload(&points, Some(1), ColorStringCopy::HEXNOA),
             Some(ClipboardPayload::Text("00FF00".to_string()))
         );
         assert_eq!(
-            selected_color_payload(&points, Some(1), ColorStringCopy::HSV),
+            payload(&points, Some(1), ColorStringCopy::HSV),
             Some(ClipboardPayload::Text("hsv(120, 100%, 100%)".to_string()))
+        );
+    }
+
+    #[test]
+    fn selected_color_payload_reads_the_point_in_the_picker_space() {
+        let half_lightness_red = [ControlPoint::new_simple(
+            ControlPointValue::new(1.0, 0.5, 0.0),
+            0.0,
+        )];
+        assert_eq!(
+            selected_color_payload(
+                &half_lightness_red,
+                Some(0),
+                PickerSpace::Hsl,
+                ColorStringCopy::HEXNOA
+            ),
+            Some(ClipboardPayload::Text("FF0000".to_string()))
         );
     }
 }

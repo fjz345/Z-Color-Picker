@@ -16,10 +16,10 @@
 
 ## Usage
 
-Each control point is a value in a color space (currently only HSV).
-Hue of each individual control point can be changed in the hue bar, and saturation & value in the 2d slider.
+Each control point is a value in the picker space: HSV, HSL, OKHSV or OKHSL (Space in the options).
+Hue of each individual control point can be changed in the hue bar, and saturation & value (lightness in HSL and OKHSL) in the 2d slider.
 T, the strip under the hue bar, is each point's position along the gradient: the first and last points stay at 0 and 1, the middle points can be dragged between their neighbours.
-The selected control point's color is shown in the top left; the H, S, V and T fields under it show its values and take exact ones. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
+The selected control point's color is shown in the top left; the H, S, V (L) and T fields under it show its values and take exact ones. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
 To create a new preset, click the preset combo box and select `<NEW>`
 
 ## Controls
@@ -43,6 +43,7 @@ To create a new preset, click the preset combo box and select `<NEW>`
 ## Options
 
 Points row:
+- Space: Color space of the square and the hue bar: HSV, HSL, or the perceptual OKHSV and OKHSL (built on Oklab). Switching converts every point and keeps its color; it is saved with the preset
 - Lock: Apply any control point coordinate translation to all control points
 - Clamp: Keep control points inside the S/V square and wrap hue into 0..1
 - Auto hue: Select hue for start/end control points, middle control point's hue is interpolated by T (shown as markers on the hue bar)
