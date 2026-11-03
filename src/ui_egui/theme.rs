@@ -129,6 +129,10 @@ pub fn pane_card<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
         .inner
 }
 
+pub fn pane_card_size(content_size: Vec2) -> Vec2 {
+    content_size + Vec2::splat(2.0 * PANE_PADDING)
+}
+
 pub fn section_header(ui: &mut Ui, title: &str) -> Response {
     ui.label(
         RichText::new(title.to_uppercase())
@@ -143,6 +147,22 @@ pub fn row_header(ui: &mut Ui, title: &str) -> Response {
     let item_gap = ui.spacing().item_spacing.x;
     ui.add_space((ROW_HEADER_WIDTH - response.rect.width() - item_gap).max(0.0));
     response
+}
+
+pub fn unbroken_group(ui: &mut Ui, id_salt: &str, add_contents: impl FnOnce(&mut Ui)) {
+    // A wrapping row only moves an item to the next line when it knows the item's width up front.
+    let id = ui.id().with(id_salt);
+    let last_width = ui.data(|data| data.get_temp(id)).unwrap_or(0.0);
+    let size = vec2(last_width, ui.spacing().interact_size.y);
+    let layout = egui::Layout::left_to_right(egui::Align::Center);
+    let response = ui
+        .allocate_ui_with_layout(size, layout, add_contents)
+        .response;
+    let width = response.rect.width();
+    if (width - last_width).abs() > 0.5 {
+        ui.data_mut(|data| data.insert_temp(id, width));
+        ui.ctx().request_discard("a row group changed width");
+    }
 }
 
 pub fn group_separator(ui: &mut Ui) {

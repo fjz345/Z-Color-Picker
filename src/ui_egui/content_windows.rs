@@ -15,7 +15,7 @@ use crate::ui_egui::app::ZColorPickerOptions;
 use crate::ui_egui::color_picker::format_color_as;
 use crate::ui_egui::control_points::mirror_t;
 use crate::ui_egui::curvature::COMB_SCALE_RANGE;
-use crate::ui_egui::theme::{row_header, section_header};
+use crate::ui_egui::theme::{row_header, section_header, unbroken_group};
 use crate::ui_egui::ui_common::ContentWindow;
 
 pub struct WindowPresetDrawResult {
@@ -117,7 +117,7 @@ pub fn points_row(ui: &mut Ui, options: &mut ZColorPickerOptions, picker_space: 
         if changed {
             options.is_hue_middle_interpolated = auto_hue;
         }
-        ui.horizontal(|ui| {
+        unbroken_group(ui, "insert", |ui| {
             ui.label("Insert");
             ui.radio_value(&mut options.is_insert_right, false, "left")
                 .on_hover_text(
@@ -133,44 +133,47 @@ pub fn points_row(ui: &mut Ui, options: &mut ZColorPickerOptions, picker_space: 
     });
 }
 
-pub fn curve_controls(
-    ui: &mut Ui,
-    spline_mode: &mut SplineMode,
-    blend_space: &mut BlendSpace,
-) -> bool {
-    section_header(ui, "Curve");
-    ui.label("Spline");
-    egui::ComboBox::from_id_salt("spline_mode")
-        .selected_text(spline_mode_label(*spline_mode))
-        .show_ui(ui, |ui| {
-            ui.set_min_width(60.0);
-            for mode in SplineMode::ALL {
-                ui.selectable_value(spline_mode, mode, spline_mode_label(mode))
-                    .on_hover_text(spline_mode_hover_text(mode));
-            }
-        })
-        .response
-        .on_hover_text(spline_mode_hover_text(*spline_mode));
+pub fn curve_row(ui: &mut Ui, spline_mode: &mut SplineMode, blend_space: &mut BlendSpace) -> bool {
+    ui.horizontal_wrapped(|ui| {
+        row_header(ui, "Curve");
+        unbroken_group(ui, "spline", |ui| {
+            ui.label("Spline");
+            egui::ComboBox::from_id_salt("spline_mode")
+                .selected_text(spline_mode_label(*spline_mode))
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(60.0);
+                    for mode in SplineMode::ALL {
+                        ui.selectable_value(spline_mode, mode, spline_mode_label(mode))
+                            .on_hover_text(spline_mode_hover_text(mode));
+                    }
+                })
+                .response
+                .on_hover_text(spline_mode_hover_text(*spline_mode));
+        });
 
-    ui.label("Blend");
-    egui::ComboBox::from_id_salt("blend_space")
-        .selected_text(blend_space_label(*blend_space))
-        .show_ui(ui, |ui| {
-            ui.set_min_width(60.0);
-            for space in BlendSpace::ALL {
-                ui.selectable_value(blend_space, space, blend_space_label(space))
-                    .on_hover_text(blend_space_hover_text(space));
-            }
-        })
-        .response
-        .on_hover_text(
-            "Color space the gradient is interpolated in; the points keep their \
-             colors. Any blend but Picker turns off the comb and Auto comb",
-        );
+        unbroken_group(ui, "blend", |ui| {
+            ui.label("Blend");
+            egui::ComboBox::from_id_salt("blend_space")
+                .selected_text(blend_space_label(*blend_space))
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(60.0);
+                    for space in BlendSpace::ALL {
+                        ui.selectable_value(blend_space, space, blend_space_label(space))
+                            .on_hover_text(blend_space_hover_text(space));
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Color space the gradient is interpolated in; the points keep their \
+                     colors. Any blend but Picker turns off the comb and Auto comb",
+                );
+        });
 
-    ui.button("Flip")
-        .on_hover_text("Reverse the point order (tangents and T follow)")
-        .clicked_by(PointerButton::Primary)
+        ui.button("Flip")
+            .on_hover_text("Reverse the point order (tangents and T follow)")
+            .clicked_by(PointerButton::Primary)
+    })
+    .inner
 }
 
 pub fn comb_row(
@@ -196,19 +199,21 @@ pub fn comb_row(
         )
         .on_hover_text("Curvature comb: spikes show how sharply the curve bends")
         .on_disabled_hover_text(comb_off_hint);
-        ui.add_enabled_ui(enabled.scale, |ui| {
-            ui.label("Scale");
-            ui.add(
-                egui::Slider::new(&mut options.curvature_comb_scale, COMB_SCALE_RANGE)
-                    .logarithmic(true)
-                    .fixed_decimals(2)
-                    .suffix("×"),
-            )
-            .on_hover_text("Length of the comb spikes")
-            .on_disabled_hover_text(if enabled.show {
-                "Turn on Show first"
-            } else {
-                comb_off_hint
+        unbroken_group(ui, "scale", |ui| {
+            ui.add_enabled_ui(enabled.scale, |ui| {
+                ui.label("Scale");
+                ui.add(
+                    egui::Slider::new(&mut options.curvature_comb_scale, COMB_SCALE_RANGE)
+                        .logarithmic(true)
+                        .fixed_decimals(2)
+                        .suffix("×"),
+                )
+                .on_hover_text("Length of the comb spikes")
+                .on_disabled_hover_text(if enabled.show {
+                    "Turn on Show first"
+                } else {
+                    comb_off_hint
+                });
             });
         });
 

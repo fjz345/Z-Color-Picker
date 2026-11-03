@@ -281,9 +281,9 @@ mod tests {
                 picker.draw_ui(
                     ui,
                     points,
-                    SplineMode::Linear,
+                    &mut SplineMode::Linear,
                     &mut picker_space,
-                    BlendSpace::Picker,
+                    &mut BlendSpace::Picker,
                     &ColorStringCopy::HSV,
                 );
             });

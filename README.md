@@ -22,7 +22,8 @@ Hue of each individual control point can be changed in the hue bar, and saturati
 T, the strip under the hue bar, is each point's position along the gradient: the first and last points stay at 0 and 1, the middle points can be dragged between their neighbours.
 The selected control point's color is shown in the top left, with its readout beside it; the H, S, V (L) and T fields under them show its values and take exact ones. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
 The rows under the fields show the selected color as Hex, sRGB (0-255), HSL, Oklab and OkLCh.
-Between the points, the gradient is blended in the Blend space (toolbar): the picker space itself, sRGB, Linear RGB, Oklab or OkLCh.
+Between the points, the gradient is blended in the Blend space (Curve row): the picker space itself, sRGB, Linear RGB, Oklab or OkLCh.
+The picker column keeps the size it needs: the other panes give way, and in a window too small for it, it scrolls.
 The 3D view above the previewer draws the gradient curve, blended as the previewer shows it, and its control points inside a color space, where the points and the selected point's Bezier handles can be dragged too.
 To create a new preset, click the preset combo box and select `<NEW>`
 
@@ -43,12 +44,9 @@ To create a new preset, click the preset combo box and select `<NEW>`
 
 ## Toolbar
 
-Groups, left to right: Preset, Curve (Spline, Blend, Flip) and Copy as; Log at the right end.
+Groups, left to right: Preset and Copy as; Log at the right end.
 
 - Preset: Pick a preset, then Save, Rename... (opens a name field; Enter renames), Delete, Auto-save (rewrite the selected preset file after every edit). A failed save shows its error at the end of the row
-- Spline: Linear, Bezier (drag the tangent handles) or Hermite (Catmull-Rom, automatic tangents, not drawn; the end segments follow the parabola through the three end points)
-- Blend: Color space the gradient is interpolated in: Picker (the square's coordinates and hue, default), sRGB, Linear RGB, Oklab, or OkLCh (hue takes the short way around; a gray takes its neighbour's hue). The points keep their colors and the ribbon on the square follows the blended colors; a blended color outside sRGB loses chroma but keeps its lightness and hue; it is saved with the preset. Any blend but Picker turns off the comb and Auto comb
-- Flip: Reverse the control point order (T is mirrored)
 - Copy as: Text format for a copied color, including CSS `hsl()`, `oklab()` and `oklch()`; previewer strips are copied as images
 - Log (right end): Expand or collapse the log drawer (highlighted while expanded); collapsed by default
 
@@ -64,7 +62,12 @@ Points row (under the square):
 - Auto hue: Select hue for start/end control points, middle control point's hue is interpolated by T (shown as markers on the hue bar); off in Oklab, which has no hue
 - Insert left/right: Side of the selected point where a new control point goes (start/end when none is selected)
 
-Comb row (under the Points row):
+Curve row (under the Points row):
+- Spline: Linear, Bezier (drag the tangent handles) or Hermite (Catmull-Rom, automatic tangents, not drawn; the end segments follow the parabola through the three end points)
+- Blend: Color space the gradient is interpolated in: Picker (the square's coordinates and hue, default), sRGB, Linear RGB, Oklab, or OkLCh (hue takes the short way around; a gray takes its neighbour's hue). The points keep their colors and the ribbon on the square follows the blended colors; a blended color outside sRGB loses chroma but keeps its lightness and hue; it is saved with the preset. Any blend but Picker turns off the comb and Auto comb
+- Flip: Reverse the control point order (T is mirrored)
+
+Comb row (under the Curve row):
 - Show: Show the curvature comb (Bezier and Hermite, Picker blend)
 - Scale: Length of the comb spikes
 - Auto comb: Keep a curvature on each point and solve the handle lengths so the comb is continuous (Bezier only). Moving a point keeps the curvatures (the dragged point gives way when its segments can't meet its curvature); turning a handle turns its partner too; pulling a handle longer or shorter changes its point's curvature. `N unsolved` counts segments whose handle lengths can't meet their points' curvatures, which are left as they were

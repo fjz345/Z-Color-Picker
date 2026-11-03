@@ -30,8 +30,8 @@ use crate::{
         control_points::normalize_t,
         debug_windows::DebugWindowControlPoints,
         panes::{
-            copy_format_bar_ui, curve_bar_ui, preset_bar_ui, ColorPickerPane, Pane, PreviewerPane,
-            TileUi, View3dPane, ZAppPane,
+            copy_format_bar_ui, preset_bar_ui, ColorPickerPane, Pane, PreviewerPane, TileUi,
+            View3dPane, ZAppPane,
         },
         previewer::{PreviewerUiResponses, ZPreviewer},
         theme,
@@ -40,7 +40,7 @@ use crate::{
     },
 };
 use eframe::epaint::{Pos2, Vec2};
-use egui_tiles::Tile;
+use egui_tiles::{Behavior, Container, Linear, LinearDir, Shares, Tile, TileId};
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 enum AppState {
@@ -493,8 +493,6 @@ impl ZApp {
             ui.horizontal(|ui| {
                 preset_bar_ui(&self.app_ctx, ui);
                 theme::group_separator(ui);
-                curve_bar_ui(&self.app_ctx, ui);
-                theme::group_separator(ui);
                 copy_format_bar_ui(&self.app_ctx, ui);
                 ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                     let hint = if self.is_log_expanded {
@@ -540,7 +538,7 @@ impl ZApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.with_layout(Layout::left_to_right(egui::Align::Min), |mut ui| {
-                self.tree.ui(&mut TileUi, ui);
+                self.draw_tree(ui);
 
                 // Copy to clipboard
                 let middle_mouse_pressed =
@@ -578,6 +576,28 @@ impl ZApp {
                 }
             }
         });
+    }
+
+    fn draw_tree(&mut self, ui: &mut Ui) {
+        let min_size = picker_tile_min_size(&self.app_ctx.borrow());
+        let floor = ShareFloor::of_picker(&self.tree, ui.available_rect_before_wrap(), min_size);
+        let shares = floor.as_ref().and_then(|floor| {
+            let linear = floor.linear_mut(&mut self.tree)?;
+            let base = linear.shares.clone();
+            floor.raise(&mut linear.shares);
+            Some((base, linear.shares.clone()))
+        });
+        self.tree.ui(&mut TileUi, ui);
+        // Unchanged shares go back to the user's split, so a small window doesn't widen the picker for good.
+        if let (Some(floor), Some((base, raised))) = (floor, shares) {
+            if let Some(linear) = floor.linear_mut(&mut self.tree) {
+                if linear.shares == raised {
+                    linear.shares = base;
+                } else {
+                    floor.raise(&mut linear.shares);
+                }
+            }
+        }
     }
 
     fn handle_middleclick_event(
@@ -704,6 +724,70 @@ impl ZApp {
         if user_quit {
             self.request_shutdown();
         }
+    }
+}
+
+fn picker_tile_min_size(app_ctx: &ZColorPickerAppContext) -> Vec2 {
+    theme::pane_card_size(app_ctx.z_color_picker.borrow().min_size)
+}
+
+struct ShareFloor {
+    container: TileId,
+    tile: TileId,
+    visible: Vec<TileId>,
+    available: f32,
+    min: f32,
+}
+
+impl ShareFloor {
+    fn of_picker(tree: &egui_tiles::Tree<Pane>, tree_rect: Rect, min_size: Vec2) -> Option<Self> {
+        let (&tile, _) = tree
+            .tiles
+            .iter()
+            .find(|(_, tile)| matches!(tile, Tile::Pane(Pane::ColorPicker(_))))?;
+        let container = tree.tiles.parent_of(tile)?;
+        let rect = if tree.root() == Some(container) {
+            tree_rect
+        } else {
+            tree.tiles.rect(container)?
+        };
+        let Some(Tile::Container(Container::Linear(linear))) = tree.tiles.get(container) else {
+            return None;
+        };
+        let visible: Vec<TileId> = (linear.children.iter().copied())
+            .filter(|&child| tree.tiles.is_visible(child))
+            .collect();
+        let (extent, min) = match linear.dir {
+            LinearDir::Horizontal => (rect.width(), min_size.x),
+            LinearDir::Vertical => (rect.height(), min_size.y),
+        };
+        let gaps = theme::PANE_GAP * visible.len().saturating_sub(1) as f32;
+        Some(Self {
+            container,
+            tile,
+            visible,
+            available: extent - gaps,
+            min,
+        })
+    }
+
+    fn linear_mut<'t>(&self, tree: &'t mut egui_tiles::Tree<Pane>) -> Option<&'t mut Linear> {
+        match tree.tiles.get_mut(self.container) {
+            Some(Tile::Container(Container::Linear(linear))) => Some(linear),
+            _ => None,
+        }
+    }
+
+    fn raise(&self, shares: &mut Shares) {
+        let others = self.visible.len() as f32 - 1.0;
+        let others_min = others * Behavior::<Pane>::min_size(&TileUi);
+        let target = self.min.min(self.available - others_min);
+        let total: f32 = self.visible.iter().map(|&child| shares[child]).sum();
+        if others < 1.0 || total <= 0.0 || self.available * shares[self.tile] / total >= target {
+            return;
+        }
+        let others_share = total - shares[self.tile];
+        shares[self.tile] = target * others_share / (self.available - target);
     }
 }
 
@@ -846,6 +930,7 @@ impl eframe::App for ZApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui_egui::color_picker::MIN_SQUARE_SIDE;
     use ecolor::Color32;
 
     fn key_event(key: egui::Key, pressed: bool, repeat: bool) -> egui::Event {
@@ -1035,8 +1120,17 @@ mod tests {
         ctx: &egui::Context,
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
+        draw_on_screen(app, ctx, DEFAULT_SCREEN, events)
+    }
+
+    fn draw_on_screen(
+        app: &mut ZApp,
+        ctx: &egui::Context,
+        screen: Rect,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
         let input = egui::RawInput {
-            screen_rect: Some(DEFAULT_SCREEN),
+            screen_rect: Some(screen),
             events,
             ..Default::default()
         };
@@ -1044,7 +1138,7 @@ mod tests {
             theme::apply(ctx);
             app.draw_toolbar(ctx);
             app.draw_log_drawer(ctx);
-            egui::CentralPanel::default().show(ctx, |ui| app.tree.ui(&mut TileUi, ui));
+            egui::CentralPanel::default().show(ctx, |ui| app.draw_tree(ui));
         })
     }
 
@@ -1097,29 +1191,31 @@ mod tests {
     }
 
     #[test]
-    fn toolbar_groups_run_preset_curve_copy_then_log() {
+    fn toolbar_groups_run_preset_copy_then_log_and_the_curve_row_is_in_the_picker() {
         let mut app = test_app();
         let ctx = egui::Context::default();
         laid_out_picker_height(&mut app, &ctx);
         let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
 
+        let toolbar_height = 2.0 * ctx.style().spacing.interact_size.y;
         let toolbar_x = |text| {
             let centers = text_centers(&output, text);
             assert!(!centers.is_empty(), "{text:?} not painted");
-            assert!(
-                centers[0].y < 2.0 * ctx.style().spacing.interact_size.y,
-                "{text:?}"
-            );
+            assert!(centers[0].y < toolbar_height, "{text:?}");
             centers[0].x
         };
-        let order = [
-            "PRESET", "CURVE", "Spline", "Blend", "Picker", "Flip", "COPY AS", "Log",
-        ];
+        let order = ["PRESET", "COPY AS", "Log"];
         let xs = order.map(toolbar_x);
         assert!(
             xs.windows(2).all(|pair| pair[0] < pair[1]),
             "{order:?} at {xs:?}"
         );
+        let picker = pane_rect(&app.tree, is_picker_pane).unwrap();
+        for text in ["CURVE", "Spline", "Blend", "Flip"] {
+            let centers = text_centers(&output, text);
+            assert_eq!(centers.len(), 1, "{text:?} at {centers:?}");
+            assert!(picker.contains(centers[0]), "{text:?} outside {picker:?}");
+        }
     }
 
     #[test]
@@ -1162,7 +1258,7 @@ mod tests {
     }
 
     #[test]
-    fn toolbar_flip_reverses_the_points_and_ends_a_drag() {
+    fn picker_flip_reverses_the_points_and_ends_a_drag() {
         let mut app = test_app();
         let values = [[0.1, 0.2, 0.3], [0.5, 0.5, 0.5], [0.9, 0.8, 0.7]];
         app.app_ctx.borrow_mut().control_points = values
@@ -1191,6 +1287,90 @@ mod tests {
         let reversed: Vec<[f32; 2]> = values.iter().rev().map(|&value| sv(value)).collect();
         assert_eq!(flipped, reversed);
         assert_eq!(app_ctx.z_color_picker.borrow().dragging_index, None);
+    }
+
+    const NARROW_SCREEN: Rect = Rect {
+        min: Pos2::ZERO,
+        max: Pos2::new(800.0, 700.0),
+    };
+
+    fn laid_out_picker_tile(app: &mut ZApp, ctx: &egui::Context, screen: Rect) -> Rect {
+        for _ in 0..3 {
+            draw_on_screen(app, ctx, screen, Vec::new());
+        }
+        pane_rect(&app.tree, is_picker_pane).unwrap()
+    }
+
+    #[test]
+    fn a_narrow_window_keeps_the_picker_tile_at_its_min_width() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        let picker = laid_out_picker_tile(&mut app, &ctx, NARROW_SCREEN);
+
+        let min_width = picker_tile_min_size(&app.app_ctx.borrow()).x;
+        assert!(min_width > MIN_SQUARE_SIDE, "{min_width}");
+        assert!(
+            picker.width() >= min_width - 0.5,
+            "{picker:?} < {min_width}"
+        );
+        assert!(picker.width() < 0.5 * NARROW_SCREEN.width(), "{picker:?}");
+    }
+
+    #[test]
+    fn widening_the_window_again_restores_the_picker_tile_width() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        let wide = laid_out_picker_tile(&mut app, &ctx, DEFAULT_SCREEN);
+        laid_out_picker_tile(&mut app, &ctx, NARROW_SCREEN);
+        let widened = laid_out_picker_tile(&mut app, &ctx, DEFAULT_SCREEN);
+
+        assert!(
+            (widened.width() - wide.width()).abs() < 0.5,
+            "{widened:?} vs {wide:?}"
+        );
+    }
+
+    fn stored_picker_tile_width(app: &ZApp) -> f32 {
+        let root = app.tree.root().unwrap();
+        let Some(Tile::Container(Container::Linear(linear))) = app.tree.tiles.get(root) else {
+            panic!("root is not a linear container");
+        };
+        let tree_width = app.tree.tiles.rect(root).unwrap().width();
+        let available = tree_width - theme::PANE_GAP * (linear.children.len() - 1) as f32;
+        linear.shares.split(&linear.children, available)[0]
+    }
+
+    #[test]
+    fn dragging_the_splitter_past_the_picker_min_width_stores_the_min_width() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        let picker = laid_out_picker_tile(&mut app, &ctx, DEFAULT_SCREEN);
+        let splitter = Pos2::new(picker.right() + 0.5 * theme::PANE_GAP, picker.center().y);
+        let target = Pos2::new(100.0, splitter.y);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for events in [
+            vec![egui::Event::PointerMoved(splitter)],
+            vec![button(splitter, true)],
+            vec![egui::Event::PointerMoved(target)],
+            vec![egui::Event::PointerMoved(target)],
+            vec![button(target, false)],
+        ] {
+            draw_on_screen(&mut app, &ctx, DEFAULT_SCREEN, events);
+        }
+
+        let min_width = picker_tile_min_size(&app.app_ctx.borrow()).x;
+        let dragged = laid_out_picker_tile(&mut app, &ctx, DEFAULT_SCREEN);
+        assert!(
+            (dragged.width() - min_width).abs() < 0.5,
+            "{dragged:?} vs {min_width}"
+        );
+        let stored = stored_picker_tile_width(&app);
+        assert!((stored - min_width).abs() < 0.5, "{stored} vs {min_width}");
     }
 
     fn round_trip(app: &ZApp) -> ZApp {
@@ -1372,7 +1552,7 @@ mod tests {
             unreachable!();
         };
         let picker_column = master.children[0];
-        master.shares.set_share(picker_column, 0.2);
+        master.shares.set_share(picker_column, 0.5);
         let resized = laid_out_pane_rects(&mut app);
 
         let mut restored = round_trip(&app);

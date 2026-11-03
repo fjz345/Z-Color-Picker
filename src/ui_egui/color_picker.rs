@@ -11,7 +11,10 @@ use crate::{
         app::ZColorPickerOptions,
         auto_comb::{apply_auto_comb, drag_handle_to, CombEdit},
         color_readout::{color_readout, color_readout_height},
-        content_windows::{clip_to_srgb_checkbox, comb_row, picker_space_combo, points_row},
+        content_windows::{
+            clip_to_srgb_checkbox, comb_row, curve_row, flip_control_points, picker_space_combo,
+            points_row,
+        },
         control_points::{
             clip_points_to_srgb, control_point_outline, control_point_pos, convert_picker_space,
             drag_grab_offset_x, drag_t, gradient_color_at, insert_point, normalize_t, remove_point,
@@ -27,8 +30,8 @@ use crate::{
 use eframe::{
     egui::{
         self, color_picker::show_color, lerp, pos2, CursorIcon, Frame, Label, Layout, Margin,
-        PointerButton, Pos2, Rect, Response, RichText, Sense, Shape, Spacing, Stroke, StrokeKind,
-        TextStyle, Ui, UiBuilder, Widget, WidgetInfo,
+        PointerButton, Pos2, Rect, Response, RichText, ScrollArea, Sense, Shape, Spacing, Stroke,
+        StrokeKind, TextStyle, Ui, UiBuilder, Widget, WidgetInfo,
     },
     epaint::{vec2, Color32, Vec2},
 };
@@ -43,9 +46,9 @@ use crate::{
 
 pub struct MainColorPickerCtx<'a> {
     pub control_points: &'a mut Vec<ControlPoint>,
-    pub spline_mode: SplineMode,
+    pub spline_mode: &'a mut SplineMode,
     pub picker_space: &'a mut PickerSpace,
-    pub blend_space: BlendSpace,
+    pub blend_space: &'a mut BlendSpace,
     pub color_copy_format: ColorStringCopy,
     pub last_modifying_point_index: &'a mut Option<usize>,
     pub dragging_index: &'a mut Option<usize>,
@@ -54,6 +57,7 @@ pub struct MainColorPickerCtx<'a> {
     pub copy_request: &'a mut Option<(Pos2, ColorStringCopy)>,
     pub options: &'a mut ZColorPickerOptions,
     pub auto_comb_unsolved: usize,
+    pub min_size: &'a mut Vec2,
 }
 
 pub struct ZColorPicker<'a> {
@@ -83,17 +87,12 @@ impl<'a> ZColorPicker<'a> {
         let option_rows_id = ui.id().with("option_rows_height");
         let option_rows_height = ui
             .data(|data| data.get_temp(option_rows_id))
-            .unwrap_or(2.0 * spacing.interact_size.y + spacing.item_spacing.y);
-        // Must match main_color_picker's stack inside the margins: header, inspector, color readout, hue, T, square, and the overlays' add_space(8.0); then the option rows.
-        let row_count = 1.0;
-        let gap_count = 6.0;
-        let overlay_space = 2.0 * 8.0;
-        let fixed_height = header_height(spacing)
-            + row_count * spacing.interact_size.y
-            + color_readout_height(spacing)
-            + gap_count * spacing.item_spacing.y
-            + overlay_space
-            + option_rows_height;
+            .unwrap_or(3.0 * spacing.interact_size.y + 2.0 * spacing.item_spacing.y);
+        let fixed_rows_width_id = ui.id().with("fixed_rows_width");
+        let fixed_rows_width: f32 = ui
+            .data(|data| data.get_temp(fixed_rows_width_id))
+            .unwrap_or(0.0);
+        let fixed_height = stack_fixed_height(spacing, option_rows_height);
         // The width-limited inset lines the rows up with a full-width square and keeps their wrapping independent of the square's size.
         let (_, rows_margin) =
             picker_layout(vec2(ui.available_width(), f32::INFINITY), strip_ratio, 0.0);
@@ -108,10 +107,12 @@ impl<'a> ZColorPicker<'a> {
             }
         }
 
-        let centering = ((ui.available_width() - side) / 2.0 - margin.x).max(0.0);
+        let centered = (ui.available_width() - side) / 2.0 - margin.x;
+        let fixed_rows_fit = ui.available_width() - fixed_rows_width - 2.0 * margin.x;
+        let centering = centered.min(fixed_rows_fit).max(0.0);
         let column = ui.available_rect_before_wrap();
         let column = column.with_min_x(column.min.x + centering);
-        let response = ui
+        let (response, laid_out_fixed_rows_width) = ui
             .scope_builder(UiBuilder::new().max_rect(column), |ui| {
                 Frame::NONE
                     .inner_margin(Margin::symmetric(margin.x as i8, margin.y as i8))
@@ -124,21 +125,39 @@ impl<'a> ZColorPicker<'a> {
             .inner_margin(Margin::symmetric(rows_margin.x as i8, 0))
             .show(ui, |ui| {
                 points_row(ui, self.ctx.options, *self.ctx.picker_space);
+                if curve_row(ui, self.ctx.spline_mode, self.ctx.blend_space) {
+                    flip_control_points(
+                        self.ctx.control_points,
+                        self.ctx.last_modifying_point_index,
+                    );
+                    *self.ctx.dragging_index = None;
+                }
                 comb_row(
                     ui,
                     self.ctx.options,
-                    self.ctx.spline_mode,
-                    self.ctx.blend_space,
+                    *self.ctx.spline_mode,
+                    *self.ctx.blend_space,
                     self.ctx.auto_comb_unsolved,
                 );
             })
             .response
             .rect
             .height();
-        if (laid_out_rows_height - option_rows_height).abs() > 0.5 {
-            ui.data_mut(|data| data.insert_temp(option_rows_id, laid_out_rows_height));
-            ui.ctx()
-                .request_discard("picker option rows changed height");
+
+        *self.ctx.min_size = picker_min_size(
+            strip_ratio,
+            stack_fixed_height(ui.spacing(), laid_out_rows_height),
+            laid_out_fixed_rows_width,
+        );
+        let is_resized = |laid_out: f32, stored: f32| (laid_out - stored).abs() > 0.5;
+        if is_resized(laid_out_rows_height, option_rows_height)
+            || is_resized(laid_out_fixed_rows_width, fixed_rows_width)
+        {
+            ui.data_mut(|data| {
+                data.insert_temp(option_rows_id, laid_out_rows_height);
+                data.insert_temp(fixed_rows_width_id, laid_out_fixed_rows_width);
+            });
+            ui.ctx().request_discard("picker rows changed size");
         }
         response
     }
@@ -158,6 +177,8 @@ pub struct ZColorPickerWrapper {
     pub auto_comb_unsolved: usize,
     #[serde(skip)]
     pub was_auto_comb_running: bool,
+    #[serde(skip)]
+    pub min_size: Vec2,
 }
 
 impl Default for ZColorPickerWrapper {
@@ -171,6 +192,7 @@ impl Default for ZColorPickerWrapper {
             dragging_tangent: None,
             auto_comb_unsolved: 0,
             was_auto_comb_running: false,
+            min_size: Vec2::ZERO,
         };
 
         new_color_picker
@@ -223,38 +245,53 @@ impl ZColorPickerWrapper {
         &mut self,
         ui: &mut Ui,
         control_points: &mut Vec<ControlPoint>,
-        spline_mode: SplineMode,
+        spline_mode: &mut SplineMode,
         picker_space: &mut PickerSpace,
-        blend_space: BlendSpace,
+        blend_space: &mut BlendSpace,
         color_copy_format: &ColorStringCopy,
     ) -> Response {
-        let inner_response = ui.vertical(|ui| {
-            self.pre_draw_update(control_points, spline_mode, *picker_space, blend_space);
-
-            let mut ctx = MainColorPickerCtx {
-                control_points: control_points,
-                spline_mode: spline_mode,
-                picker_space,
-                blend_space,
-                color_copy_format: *color_copy_format,
-                last_modifying_point_index: &mut self.last_modifying_point_index,
-                dragging_index: &mut self.dragging_index,
-                dragging_tangent: &mut self.dragging_tangent,
-                control_point_right_clicked: &mut self.right_clicked_on_index,
-                copy_request: &mut self.copy_request,
-                options: &mut self.options,
-                auto_comb_unsolved: self.auto_comb_unsolved,
-            };
-
-            let color_picker_widget: ZColorPicker<'_> = ZColorPicker::new(&mut ctx);
-            let main_color_picker_response = ui.add(color_picker_widget);
-
-            self.post_draw(control_points, *picker_space, &main_color_picker_response);
-
-            main_color_picker_response
-        });
-
-        inner_response.inner
+        self.pre_draw_update(control_points, *spline_mode, *picker_space, *blend_space);
+        let pane = ui.max_rect();
+        let is_below_min_size = [
+            self.min_size.x > pane.width() + 0.5,
+            self.min_size.y > pane.height() + 0.5,
+        ];
+        ui.scope(|ui| {
+            ui.set_clip_rect(pane.intersect(ui.clip_rect()));
+            ScrollArea::new(is_below_min_size)
+                .id_salt("picker_scroll")
+                .auto_shrink(false)
+                .drag_to_scroll(false)
+                .show(ui, |ui| {
+                    let content_size = ui.available_size().max(self.min_size);
+                    let content = UiBuilder::new()
+                        .max_rect(Rect::from_min_size(ui.max_rect().min, content_size))
+                        .layout(Layout::top_down(egui::Align::Min));
+                    ui.scope_builder(content, |ui| {
+                        let mut ctx = MainColorPickerCtx {
+                            control_points,
+                            spline_mode,
+                            picker_space,
+                            blend_space,
+                            color_copy_format: *color_copy_format,
+                            last_modifying_point_index: &mut self.last_modifying_point_index,
+                            dragging_index: &mut self.dragging_index,
+                            dragging_tangent: &mut self.dragging_tangent,
+                            control_point_right_clicked: &mut self.right_clicked_on_index,
+                            copy_request: &mut self.copy_request,
+                            options: &mut self.options,
+                            auto_comb_unsolved: self.auto_comb_unsolved,
+                            min_size: &mut self.min_size,
+                        };
+                        let response = ui.add(ZColorPicker::new(&mut ctx));
+                        self.post_draw(control_points, *picker_space, &response);
+                        response
+                    })
+                    .inner
+                })
+                .inner
+        })
+        .inner
     }
 
     // TODO: SHOULD MOVE THIS REMOVE LOGIC OUT SIDE OF THE COLOR PICKER
@@ -537,8 +574,9 @@ pub fn main_color_picker(
     ui: &mut Ui,
     desired_size: Vec2,
     ctx: &mut MainColorPickerCtx,
-) -> Response {
+) -> (Response, f32) {
     ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
+        let column_left = ui.max_rect().left();
         let scale_factor = desired_size.x / ui.spacing().slider_width;
         let desired_size_slider_2d = scale_factor * Vec2::splat(ui.spacing().slider_width);
         let slider_2d_rect_size =
@@ -549,24 +587,31 @@ pub fn main_color_picker(
             .and_then(|i| ctx.control_points.get(i))
             .map(|cp| cp.val().color(*ctx.picker_space));
 
-        if let Some(anchor) = picker_header(ui, selected_color, ctx) {
+        let (copy_anchor, header_right) = picker_header(ui, selected_color, ctx);
+        if let Some(anchor) = copy_anchor {
             *ctx.copy_request = Some((anchor, ctx.color_copy_format));
         }
         let selected_value = is_modifying_index
             .and_then(|i| ctx.control_points.get(i))
             .map(|cp| *cp.val());
         let picker_space = *ctx.picker_space;
-        point_inspector(
-            ui,
-            ctx.control_points,
-            is_modifying_index,
-            InspectorOptions {
-                is_hue_middle_interpolated: ctx.options.is_auto_hue(picker_space),
-                is_curve_locked: ctx.options.is_curve_locked,
-                is_window_lock: ctx.options.is_window_lock,
-                picker_space,
-            },
-        );
+        let inspector_right = ui
+            .scope(|ui| {
+                point_inspector(
+                    ui,
+                    ctx.control_points,
+                    is_modifying_index,
+                    InspectorOptions {
+                        is_hue_middle_interpolated: ctx.options.is_auto_hue(picker_space),
+                        is_curve_locked: ctx.options.is_curve_locked,
+                        is_window_lock: ctx.options.is_window_lock,
+                        picker_space,
+                    },
+                )
+            })
+            .response
+            .rect
+            .right();
         if let Some(request) = color_readout(ui, selected_color) {
             *ctx.copy_request = Some(request);
         }
@@ -604,12 +649,12 @@ pub fn main_color_picker(
             paint_empty_picker_hint(ui, slider_2d_response.rect);
         }
 
-        if ctx.options.is_show_curvature_comb && ctx.blend_space == BlendSpace::Picker {
+        if ctx.options.is_show_curvature_comb && *ctx.blend_space == BlendSpace::Picker {
             draw_curvature_comb(
                 ui,
                 slider_2d_response.rect,
                 ctx.control_points,
-                ctx.spline_mode,
+                *ctx.spline_mode,
                 ctx.options.curvature_comb_scale,
             );
         }
@@ -617,43 +662,81 @@ pub fn main_color_picker(
         let _ = ui_ordered_spline_gradient(
             ui,
             ctx.control_points,
-            ctx.spline_mode,
+            *ctx.spline_mode,
             *ctx.picker_space,
-            ctx.blend_space,
+            *ctx.blend_space,
             &slider_2d_response,
         );
         handle_control_points_ui(ui, ctx, &slider_2d_response, &mut is_modifying_index);
 
-        slider_2d_response
+        let fixed_rows_width = header_right.max(inspector_right) - column_left;
+        (slider_2d_response, fixed_rows_width)
     })
     .inner
 }
 
 // -------------------- Helper Functions --------------------
 const SWATCH_ASPECT: f32 = 2.0;
+pub const MIN_SQUARE_SIDE: f32 = 160.0;
 
 fn header_height(spacing: &Spacing) -> f32 {
     2.0 * spacing.interact_size.y + spacing.item_spacing.y
+}
+
+fn stack_fixed_height(spacing: &Spacing, option_rows_height: f32) -> f32 {
+    // Must match main_color_picker's stack inside the margins: header, inspector, color readout, hue, T, square, and the overlays' add_space(8.0); then the option rows.
+    let row_count = 1.0;
+    let gap_count = 6.0;
+    let overlay_space = 2.0 * 8.0;
+    header_height(spacing)
+        + row_count * spacing.interact_size.y
+        + color_readout_height(spacing)
+        + gap_count * spacing.item_spacing.y
+        + overlay_space
+        + option_rows_height
+}
+
+fn picker_min_size(strip_ratio: f32, fixed_height: f32, fixed_rows_width: f32) -> Vec2 {
+    let (min_side, square_margin) = picker_layout(Vec2::ZERO, strip_ratio, 0.0);
+    let square_width = min_side + 2.0 * square_margin.x;
+    let square_height = min_side * (1.0 + 2.0 * strip_ratio) + 2.0 * square_margin.y;
+    vec2(
+        square_width.max(width_fitting_fixed_rows(fixed_rows_width, strip_ratio)),
+        square_height + fixed_height,
+    )
+}
+
+fn width_fitting_fixed_rows(fixed_rows_width: f32, strip_ratio: f32) -> f32 {
+    let needed = |width: f32| {
+        let (_, margin) = picker_layout(vec2(width, f32::INFINITY), strip_ratio, 0.0);
+        fixed_rows_width + 2.0 * margin.x
+    };
+    // The column margin grows with the width; it is whole points and bounded, so this ends.
+    let mut width = fixed_rows_width;
+    while needed(width) > width {
+        width = needed(width);
+    }
+    width
 }
 
 fn picker_header(
     ui: &mut Ui,
     color: Option<Color32>,
     ctx: &mut MainColorPickerCtx,
-) -> Option<Pos2> {
+) -> (Option<Pos2>, f32) {
     let height = header_height(ui.spacing());
     ui.horizontal(|ui| {
         selected_color_swatch(ui, color, vec2(SWATCH_ASPECT * height, height));
         ui.vertical(|ui| {
             let copy_anchor = selected_color_readout(ui, color, ctx.color_copy_format);
-            ui.horizontal(|ui| {
+            let space_row = ui.horizontal(|ui| {
                 let mut chosen = *ctx.picker_space;
                 picker_space_combo(ui, &mut chosen);
                 clip_to_srgb_checkbox(ui, &mut chosen);
                 convert_picker_space(ctx.control_points, *ctx.picker_space, chosen);
                 *ctx.picker_space = chosen;
             });
-            copy_anchor
+            (copy_anchor, space_row.response.rect.right())
         })
         .inner
     })
@@ -662,7 +745,10 @@ fn picker_header(
 
 fn picker_side(available: Vec2, strip_ratio: f32, fixed_height: f32) -> f32 {
     let height_limited_side = (available.y - fixed_height) / (1.0 + 2.0 * strip_ratio);
-    available.x.min(height_limited_side).clamp(160.0, 800.0)
+    available
+        .x
+        .min(height_limited_side)
+        .clamp(MIN_SQUARE_SIDE, 800.0)
 }
 
 fn picker_layout(available: Vec2, strip_ratio: f32, fixed_height: f32) -> (f32, Vec2) {
@@ -864,7 +950,7 @@ fn handle_control_points_ui(
         *is_modifying_index,
         ctx.options.is_hue_middle_interpolated,
         &slider_2d_response,
-        ctx.spline_mode == SplineMode::Bezier,
+        *ctx.spline_mode == SplineMode::Bezier,
         *ctx.picker_space,
     );
 
@@ -949,7 +1035,7 @@ fn handle_control_points_ui(
                             index,
                             tang_idx,
                             target,
-                            is_auto_comb_running(ctx.spline_mode, ctx.blend_space, ctx.options),
+                            is_auto_comb_running(*ctx.spline_mode, *ctx.blend_space, ctx.options),
                         );
                         *ctx.dragging_tangent = Some((index, tang_idx));
                     }
@@ -1165,9 +1251,9 @@ fn handle_t_strip(
 ) {
     let gradient = gradient_color_at(
         ctx.control_points,
-        ctx.spline_mode,
+        *ctx.spline_mode,
         *ctx.picker_space,
-        ctx.blend_space,
+        *ctx.blend_space,
     );
     let t_response = color_function_gradient(ui, slider_size, gradient)
         .on_hover_text(strip_hint(Strip::T, is_modifying_index.is_some()));
@@ -1396,56 +1482,76 @@ mod tests {
         square: Rect,
         pane: Rect,
         used: Rect,
+        min_size: Vec2,
         output: egui::FullOutput,
     }
 
-    fn lay_out_picker(screen_size: Vec2) -> LaidOutPicker {
+    fn lay_out_picker(pane_size: Vec2) -> LaidOutPicker {
+        lay_out_picker_selecting(pane_size, None)
+    }
+
+    fn lay_out_picker_selecting(pane_size: Vec2, selected: Option<usize>) -> LaidOutPicker {
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::splat(1600.0));
+        let pane = Rect::from_min_size(pos2(30.0, 40.0), pane_size);
         let ctx = egui::Context::default();
         crate::ui_egui::theme::apply(&ctx);
         let mut picker = ZColorPickerWrapper::default();
+        picker.last_modifying_point_index = selected;
         let mut points = vec![
             ControlPoint::new_simple(ControlPointValue::new(0.0, 0.0, 0.0), 0.0),
             ControlPoint::new_simple(ControlPointValue::new(1.0, 0.0, 0.3), 0.3),
             ControlPoint::new_simple(ControlPointValue::new(0.0, 1.0, 0.6), 0.6),
             ControlPoint::new_simple(ControlPointValue::new(1.0, 1.0, 1.0), 1.0),
         ];
-        let mut rects = None;
+        let mut square = None;
         let mut output = None;
-        for _ in 0..2 {
+        for _ in 0..3 {
             let input = egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, screen_size)),
+                screen_rect: Some(screen),
                 ..Default::default()
             };
             output = Some(ctx.run(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    let pane = ui.max_rect();
-                    let picker_scope = ui.scope(|ui| {
-                        picker
-                            .draw_ui(
-                                ui,
-                                &mut points,
-                                SplineMode::HermiteBezier,
-                                &mut PickerSpace::Hsv,
-                                BlendSpace::Picker,
-                                &ColorStringCopy::HEXNOA,
-                            )
-                            .rect
-                    });
-                    rects = Some((picker_scope.inner, pane, picker_scope.response.rect));
-                });
+                let mut ui = Ui::new(
+                    ctx.clone(),
+                    egui::Id::new("pane"),
+                    UiBuilder::new().max_rect(pane),
+                );
+                ui.set_clip_rect(screen);
+                let response = picker.draw_ui(
+                    &mut ui,
+                    &mut points,
+                    &mut SplineMode::HermiteBezier,
+                    &mut PickerSpace::Hsv,
+                    &mut BlendSpace::Picker,
+                    &ColorStringCopy::HEXNOA,
+                );
+                square = Some(response.rect);
             }));
         }
-        let (square, pane, used) = rects.unwrap();
+        let output = output.unwrap();
+        let used = (output.shapes.iter())
+            .map(|clipped| {
+                let painted = clipped.shape.visual_bounding_rect();
+                let is_clipped_inside_the_pane = clipped.clip_rect != pane;
+                if is_clipped_inside_the_pane {
+                    painted.intersect(clipped.clip_rect)
+                } else {
+                    painted
+                }
+            })
+            .filter(|rect| rect.is_positive())
+            .fold(Rect::NOTHING, |used, rect| used.union(rect));
         LaidOutPicker {
-            square,
+            square: square.unwrap(),
             pane,
             used,
-            output: output.unwrap(),
+            min_size: picker.min_size,
+            output,
         }
     }
 
-    fn assert_square_inset(screen_size: Vec2) -> LaidOutPicker {
-        let picker = lay_out_picker(screen_size);
+    fn assert_square_inset(pane_size: Vec2) -> LaidOutPicker {
+        let picker = lay_out_picker(pane_size);
         let LaidOutPicker {
             square, pane, used, ..
         } = picker;
@@ -1467,42 +1573,89 @@ mod tests {
             pane.bottom() - square.bottom() >= vertical,
             "{square:?} in {pane:?}"
         );
-        assert!(used.bottom() <= pane.bottom() + 0.5, "{used:?} in {pane:?}");
+        assert!(pane.expand(0.5).contains_rect(used), "{used:?} in {pane:?}");
         picker
     }
 
     #[test]
     fn picker_insets_square_in_width_limited_pane() {
-        assert_square_inset(vec2(260.0, 900.0));
+        assert_square_inset(vec2(340.0, 900.0));
     }
 
     #[test]
     fn picker_insets_square_in_height_limited_pane() {
-        let LaidOutPicker { pane, used, .. } = assert_square_inset(vec2(1000.0, 520.0));
+        let LaidOutPicker { pane, used, .. } = assert_square_inset(vec2(1000.0, 560.0));
         assert!(pane.bottom() - used.bottom() < 1.0, "{used:?} in {pane:?}");
     }
 
     #[test]
     fn picker_option_rows_span_the_pane_not_the_centered_column() {
-        for size in [vec2(540.0, 520.0), vec2(580.0, 560.0), vec2(620.0, 640.0)] {
-            let LaidOutPicker { pane, used, .. } = assert_square_inset(size);
-            assert!(used.right() <= pane.right() + 0.5, "{used:?} in {pane:?}");
+        for size in [vec2(540.0, 560.0), vec2(580.0, 600.0), vec2(620.0, 680.0)] {
+            assert_square_inset(size);
         }
     }
 
     #[test]
     fn picker_fits_option_rows_that_wrap_in_a_narrow_pane() {
-        for height in (600..=800).step_by(4) {
-            assert_square_inset(vec2(300.0, height as f32));
+        for height in (660..=860).step_by(4) {
+            assert_square_inset(vec2(340.0, height as f32));
         }
     }
 
     #[test]
     fn picker_centers_the_square_in_a_height_limited_pane() {
-        let LaidOutPicker { square, pane, .. } = assert_square_inset(vec2(1000.0, 520.0));
+        let LaidOutPicker { square, pane, .. } = assert_square_inset(vec2(1000.0, 560.0));
         let left = square.left() - pane.left();
         let right = pane.right() - square.right();
         assert!((left - right).abs() < 1.0, "{square:?} in {pane:?}");
+    }
+
+    const TINY_PANE_SIZES: [Vec2; 5] = [
+        vec2(40.0, 40.0),
+        vec2(150.0, 300.0),
+        vec2(320.0, 200.0),
+        vec2(200.0, 640.0),
+        vec2(640.0, 260.0),
+    ];
+
+    #[test]
+    fn picker_paints_nothing_outside_a_tiny_pane() {
+        for size in TINY_PANE_SIZES {
+            let LaidOutPicker { pane, output, .. } = lay_out_picker_selecting(size, Some(1));
+            for clipped in &output.shapes {
+                let visible = clipped
+                    .shape
+                    .visual_bounding_rect()
+                    .intersect(clipped.clip_rect);
+                assert!(
+                    visible.is_negative() || pane.expand(0.5).contains_rect(visible),
+                    "{size:?}: {visible:?} outside {pane:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn picker_square_keeps_its_min_side_in_a_tiny_pane() {
+        for size in TINY_PANE_SIZES {
+            let LaidOutPicker { square, .. } = lay_out_picker_selecting(size, Some(1));
+            assert!(
+                square.width() >= MIN_SQUARE_SIDE - 0.5,
+                "{size:?}: {square:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn picker_fits_its_min_size_with_nothing_clipped() {
+        for selected in [None, Some(1)] {
+            let min_size = lay_out_picker_selecting(Vec2::splat(10.0), selected).min_size;
+            let LaidOutPicker {
+                square, pane, used, ..
+            } = lay_out_picker_selecting(min_size, selected);
+            assert!(pane.expand(0.5).contains_rect(used), "{used:?} in {pane:?}");
+            assert!((square.width() - MIN_SQUARE_SIDE).abs() < 0.5, "{square:?}");
+        }
     }
 
     fn painted_text_rect(output: &egui::FullOutput, wanted: &str) -> Rect {
@@ -1534,8 +1687,16 @@ mod tests {
             text("POINTS"),
             picker.square
         );
-        assert!(text("COMB").top() >= text("POINTS").bottom());
+        assert!(text("CURVE").top() >= text("POINTS").bottom());
+        assert!(text("COMB").top() >= text("CURVE").bottom());
         assert!(text("COMB").bottom() <= picker.used.bottom());
+        for wanted in ["Spline", "Blend", "Flip"] {
+            let y = text(wanted).center().y;
+            assert!(
+                y > text("CURVE").top() && y < text("COMB").top(),
+                "{wanted:?} at {y}"
+            );
+        }
     }
 
     const STRIP_RECT: Rect = Rect {
@@ -1664,9 +1825,9 @@ mod tests {
                     picker.draw_ui(
                         ui,
                         &mut points,
-                        SplineMode::Linear,
+                        &mut SplineMode::Linear,
                         &mut drawn_space,
-                        BlendSpace::Picker,
+                        &mut BlendSpace::Picker,
                         &ColorStringCopy::HEXNOA,
                     );
                 });
@@ -2109,6 +2270,7 @@ mod tests {
         let mut dragging_tangent = None;
         let mut control_point_right_clicked = None;
         let mut copy_request = None;
+        let mut min_size = Vec2::ZERO;
         let egui_ctx = egui::Context::default();
         let mut shapes = Vec::new();
         for events in frames {
@@ -2121,9 +2283,9 @@ mod tests {
                 egui::CentralPanel::default().show(egui_ctx, |ui| {
                     let mut ctx = MainColorPickerCtx {
                         control_points: &mut *points,
-                        spline_mode: SplineMode::Linear,
+                        spline_mode: &mut SplineMode::Linear,
                         picker_space: &mut PickerSpace::Hsv,
-                        blend_space: BlendSpace::Picker,
+                        blend_space: &mut BlendSpace::Picker,
                         color_copy_format: ColorStringCopy::HEXNOA,
                         last_modifying_point_index: &mut last_modifying_point_index,
                         dragging_index: &mut dragging_index,
@@ -2132,6 +2294,7 @@ mod tests {
                         copy_request: &mut copy_request,
                         options: &mut ZColorPickerOptions::default(),
                         auto_comb_unsolved: 0,
+                        min_size: &mut min_size,
                     };
                     let strip = egui::UiBuilder::new().max_rect(STRIP_RECT);
                     ui.scope_builder(strip, |ui| {
@@ -2250,9 +2413,9 @@ mod tests {
                 picker.draw_ui(
                     ui,
                     points,
-                    SplineMode::Linear,
+                    &mut SplineMode::Linear,
                     &mut PickerSpace::Hsv,
-                    BlendSpace::Picker,
+                    &mut BlendSpace::Picker,
                     &ColorStringCopy::HEXNOA,
                 );
             });
@@ -2340,9 +2503,9 @@ mod tests {
                 picker.draw_ui(
                     ui,
                     points,
-                    SplineMode::Linear,
+                    &mut SplineMode::Linear,
                     &mut PickerSpace::Hsv,
-                    BlendSpace::Picker,
+                    &mut BlendSpace::Picker,
                     &ColorStringCopy::HEXNOA,
                 );
             });
@@ -2566,7 +2729,7 @@ mod tests {
         assert!((handle_unit(&points[1], 1) - vec2(1.0, 0.0)).length() < 1e-4);
     }
 
-    fn comb_teeth_painted(blend_space: BlendSpace) -> usize {
+    fn comb_teeth_painted(mut blend_space: BlendSpace) -> usize {
         let ctx = egui::Context::default();
         let mut picker = ZColorPickerWrapper::default();
         let mut points = kinked_bezier_points();
@@ -2579,9 +2742,9 @@ mod tests {
                 picker.draw_ui(
                     ui,
                     &mut points,
-                    SplineMode::Bezier,
+                    &mut SplineMode::Bezier,
                     &mut PickerSpace::Hsv,
-                    blend_space,
+                    &mut blend_space,
                     &ColorStringCopy::HEXNOA,
                 );
             });
@@ -2715,9 +2878,9 @@ mod tests {
                         .draw_ui(
                             ui,
                             points,
-                            SplineMode::Bezier,
+                            &mut SplineMode::Bezier,
                             &mut PickerSpace::Hsv,
-                            BlendSpace::Picker,
+                            &mut BlendSpace::Picker,
                             &ColorStringCopy::HEXNOA,
                         )
                         .rect;
@@ -3045,9 +3208,9 @@ mod tests {
                     .draw_ui(
                         ui,
                         points,
-                        SplineMode::Linear,
+                        &mut SplineMode::Linear,
                         &mut space,
-                        BlendSpace::Picker,
+                        &mut BlendSpace::Picker,
                         &ColorStringCopy::HEXNOA,
                     )
                     .rect;

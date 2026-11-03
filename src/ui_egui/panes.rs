@@ -11,7 +11,7 @@ use crate::{
     ui_egui::{
         app::ZColorPickerAppContext,
         color_picker::{is_auto_comb_running, ZColorPickerWrapper},
-        content_windows::{copy_format_combo, curve_controls, flip_control_points},
+        content_windows::copy_format_combo,
         theme,
         view_3d::{CurveSettings, View3d, View3dItem},
     },
@@ -112,18 +112,18 @@ impl ZAppPane for ColorPickerPane {
         let mut mut_ctx = self.ctx.borrow_mut();
         let color_copy_format = mut_ctx.color_copy_format;
         let mut control_points = mut_ctx.control_points.clone();
-        let spline_mode = mut_ctx.spline_mode;
+        let mut spline_mode = mut_ctx.spline_mode;
         let mut picker_space = mut_ctx.picker_space;
-        let blend_space = mut_ctx.blend_space;
+        let mut blend_space = mut_ctx.blend_space;
 
         // ui.painter().rect_filled(ui.max_rect(), 0.0, Color32::WHITE);
         ui.allocate_ui(ui.max_rect().size(), |ui| {
             let color_picker_response = color_picker.draw_ui(
                 ui,
                 &mut control_points,
-                spline_mode,
+                &mut spline_mode,
                 &mut picker_space,
-                blend_space,
+                &mut blend_space,
                 &color_copy_format,
             );
             *mut_ctx.z_color_picker.borrow_mut() = color_picker;
@@ -131,7 +131,9 @@ impl ZAppPane for ColorPickerPane {
         });
 
         mut_ctx.control_points = control_points;
+        mut_ctx.spline_mode = spline_mode;
         mut_ctx.picker_space = picker_space;
+        mut_ctx.blend_space = blend_space;
 
         return egui_tiles::UiResponse::None;
     }
@@ -293,20 +295,6 @@ pub fn preset_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egu
     mut_ctx.picker_space = picker_space;
     mut_ctx.blend_space = blend_space;
     mut_ctx.preset_handler = preset_handler;
-}
-
-pub fn curve_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egui::Ui) {
-    let mut mut_ctx = app_ctx.borrow_mut();
-    let ctx = &mut *mut_ctx;
-    let is_flip_clicked = curve_controls(ui, &mut ctx.spline_mode, &mut ctx.blend_space);
-    if is_flip_clicked {
-        let mut color_picker = ctx.z_color_picker.borrow_mut();
-        flip_control_points(
-            &mut ctx.control_points,
-            &mut color_picker.last_modifying_point_index,
-        );
-        color_picker.dragging_index = None;
-    }
 }
 
 pub fn copy_format_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egui::Ui) {
