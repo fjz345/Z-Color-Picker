@@ -427,24 +427,44 @@ pub fn convert_picker_space(points: &mut [ControlPoint], from: PickerSpace, to: 
     if from == to {
         return;
     }
-    for cp in points {
-        let old = *cp.val();
-        let handles = [0, 1].map(|slot| bezier_handle(cp, slot));
-        let new = value_in_picker_space(old, from, to);
-        *cp.val_mut() = new;
-        let value_hue_shift = shortest_hue_delta(old.h(), new.h());
-        for (tangent, handle) in cp.tangents_mut().iter_mut().zip(handles) {
-            let Some(tangent) = tangent else {
-                continue;
-            };
-            let new_handle = value_in_picker_space(handle, from, to);
-            let handle_hue_shift = shortest_hue_delta(handle.h(), new_handle.h());
-            *tangent = ControlPointValue::new(
-                new_handle.s() - new.s(),
-                new_handle.v() - new.v(),
-                tangent.h() + handle_hue_shift - value_hue_shift,
-            );
+    if !from.is_same_space(to) {
+        for cp in points.iter_mut() {
+            convert_point(cp, from, to);
         }
+    }
+    clip_points_to_srgb(points, to);
+}
+
+pub fn clip_points_to_srgb(points: &mut [ControlPoint], space: PickerSpace) {
+    if !space.clips_to_srgb() {
+        return;
+    }
+    for cp in points {
+        *cp.val_mut() = cp.val().clipped_to_srgb(space);
+    }
+}
+
+fn convert_point(cp: &mut ControlPoint, from: PickerSpace, to: PickerSpace) {
+    let old = *cp.val();
+    let handles = [0, 1].map(|slot| bezier_handle(cp, slot));
+    let new = value_in_picker_space(old, from, to);
+    *cp.val_mut() = new;
+    let value_hue_shift = shortest_hue_delta(old.h(), new.h());
+    for (tangent, handle) in cp.tangents_mut().iter_mut().zip(handles) {
+        let Some(tangent) = tangent else {
+            continue;
+        };
+        let new_handle = value_in_picker_space(handle, from, to);
+        let z_offset = match (from.is_z_hue(), to.is_z_hue()) {
+            (true, true) => {
+                let handle_hue_shift = shortest_hue_delta(handle.h(), new_handle.h());
+                tangent.h() + handle_hue_shift - value_hue_shift
+            }
+            (false, true) => shortest_hue_delta(new.h(), new_handle.h()),
+            (_, false) => new_handle.h() - new.h(),
+        };
+        *tangent =
+            ControlPointValue::new(new_handle.s() - new.s(), new_handle.v() - new.v(), z_offset);
     }
 }
 
@@ -453,14 +473,23 @@ fn value_in_picker_space(
     from: PickerSpace,
     to: PickerSpace,
 ) -> ControlPointValue {
-    let [hue, s, y] = linear_to_picker(to, value.linear(from));
+    let linear = if to.can_leave_srgb() {
+        value.unmapped_linear(from)
+    } else {
+        value.linear(from)
+    };
+    let [z, s, y] = linear_to_picker(to, linear);
     assert!(
-        [hue, s, y].iter().all(|c| c.is_finite()),
-        "{value:?} {from:?} -> {to:?}: {hue}, {s}, {y}"
+        [z, s, y].iter().all(|c| c.is_finite()),
+        "{value:?} {from:?} -> {to:?}: {z}, {s}, {y}"
     );
-    let is_achromatic = s <= 0.0;
-    let hue = if is_achromatic { value.h() } else { hue };
-    ControlPointValue::new(s.clamp(0.0, 1.0), y.clamp(0.0, 1.0), hue)
+    let keeps_hue_of_gray = from.is_z_hue() && to.is_z_hue() && s <= 0.0;
+    let z = if keeps_hue_of_gray {
+        value.h()
+    } else {
+        to.z_on_bar(z)
+    };
+    ControlPointValue::new(s.clamp(0.0, 1.0), y.clamp(0.0, 1.0), z)
 }
 
 pub fn control_points_to_spline(
@@ -1153,8 +1182,9 @@ mod tests {
 
     #[test]
     fn switching_space_keeps_the_hue_of_gray_points() {
-        for from in PickerSpace::ALL {
-            for to in PickerSpace::ALL {
+        let hue_spaces = || PickerSpace::ALL.into_iter().filter(|s| s.is_z_hue());
+        for from in hue_spaces() {
+            for to in hue_spaces() {
                 for (s, y) in [(0.0, 0.5), (0.7, 0.0)] {
                     let mut points = [ControlPoint::new_simple(
                         ControlPointValue::new(s, y, 0.37),
@@ -1164,6 +1194,71 @@ mod tests {
                     assert_eq!(points[0].val().h(), 0.37, "{from:?} -> {to:?} ({s}, {y})");
                 }
             }
+        }
+    }
+
+    const OKLCH: PickerSpace = PickerSpace::Oklch {
+        clip_to_srgb: false,
+    };
+    const OKLAB: PickerSpace = PickerSpace::Oklab {
+        clip_to_srgb: false,
+    };
+
+    fn points_outside_srgb() -> Vec<ControlPoint> {
+        let mut points = space_switch_points();
+        points.retain(|cp| !cp.val().is_in_srgb(OKLCH));
+        assert!(points.len() >= 2);
+        points
+    }
+
+    #[test]
+    fn switching_between_oklch_and_oklab_keeps_points_outside_srgb() {
+        let mut points = points_outside_srgb();
+        let before: Vec<[f32; 3]> = points
+            .iter()
+            .map(|cp| cp.val().unmapped_linear(OKLCH))
+            .collect();
+        convert_picker_space(&mut points, OKLCH, OKLAB);
+        for (cp, before) in points.iter().zip(&before) {
+            assert!(!cp.val().is_in_srgb(OKLAB), "{cp:?}");
+            assert_linear_close(cp.val().unmapped_linear(OKLAB), *before, "Oklab");
+        }
+        convert_picker_space(&mut points, OKLAB, OKLCH);
+        for (cp, before) in points.iter().zip(&before) {
+            assert_linear_close(cp.val().unmapped_linear(OKLCH), *before, "OkLCh");
+        }
+    }
+
+    #[test]
+    fn switching_to_a_clipping_space_pulls_every_point_into_srgb() {
+        for from in PickerSpace::ALL {
+            for to in [OKLCH, OKLAB] {
+                let to = to.with_clip_to_srgb(true);
+                let mut points = points_outside_srgb();
+                convert_picker_space(&mut points, from, to);
+                for cp in &points {
+                    assert!(cp.val().is_in_srgb(to), "{from:?} -> {to:?}: {cp:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn turning_clip_on_clamps_the_points_once_and_turning_it_off_keeps_them() {
+        for space in [OKLCH, OKLAB] {
+            let clipped = space.with_clip_to_srgb(true);
+            let mut points = points_outside_srgb();
+            convert_picker_space(&mut points, space, clipped);
+            let expected: Vec<ControlPoint> = points_outside_srgb()
+                .into_iter()
+                .map(|mut cp| {
+                    *cp.val_mut() = cp.val().clipped_to_srgb(clipped);
+                    cp
+                })
+                .collect();
+            assert_eq!(points, expected, "{space:?}");
+            convert_picker_space(&mut points, clipped, space);
+            assert_eq!(points, expected, "{space:?}");
         }
     }
 

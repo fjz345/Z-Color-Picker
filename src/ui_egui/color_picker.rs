@@ -11,11 +11,12 @@ use crate::{
         app::ZColorPickerOptions,
         auto_comb::apply_auto_comb,
         color_readout::{color_readout, color_readout_height},
-        content_windows::{comb_row, picker_space_combo, points_row},
+        content_windows::{clip_to_srgb_checkbox, comb_row, picker_space_combo, points_row},
         control_points::{
-            control_point_outline, control_point_pos, convert_picker_space, drag_grab_offset_x,
-            drag_t, gradient_color_at, insert_point, normalize_t, remove_point, t_at_pointer,
-            ui_ordered_control_points, ControlPointUiResult, CONTROL_POINT_FILL_RADIUS,
+            clip_points_to_srgb, control_point_outline, control_point_pos, convert_picker_space,
+            drag_grab_offset_x, drag_t, gradient_color_at, insert_point, normalize_t, remove_point,
+            t_at_pointer, ui_ordered_control_points, ControlPointUiResult,
+            CONTROL_POINT_FILL_RADIUS,
         },
         curvature::draw_curvature_comb,
         gradient::color_function_gradient,
@@ -122,7 +123,7 @@ impl<'a> ZColorPicker<'a> {
         let laid_out_rows_height = Frame::NONE
             .inner_margin(Margin::symmetric(rows_margin.x as i8, 0))
             .show(ui, |ui| {
-                points_row(ui, self.ctx.options);
+                points_row(ui, self.ctx.options, *self.ctx.picker_space);
                 comb_row(
                     ui,
                     self.ctx.options,
@@ -178,6 +179,7 @@ impl ZColorPickerWrapper {
         &mut self,
         control_points: &mut Vec<ControlPoint>,
         spline_mode: SplineMode,
+        picker_space: PickerSpace,
         blend_space: BlendSpace,
     ) {
         normalize_t_with_warning(control_points);
@@ -197,7 +199,7 @@ impl ZColorPickerWrapper {
             && self.options.is_auto_comb
         {
             // Constrain first: a later clamp would move solved points and unsettle a loaded preset.
-            self.apply_control_point_constraints(control_points);
+            self.apply_control_point_constraints(control_points, picker_space);
             self.auto_comb_unsolved = apply_auto_comb(control_points, self.dragging_tangent);
         }
     }
@@ -212,7 +214,7 @@ impl ZColorPickerWrapper {
         color_copy_format: &ColorStringCopy,
     ) -> Response {
         let inner_response = ui.vertical(|ui| {
-            self.pre_draw_update(control_points, spline_mode, blend_space);
+            self.pre_draw_update(control_points, spline_mode, *picker_space, blend_space);
 
             let mut ctx = MainColorPickerCtx {
                 control_points: control_points,
@@ -232,7 +234,7 @@ impl ZColorPickerWrapper {
             let color_picker_widget: ZColorPicker<'_> = ZColorPicker::new(&mut ctx);
             let main_color_picker_response = ui.add(color_picker_widget);
 
-            self.post_draw(control_points, &main_color_picker_response);
+            self.post_draw(control_points, *picker_space, &main_color_picker_response);
 
             main_color_picker_response
         });
@@ -304,30 +306,35 @@ impl ZColorPickerWrapper {
             }
         }
     }
-    fn clamp_control_points(&mut self, control_points: &mut Vec<ControlPoint>) {
+    fn clamp_control_points(&mut self, control_points: &mut Vec<ControlPoint>, space: PickerSpace) {
         for cp in control_points.iter_mut() {
             cp.val_mut()[0] = cp.val()[0].clamp(0.0, 1.0);
             cp.val_mut()[1] = cp.val()[1].clamp(0.0, 1.0);
-            cp.val_mut()[2] = cp.val()[2].rem_euclid(1.0);
+            cp.val_mut()[2] = space.z_on_bar(cp.val()[2]);
         }
     }
 
-    pub fn apply_control_point_constraints(&mut self, control_points: &mut Vec<ControlPoint>) {
+    pub fn apply_control_point_constraints(
+        &mut self,
+        control_points: &mut Vec<ControlPoint>,
+        picker_space: PickerSpace,
+    ) {
         normalize_t_with_warning(control_points);
-        if self.options.is_hue_middle_interpolated {
+        if self.options.is_auto_hue(picker_space) {
             self.apply_interpolate_hue_middle(control_points);
         }
         if self.options.is_window_lock {
-            self.clamp_control_points(control_points);
+            self.clamp_control_points(control_points, picker_space);
         }
     }
 
     fn post_draw(
         &mut self,
         control_points: &mut Vec<ControlPoint>,
+        picker_space: PickerSpace,
         z_color_picker_response: &Response,
     ) {
-        self.apply_control_point_constraints(control_points);
+        self.apply_control_point_constraints(control_points, picker_space);
 
         match self.right_clicked_on_index {
             Some(index) => {
@@ -335,12 +342,13 @@ impl ZColorPickerWrapper {
             }
             _ => {}
         }
-        self.handle_doubleclick_event(control_points, z_color_picker_response);
+        self.handle_doubleclick_event(control_points, picker_space, z_color_picker_response);
     }
 
     pub fn handle_doubleclick_event(
         &mut self,
         control_points: &mut Vec<ControlPoint>,
+        picker_space: PickerSpace,
         z_color_picker_response: &Response,
     ) {
         if !z_color_picker_response.double_clicked_by(PointerButton::Primary) {
@@ -354,15 +362,25 @@ impl ZColorPickerWrapper {
             return;
         }
         let click_normalized = ((pos - rect.min) / rect.size()).to_pos2();
-        if let Some(cp) = point_to_spawn(
+        if let Some(mut cp) = point_to_spawn(
             control_points,
             click_normalized,
             rect.size(),
             CONTROL_POINT_FILL_RADIUS,
+            unselected_z(picker_space),
         ) {
+            clip_points_to_srgb(std::slice::from_mut(&mut cp), picker_space);
             self.spawn_control_point(control_points, cp);
-            self.apply_control_point_constraints(control_points);
+            self.apply_control_point_constraints(control_points, picker_space);
         }
+    }
+}
+
+fn unselected_z(picker_space: PickerSpace) -> f32 {
+    if picker_space.is_z_hue() {
+        0.0
+    } else {
+        0.5
     }
 }
 
@@ -392,6 +410,7 @@ fn point_to_spawn(
     click_normalized: Pos2,
     rect_size: Vec2,
     min_dist_px: f32,
+    z_without_points: f32,
 ) -> Option<ControlPoint> {
     let click = click_normalized.clamp(Pos2::ZERO, pos2(1.0, 1.0));
     let screen_dist = |cp: &ControlPoint| ((control_point_pos(cp) - click) * rect_size).length();
@@ -400,7 +419,7 @@ fn point_to_spawn(
         .map(|cp| (cp, screen_dist(cp)))
         .min_by(|(_, a), (_, b)| a.total_cmp(b));
     let hue = match nearest {
-        None => 0.0,
+        None => z_without_points,
         Some((_, dist)) if dist <= min_dist_px => return None,
         Some((cp, _)) => cp.val().h(),
     };
@@ -521,26 +540,30 @@ pub fn main_color_picker(
         let selected_value = is_modifying_index
             .and_then(|i| ctx.control_points.get(i))
             .map(|cp| *cp.val());
+        let picker_space = *ctx.picker_space;
         point_inspector(
             ui,
             ctx.control_points,
             is_modifying_index,
             InspectorOptions {
-                is_hue_middle_interpolated: ctx.options.is_hue_middle_interpolated,
+                is_hue_middle_interpolated: ctx.options.is_auto_hue(picker_space),
                 is_curve_locked: ctx.options.is_curve_locked,
                 is_window_lock: ctx.options.is_window_lock,
-                picker_space: *ctx.picker_space,
+                picker_space,
             },
         );
         if let Some(request) = color_readout(ui, selected_color) {
             *ctx.copy_request = Some(request);
         }
 
-        let hue_to_show = selected_value.map_or(0.0, |value| value.h().rem_euclid(1.0));
+        let hue_to_show = selected_value.map_or(unselected_z(picker_space), |value| {
+            picker_space.z_on_bar(value.h())
+        });
 
         let delta_hue = handle_hue_slider(
             ui,
             hue_to_show,
+            selected_value,
             slider_2d_rect_size,
             ctx,
             &mut is_modifying_index,
@@ -549,8 +572,9 @@ pub fn main_color_picker(
             if let Some(_index) = is_modifying_index {
                 for cp in ctx.control_points.iter_mut() {
                     let val_mut_ref = cp.val_mut();
-                    val_mut_ref.val[2] = (val_mut_ref.h() - h).rem_euclid(1.0);
+                    val_mut_ref.val[2] = picker_space.z_on_bar(val_mut_ref.h() - h);
                 }
+                clip_points_to_srgb(ctx.control_points, picker_space);
             }
         }
 
@@ -559,7 +583,7 @@ pub fn main_color_picker(
         let slider_2d_response = color_field(
             ui,
             desired_size_slider_2d,
-            main_color_picker_color_at_function(*ctx.picker_space, hue_to_show),
+            main_color_picker_color_at_function(picker_space, hue_to_show),
         );
         if ctx.control_points.is_empty() {
             paint_empty_picker_hint(ui, slider_2d_response.rect);
@@ -610,6 +634,7 @@ fn picker_header(
             ui.horizontal(|ui| {
                 let mut chosen = *ctx.picker_space;
                 picker_space_combo(ui, &mut chosen);
+                clip_to_srgb_checkbox(ui, &mut chosen);
                 convert_picker_space(ctx.control_points, *ctx.picker_space, chosen);
                 *ctx.picker_space = chosen;
             });
@@ -712,6 +737,7 @@ pub const NO_SELECTION_HINT: &str = "Select a control point first";
 #[derive(Debug, Clone, Copy)]
 enum Strip {
     Hue,
+    Lightness,
     T,
 }
 
@@ -721,9 +747,13 @@ fn strip_hint(strip: Strip, has_selection: bool) -> &'static str {
             "T: where each point sits along the gradient. Drag a middle point's marker to move it; \
              the first and last points stay at 0 and 1"
         }
-        (Strip::Hue, false) => NO_SELECTION_HINT,
+        (Strip::Hue | Strip::Lightness, false) => NO_SELECTION_HINT,
         (Strip::Hue, true) => {
             "Click or drag: set the selected point's hue; the other points rotate with it"
+        }
+        (Strip::Lightness, true) => {
+            "Oklab lightness through the selected point's a and b. Click or drag: set its \
+             lightness; the other points shift with it"
         }
     }
 }
@@ -740,17 +770,25 @@ fn t_gizmo_hint(index: usize, count: usize, t: f32) -> String {
 fn handle_hue_slider(
     ui: &mut Ui,
     shown_hue: f32,
+    selected_value: Option<HsvKeyValue>,
     slider_size: Vec2,
     ctx: &mut MainColorPickerCtx,
     is_modifying_index: &mut Option<usize>,
 ) -> Option<f32> {
+    let picker_space = *ctx.picker_space;
+    let strip = if picker_space.is_z_hue() {
+        Strip::Hue
+    } else {
+        Strip::Lightness
+    };
+
     let (hue_response, picked_hue) = color_strip(
         ui,
         slider_size,
-        hue_strip_color_at_function(*ctx.picker_space),
+        hue_strip_color_at_function(picker_space, selected_value),
     );
     let hue_response =
-        hue_response.on_hover_text(strip_hint(Strip::Hue, is_modifying_index.is_some()));
+        hue_response.on_hover_text(strip_hint(strip, is_modifying_index.is_some()));
 
     let picking = hue_response.clicked_by(PointerButton::Primary)
         || hue_response.dragged_by(PointerButton::Primary);
@@ -763,8 +801,8 @@ fn handle_hue_slider(
         &hue_response,
         ctx.control_points,
         *is_modifying_index,
-        ctx.options.is_hue_middle_interpolated,
-        *ctx.picker_space,
+        ctx.options.is_auto_hue(picker_space),
+        picker_space,
     );
 
     if let Some(new_index) = hue_selected_index {
@@ -872,10 +910,12 @@ fn handle_control_points_ui(
                         delta_sv
                     };
                     apply_group_delta_sv(ctx.control_points, delta_sv);
+                    clip_points_to_srgb(ctx.control_points, *ctx.picker_space);
                 } else {
                     let val = &mut ctx.control_points[index].val_mut().val;
                     val[0] = target.x;
                     val[1] = target.y;
+                    clip_points_to_srgb(&mut ctx.control_points[index..=index], *ctx.picker_space);
                 }
             }
         }
@@ -898,20 +938,36 @@ fn handle_control_points_ui(
     }
 }
 
+fn picker_cell_color(picker_space: PickerSpace, value: HsvKeyValue) -> Color32 {
+    if picker_space.clips_to_srgb() && !value.is_in_srgb(picker_space) {
+        Color32::TRANSPARENT
+    } else {
+        value.color(picker_space)
+    }
+}
+
 fn main_color_picker_color_at_function(
     picker_space: PickerSpace,
     hue: f32,
 ) -> impl Fn(f32, f32) -> Color32 {
-    move |x, y| HsvKeyValue::new(x, y, hue).color(picker_space)
+    move |x, y| picker_cell_color(picker_space, HsvKeyValue::new(x, y, hue))
 }
 
-fn hue_strip_color_at_function(picker_space: PickerSpace) -> impl Fn(f32) -> Color32 {
-    let y = if picker_space.is_y_lightness() {
-        0.5
-    } else {
-        1.0
+const OKLCH_HUE_BAR_XY: [f32; 2] = [0.3, 0.75];
+
+fn hue_strip_color_at_function(
+    picker_space: PickerSpace,
+    selected_value: Option<HsvKeyValue>,
+) -> impl Fn(f32) -> Color32 {
+    let [x, y] = match picker_space {
+        PickerSpace::Oklab { .. } => {
+            selected_value.map_or([0.5, 0.5], |value| [value.s(), value.v()])
+        }
+        PickerSpace::Oklch { .. } => OKLCH_HUE_BAR_XY,
+        _ if picker_space.is_y_lightness() => [1.0, 0.5],
+        _ => [1.0, 1.0],
     };
-    move |hue| HsvKeyValue::new(1.0, y, hue).color(picker_space)
+    move |z| picker_cell_color(picker_space, HsvKeyValue::new(x, y, z))
 }
 
 pub const HUE_DRAG_MAX_FRACTION: f32 = 1.0 - 1e-4;
@@ -948,7 +1004,7 @@ pub fn ui_hue_control_points_overlay(
     let mut selected_key_frame = None;
     for i in 0..control_points.len() {
         let gizmo = hue_gizmo(i, control_points.len(), is_hue_middle_interpolated);
-        let val = hue_strip_x_fraction(control_points[i].val().h());
+        let val = picker_space.z_on_bar(control_points[i].val().h());
         let picked_color = control_points[i].val().color(picker_space);
         // Show where the slider is at:
         let x = lerp(
@@ -1056,8 +1112,14 @@ pub fn ui_hue_control_points_overlay(
                 .unwrap_or_default();
             if let Some(pointer) = response.interact_pointer_pos() {
                 let strip = container_response.rect;
-                let hue = &mut control_points[i].val_mut()[2];
-                *hue = hue_after_drag(*hue, pointer.x, grab_offset_x, strip.left(), strip.width());
+                let z = &mut control_points[i].val_mut()[2];
+                *z = if picker_space.is_z_hue() {
+                    hue_after_drag(*z, pointer.x, grab_offset_x, strip.left(), strip.width())
+                } else {
+                    t_at_pointer(pointer.x, grab_offset_x, strip.left(), strip.width())
+                        .clamp(0.0, 1.0)
+                };
+                clip_points_to_srgb(&mut control_points[i..=i], picker_space);
             }
         }
 
@@ -1098,10 +1160,6 @@ fn handle_t_strip(
     if let Some(new_index) = t_selected_index {
         *is_modifying_index = Some(new_index);
     }
-}
-
-fn hue_strip_x_fraction(hue: f32) -> f32 {
-    hue.rem_euclid(1.0)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1513,7 +1571,7 @@ mod tests {
     fn hsv_square_and_hue_strip_colors_are_the_hsva_gamma_colors() {
         let steps: Vec<f32> = (0..=12).map(|i| i as f32 / 12.0).collect();
         let hsva = |h, s, v| Color32::from(ecolor::HsvaGamma { h, s, v, a: 1.0 });
-        let strip_color_at = hue_strip_color_at_function(PickerSpace::Hsv);
+        let strip_color_at = hue_strip_color_at_function(PickerSpace::Hsv, None);
         for &h in &steps {
             assert_eq!(strip_color_at(h), hsva(h, 1.0, 1.0), "h {h}");
             let square_color_at = main_color_picker_color_at_function(PickerSpace::Hsv, h);
@@ -1523,6 +1581,201 @@ mod tests {
                 }
             }
         }
+    }
+
+    const OKLCH: PickerSpace = PickerSpace::Oklch {
+        clip_to_srgb: false,
+    };
+    const OKLAB: PickerSpace = PickerSpace::Oklab {
+        clip_to_srgb: false,
+    };
+
+    #[test]
+    fn oklch_hue_bar_stays_inside_srgb_at_every_hue() {
+        let [x, y] = OKLCH_HUE_BAR_XY;
+        for i in 0..=720 {
+            let value = HsvKeyValue::new(x, y, i as f32 / 720.0);
+            assert!(value.is_in_srgb(OKLCH), "{value:?}");
+        }
+    }
+
+    fn painted_meshes(output: &egui::FullOutput) -> Vec<&egui::Mesh> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                Shape::Mesh(mesh) => Some(&**mesh),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn assert_blank_exactly_outside_srgb(
+        space: PickerSpace,
+        colors: impl Iterator<Item = (HsvKeyValue, Color32)>,
+    ) -> [usize; 2] {
+        let mut counts = [0, 0];
+        for (value, color) in colors {
+            let is_blank = color == Color32::TRANSPARENT;
+            assert_eq!(is_blank, !value.is_in_srgb(space), "{space:?} {value:?}");
+            counts[usize::from(is_blank)] += 1;
+        }
+        counts
+    }
+
+    #[test]
+    fn clip_blanks_exactly_the_square_and_bar_cells_outside_srgb() {
+        for space in [OKLCH, OKLAB] {
+            let space = space.with_clip_to_srgb(true);
+            let selected = HsvKeyValue::new(0.4, 0.6, 0.7);
+            let mut points = vec![
+                ControlPoint::new_simple(selected, 0.0),
+                ControlPoint::new_simple(ControlPointValue::new(0.1, 0.5, 0.2), 1.0),
+            ];
+            let mut picker = ZColorPickerWrapper {
+                last_modifying_point_index: Some(0),
+                ..Default::default()
+            };
+            let ctx = egui::Context::default();
+            let mut drawn_space = space;
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    picker.draw_ui(
+                        ui,
+                        &mut points,
+                        SplineMode::Linear,
+                        &mut drawn_space,
+                        BlendSpace::Picker,
+                        &ColorStringCopy::HEXNOA,
+                    );
+                });
+            });
+            let meshes = painted_meshes(&output);
+            let square = meshes
+                .iter()
+                .find(|mesh| {
+                    let side = (mesh.vertices.len() as f32).sqrt() as usize;
+                    side > 2 && side * side == mesh.vertices.len()
+                })
+                .expect("square mesh");
+            let side = (square.vertices.len() as f32).sqrt() as usize;
+            let steps = (side - 1) as f32;
+            let bar = meshes
+                .iter()
+                .find(|mesh| {
+                    mesh.vertices.len() > 2
+                        && mesh.vertices.chunks(2).all(|pair| {
+                            pair.len() == 2
+                                && pair[0].pos.x == pair[1].pos.x
+                                && pair[0].color == pair[1].color
+                        })
+                })
+                .expect("bar mesh");
+            let bar_steps = (bar.vertices.len() / 2 - 1) as f32;
+
+            let square_cells = square.vertices.iter().enumerate().map(|(i, vertex)| {
+                let [down, x] = [i / side, i % side].map(|step| step as f32 / steps);
+                (HsvKeyValue::new(x, 1.0 - down, selected.h()), vertex.color)
+            });
+            let [kept, blank] = assert_blank_exactly_outside_srgb(space, square_cells);
+            assert!(
+                kept > 0 && blank > 0,
+                "{space:?}: {kept} kept, {blank} blank"
+            );
+
+            let [bar_x, bar_y] = if space.is_z_hue() {
+                OKLCH_HUE_BAR_XY
+            } else {
+                [selected.s(), selected.v()]
+            };
+            let bar_cells = bar.vertices.iter().enumerate().map(|(i, vertex)| {
+                let z = (i / 2) as f32 / bar_steps;
+                (HsvKeyValue::new(bar_x, bar_y, z), vertex.color)
+            });
+            let [kept, blank] = assert_blank_exactly_outside_srgb(space, bar_cells);
+            assert!(kept > 0, "{space:?}");
+            assert_eq!(
+                blank > 0,
+                space == OKLAB.with_clip_to_srgb(true),
+                "{space:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn without_clip_no_cell_is_blank() {
+        for space in [OKLCH, OKLAB] {
+            let square_color_at = main_color_picker_color_at_function(space, 0.7);
+            let bar_color_at =
+                hue_strip_color_at_function(space, Some(HsvKeyValue::new(0.4, 0.6, 0.7)));
+            for i in 0..=12 {
+                let t = i as f32 / 12.0;
+                assert!(bar_color_at(t).is_opaque(), "{space:?} {t}");
+                for j in 0..=12 {
+                    assert!(square_color_at(t, j as f32 / 12.0).is_opaque(), "{space:?}");
+                }
+            }
+        }
+    }
+
+    fn drag_first_bar_gizmo(space: PickerSpace, from_z: f32, to_z: f32) -> HsvKeyValue {
+        let mut points = vec![
+            ControlPoint::new_simple(ControlPointValue::new(0.35, 0.5, from_z), 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 0.5), 1.0),
+        ];
+        let width = STRIP_RECT.width();
+        let r = STRIP_RECT.height() / 4.0;
+        let start = pos2(
+            STRIP_RECT.left() + from_z * width,
+            STRIP_RECT.top() + 3.0 * r + 5.0,
+        );
+        run_strip_overlay(
+            &mut points,
+            primary_drag_frames(start, start + vec2((to_z - from_z) * width, 0.0)),
+            |ui, strip, points| {
+                ui_hue_control_points_overlay(ui, strip, points, Some(1), false, space).1
+            },
+        );
+        *points[0].val()
+    }
+
+    #[test]
+    fn dragging_the_oklab_bar_sets_lightness_and_stops_at_white() {
+        let dragged = drag_first_bar_gizmo(OKLAB, 0.25, 0.6);
+        assert!((dragged.h() - 0.6).abs() < 1e-4, "{dragged:?}");
+        assert_eq!(drag_first_bar_gizmo(OKLAB, 0.25, 1.3).h(), 1.0);
+        assert_eq!(drag_first_bar_gizmo(OKLAB, 0.25, -0.3).h(), 0.0);
+    }
+
+    #[test]
+    fn clip_pulls_a_point_dragged_along_the_bar_into_srgb() {
+        let unclipped = drag_first_bar_gizmo(OKLCH, 0.75, 0.55);
+        assert!(!unclipped.is_in_srgb(OKLCH), "{unclipped:?}");
+        let clipped_space = OKLCH.with_clip_to_srgb(true);
+        let clipped = drag_first_bar_gizmo(clipped_space, 0.75, 0.55);
+        assert!(clipped.is_in_srgb(OKLCH), "{clipped:?}");
+        assert_eq!(clipped.h(), unclipped.h());
+        assert_eq!(clipped.v(), 0.5);
+        assert!(clipped.s() < unclipped.s(), "{clipped:?}");
+    }
+
+    #[test]
+    fn auto_hue_leaves_oklab_lightness_alone() {
+        let mut wrapper = ZColorPickerWrapper::default();
+        assert!(wrapper.options.is_hue_middle_interpolated && wrapper.options.is_window_lock);
+        assert!(!wrapper.options.is_auto_hue(OKLAB));
+        let points = vec![
+            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 0.2), 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 0.9), 0.5),
+            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 1.0), 1.0),
+        ];
+        let mut oklab = points.clone();
+        wrapper.apply_control_point_constraints(&mut oklab, OKLAB);
+        assert_eq!(oklab, points);
+        let mut hsv = points.clone();
+        wrapper.apply_control_point_constraints(&mut hsv, PickerSpace::Hsv);
+        assert_ne!(hsv[1].val().h(), 0.9);
+        assert_eq!(hsv[2].val().h(), 0.0);
     }
 
     fn hue_overlay(
@@ -1578,6 +1831,10 @@ mod tests {
             assert_eq!(selected, Some(index));
             assert_eq!(*points[index].t(), t);
         }
+    }
+
+    fn hue_strip_x_fraction(hue: f32) -> f32 {
+        PickerSpace::Hsv.z_on_bar(hue)
     }
 
     #[test]
@@ -2240,10 +2497,20 @@ mod tests {
     fn auto_comb_runs_before_drawing_only_in_bezier_mode() {
         let mut picker = auto_comb_picker();
         let mut points = kinked_bezier_points();
-        picker.pre_draw_update(&mut points, SplineMode::Linear, BlendSpace::Picker);
+        picker.pre_draw_update(
+            &mut points,
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         assert_eq!(points, kinked_bezier_points());
 
-        picker.pre_draw_update(&mut points, SplineMode::Bezier, BlendSpace::Picker);
+        picker.pre_draw_update(
+            &mut points,
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         let (incoming, outgoing) = (handle_unit(&points[1], 0), handle_unit(&points[1], 1));
         assert!(
             (incoming + outgoing).length() < 1e-4,
@@ -2257,6 +2524,7 @@ mod tests {
         ZColorPickerWrapper::default().pre_draw_update(
             &mut points,
             SplineMode::Bezier,
+            PickerSpace::Hsv,
             BlendSpace::Picker,
         );
         assert_eq!(points, kinked_bezier_points());
@@ -2267,7 +2535,12 @@ mod tests {
         let mut picker = auto_comb_picker();
         picker.dragging_tangent = Some((1, 0));
         let mut points = kinked_bezier_points();
-        picker.pre_draw_update(&mut points, SplineMode::Bezier, BlendSpace::Picker);
+        picker.pre_draw_update(
+            &mut points,
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         assert!((handle_unit(&points[1], 0) - vec2(-1.0, 0.0)).length() < 1e-4);
         assert!((handle_unit(&points[1], 1) - vec2(1.0, 0.0)).length() < 1e-4);
     }
@@ -2318,7 +2591,7 @@ mod tests {
             let mut picker = auto_comb_picker();
             picker.auto_comb_unsolved = 3;
             let mut points = kinked_bezier_points();
-            picker.pre_draw_update(&mut points, SplineMode::Bezier, blend);
+            picker.pre_draw_update(&mut points, SplineMode::Bezier, PickerSpace::Hsv, blend);
             assert_eq!(points, kinked_bezier_points(), "{blend:?}");
             assert_eq!(picker.auto_comb_unsolved, 0, "{blend:?}");
         }
@@ -2331,9 +2604,19 @@ mod tests {
             points_sv(&[(0.25, 0.33), (0.44, 0.38), (0.8, 0.6), (0.9, 0.8)]),
             &[[[-0.01, 0.0], [0.01, 0.0]]; 4],
         );
-        picker.pre_draw_update(&mut staircase, SplineMode::Bezier, BlendSpace::Picker);
+        picker.pre_draw_update(
+            &mut staircase,
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         assert_eq!(picker.auto_comb_unsolved, 2);
-        picker.pre_draw_update(&mut staircase, SplineMode::Linear, BlendSpace::Picker);
+        picker.pre_draw_update(
+            &mut staircase,
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         assert_eq!(picker.auto_comb_unsolved, 0);
     }
 
@@ -2493,12 +2776,14 @@ mod tests {
     #[test]
     fn constraints_space_invalid_t_evenly() {
         let mut points = points_t(&[0.0, 0.0, 0.0]);
-        ZColorPickerWrapper::default().apply_control_point_constraints(&mut points);
+        ZColorPickerWrapper::default()
+            .apply_control_point_constraints(&mut points, PickerSpace::Hsv);
         assert_ts_near(&points, &[0.0, 0.5, 1.0]);
         let mut points = points_t(&[0.0, 1.0, 2.0]);
         ZColorPickerWrapper::default().pre_draw_update(
             &mut points,
             SplineMode::Linear,
+            PickerSpace::Hsv,
             BlendSpace::Picker,
         );
         assert_ts_near(&points, &[0.0, 0.5, 1.0]);
@@ -2508,8 +2793,13 @@ mod tests {
     fn constraints_keep_valid_t() {
         let mut points = points_t(&[0.0, 0.1, 1.0]);
         let mut wrapper = ZColorPickerWrapper::default();
-        wrapper.pre_draw_update(&mut points, SplineMode::Linear, BlendSpace::Picker);
-        wrapper.apply_control_point_constraints(&mut points);
+        wrapper.pre_draw_update(
+            &mut points,
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
+        wrapper.apply_control_point_constraints(&mut points, PickerSpace::Hsv);
         assert_ts_near(&points, &[0.0, 0.1, 1.0]);
     }
 
@@ -2519,7 +2809,8 @@ mod tests {
             .into_iter()
             .map(|(t, h)| ControlPoint::new_simple([0.5, 0.5, h].into(), t))
             .collect();
-        ZColorPickerWrapper::default().apply_control_point_constraints(&mut points);
+        ZColorPickerWrapper::default()
+            .apply_control_point_constraints(&mut points, PickerSpace::Hsv);
         assert!((points[1].val().h() - 0.1).abs() < 1e-6, "{:?}", points[1]);
     }
 
@@ -2553,7 +2844,7 @@ mod tests {
             },
             ..Default::default()
         };
-        wrapper.apply_control_point_constraints(&mut points);
+        wrapper.apply_control_point_constraints(&mut points, PickerSpace::Hsv);
         let expected = [
             [0.5, 0.5, 0.05],
             [0.5, 0.5, 0.9],
@@ -2594,7 +2885,7 @@ mod tests {
         for push in [vec2(0.2, 0.0), vec2(-0.2, 0.0)] {
             let delta = limit_group_delta(&points, push);
             apply_group_delta_sv(&mut points, delta);
-            wrapper.clamp_control_points(&mut points);
+            wrapper.clamp_control_points(&mut points, PickerSpace::Hsv);
         }
         let ds = points[1].val()[0] - points[0].val()[0];
         let dv = points[1].val()[1] - points[0].val()[1];
@@ -2659,6 +2950,16 @@ mod tests {
         points: &mut Vec<ControlPoint>,
         event: Option<egui::Event>,
     ) -> Rect {
+        run_picker_frame_in(ctx, picker, points, PickerSpace::Hsv, event)
+    }
+
+    fn run_picker_frame_in(
+        ctx: &egui::Context,
+        picker: &mut ZColorPickerWrapper,
+        points: &mut Vec<ControlPoint>,
+        mut space: PickerSpace,
+        event: Option<egui::Event>,
+    ) -> Rect {
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 700.0))),
             events: event.into_iter().collect(),
@@ -2672,7 +2973,7 @@ mod tests {
                         ui,
                         points,
                         SplineMode::Linear,
-                        &mut PickerSpace::Hsv,
+                        &mut space,
                         BlendSpace::Picker,
                         &ColorStringCopy::HEXNOA,
                     )
@@ -2680,6 +2981,47 @@ mod tests {
             });
         });
         square
+    }
+
+    fn drag_first_point_to_the_right_edge(space: PickerSpace) -> HsvKeyValue {
+        let ctx = egui::Context::default();
+        let mut picker = ZColorPickerWrapper::default();
+        let mut points = vec![
+            ControlPoint::new_simple(ControlPointValue::new(0.2, 0.5, 0.75), 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(0.1, 0.8, 0.75), 1.0),
+        ];
+        let square = run_picker_frame_in(&ctx, &mut picker, &mut points, space, None);
+        let start = square.lerp_inside(control_point_pos(&points[0]).to_vec2());
+        let end = pos2(square.right() - 1.0, start.y);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        let mut events = vec![egui::Event::PointerMoved(start), button(start, true)];
+        events.extend(
+            (1..=4).map(|step| egui::Event::PointerMoved(start.lerp(end, step as f32 / 4.0))),
+        );
+        events.push(button(end, false));
+        for event in events {
+            run_picker_frame_in(&ctx, &mut picker, &mut points, space, Some(event));
+        }
+        *points[0].val()
+    }
+
+    #[test]
+    fn clip_pulls_a_point_dragged_on_the_square_into_srgb() {
+        for space in [OKLCH, OKLAB] {
+            let unclipped = drag_first_point_to_the_right_edge(space);
+            assert!(unclipped.s() > 0.95, "{space:?}: {unclipped:?}");
+            assert!(!unclipped.is_in_srgb(space), "{space:?}: {unclipped:?}");
+
+            let clipped = drag_first_point_to_the_right_edge(space.with_clip_to_srgb(true));
+            assert!(clipped.is_in_srgb(space), "{space:?}: {clipped:?}");
+            assert!(clipped.s() < unclipped.s(), "{space:?}: {clipped:?}");
+            assert_eq!(clipped.h(), 0.75, "{space:?}");
+        }
     }
 
     struct OutAndBackDrag {
@@ -2778,6 +3120,7 @@ mod tests {
             pos2(x, y),
             vec2(200.0, 200.0),
             CONTROL_POINT_FILL_RADIUS,
+            0.0,
         )
     }
 

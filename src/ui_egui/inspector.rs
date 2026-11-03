@@ -10,7 +10,7 @@ use crate::{
         color_picker::{
             apply_group_delta_sv, limit_group_delta, HUE_DRAG_MAX_FRACTION, NO_SELECTION_HINT,
         },
-        control_points::{drag_t, t_drag_bounds},
+        control_points::{clip_points_to_srgb, drag_t, t_drag_bounds},
     },
 };
 
@@ -26,19 +26,24 @@ impl InspectorField {
     const ALL: [Self; 4] = [Self::H, Self::S, Self::V, Self::T];
 
     fn label(self, picker_space: PickerSpace) -> &'static str {
+        let is_oklab = !picker_space.is_z_hue();
         match self {
+            Self::H if is_oklab => "L",
             Self::H => "H",
+            Self::S if is_oklab => "a",
+            Self::S if matches!(picker_space, PickerSpace::Oklch { .. }) => "C",
             Self::S => "S",
+            Self::V if is_oklab => "b",
             Self::V if picker_space.is_y_lightness() => "L",
             Self::V => "V",
             Self::T => "T",
         }
     }
 
-    fn suffix(self) -> &'static str {
+    fn suffix(self, picker_space: PickerSpace) -> &'static str {
         match self {
-            Self::H => "°",
-            Self::S | Self::V => "%",
+            Self::H if picker_space.is_z_hue() => "°",
+            Self::H | Self::S | Self::V => "%",
             Self::T => "",
         }
     }
@@ -59,8 +64,19 @@ impl InspectorField {
     }
 
     fn hint(self, picker_space: PickerSpace) -> &'static str {
+        let is_oklab = !picker_space.is_z_hue();
         match self {
+            Self::H if is_oklab => "Oklab lightness: the point's place on the bar",
             Self::H => "Hue in degrees",
+            Self::S if is_oklab => {
+                "a: the point's x in the square, green at 0% to red at 100%; 50% is gray"
+            }
+            Self::V if is_oklab => {
+                "b: the point's y in the square, blue at 0% to yellow at 100%; 50% is gray"
+            }
+            Self::S if matches!(picker_space, PickerSpace::Oklch { .. }) => {
+                "Chroma: the point's x in the square; 100% is chroma 0.33"
+            }
             Self::S => {
                 "Saturation: the point's x in the square. The HSV readout derives S from the \
                  sRGB bytes, so the two can differ"
@@ -128,10 +144,11 @@ pub fn inspector_fields(
             }),
         },
     };
+    let z_full_scale = z_full_scale(opts.picker_space);
     [
         FieldState {
-            value: Some(val[2].rem_euclid(1.0) * 360.0),
-            range: 0.0..=360.0,
+            value: Some(opts.picker_space.z_on_bar(val[2]) * z_full_scale),
+            range: 0.0..=z_full_scale,
             disabled_reason: (opts.is_hue_middle_interpolated && is_middle)
                 .then_some(AUTO_HUE_HINT),
         },
@@ -159,14 +176,33 @@ pub fn apply_inspector_edit(
     if !value.is_finite() {
         return;
     }
+    let z = &mut points[index].val_mut().val[2];
     match field {
-        InspectorField::H => {
-            let hue = &mut points[index].val_mut().val[2];
-            *hue = hue.floor() + (value / 360.0).clamp(0.0, HUE_DRAG_MAX_FRACTION);
+        InspectorField::H if opts.picker_space.is_z_hue() => {
+            *z = z.floor() + (value / 360.0).clamp(0.0, HUE_DRAG_MAX_FRACTION);
         }
+        InspectorField::H => *z = (value / 100.0).clamp(0.0, 1.0),
         InspectorField::S => set_sv(points, index, 0, value / 100.0, opts),
         InspectorField::V => set_sv(points, index, 1, value / 100.0, opts),
-        InspectorField::T => drag_t(points, index, value),
+        InspectorField::T => {
+            drag_t(points, index, value);
+            return;
+        }
+    }
+    let moves_every_point = opts.is_curve_locked && field != InspectorField::H;
+    let moved = if moves_every_point {
+        &mut points[..]
+    } else {
+        &mut points[index..=index]
+    };
+    clip_points_to_srgb(moved, opts.picker_space);
+}
+
+fn z_full_scale(picker_space: PickerSpace) -> f32 {
+    if picker_space.is_z_hue() {
+        360.0
+    } else {
+        100.0
     }
 }
 
@@ -213,7 +249,7 @@ pub fn point_inspector(
                     .clamp_existing_to_range(false)
                     .update_while_editing(false);
                 let drag = match state.value {
-                    Some(_) => drag.suffix(field.suffix()),
+                    Some(_) => drag.suffix(field.suffix(opts.picker_space)),
                     None => drag.custom_formatter(|_, _| "-".to_owned()),
                 };
                 let mut response = ui
@@ -436,13 +472,74 @@ mod tests {
         })
     }
 
+    const OKLCH: PickerSpace = PickerSpace::Oklch {
+        clip_to_srgb: false,
+    };
+    const OKLAB: PickerSpace = PickerSpace::Oklab {
+        clip_to_srgb: false,
+    };
+
     #[test]
-    fn y_label_follows_the_picker_space() {
-        for (picker_space, label) in [
-            (PickerSpace::Hsv, "V"),
-            (PickerSpace::Hsl, "L"),
-            (PickerSpace::Okhsv, "V"),
-            (PickerSpace::Okhsl, "L"),
+    fn oklab_bar_field_is_lightness_in_percent() {
+        let opts = InspectorOptions {
+            picker_space: OKLAB,
+            ..FREE
+        };
+        let mut points = points_at(&[(0.5, 0.5, 0.25, 0.0), (0.5, 0.5, 1.4, 1.0)]);
+        assert_eq!(state(&points, 0, opts, H).value, Some(25.0));
+        assert_eq!(state(&points, 0, opts, H).range, 0.0..=100.0);
+        assert_eq!(state(&points, 1, opts, H).value, Some(100.0));
+
+        apply_inspector_edit(&mut points, 0, H, 42.0, opts);
+        assert_eq!(points[0].val()[2], 0.42);
+        apply_inspector_edit(&mut points, 0, H, 140.0, opts);
+        assert_eq!(points[0].val()[2], 1.0);
+    }
+
+    #[test]
+    fn clip_pulls_inspector_edits_into_srgb() {
+        let oklch_points = [(0.35, 0.5, 0.75, 0.0), (0.15, 0.55, 0.6, 1.0)];
+        let oklab_points = [(0.5, 0.25, 0.5, 0.0), (0.45, 0.55, 0.6, 1.0)];
+        for (space, fixture) in [(OKLCH, oklch_points), (OKLAB, oklab_points)] {
+            for is_curve_locked in [false, true] {
+                for (field, value) in [(S, 100.0), (V, 0.0), (H, 95.0)] {
+                    let unclipped = InspectorOptions {
+                        picker_space: space,
+                        is_curve_locked,
+                        ..FREE
+                    };
+                    let clipped = InspectorOptions {
+                        picker_space: space.with_clip_to_srgb(true),
+                        ..unclipped
+                    };
+                    let mut points = points_at(&fixture);
+                    assert!(points.iter().all(|cp| cp.val().is_in_srgb(space)));
+                    apply_inspector_edit(&mut points, 0, field, value, unclipped);
+                    assert!(!points[0].val().is_in_srgb(space), "{space:?} {field:?}");
+
+                    let mut points = points_at(&fixture);
+                    apply_inspector_edit(&mut points, 0, field, value, clipped);
+
+                    for cp in &points {
+                        assert!(
+                            cp.val().is_in_srgb(space),
+                            "{space:?} {field:?} lock {is_curve_locked}: {cp:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn labels_follow_the_picker_space() {
+        for (picker_space, expected) in [
+            (PickerSpace::Hsv, ["H", "S", "V", "T"]),
+            (PickerSpace::Hsl, ["H", "S", "L", "T"]),
+            (PickerSpace::Okhsv, ["H", "S", "V", "T"]),
+            (PickerSpace::Okhsl, ["H", "S", "L", "T"]),
+            (OKLCH, ["H", "C", "L", "T"]),
+            (OKLAB, ["L", "a", "b", "T"]),
         ] {
             let ctx = egui::Context::default();
             let opts = InspectorOptions {
@@ -463,7 +560,7 @@ mod tests {
                 })
                 .filter(|text| text.len() == 1 && text.chars().all(char::is_alphabetic))
                 .collect();
-            assert_eq!(labels, ["H", "S", label, "T"], "{picker_space:?}");
+            assert_eq!(labels, expected, "{picker_space:?}");
         }
     }
 
