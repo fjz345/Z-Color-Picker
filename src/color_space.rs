@@ -414,12 +414,14 @@ fn get_cs(l: f32, a: f32, b: f32) -> ChromaStops {
 
 const OKHSL_MID: f32 = 0.8;
 const OKHSL_MID_INV: f32 = 1.25;
+// Below it get_cs's 1 / c^4 overflows f32 into NaN; the color is black far past display precision.
+const OKHSL_BLACK_L: f32 = 1e-6;
 
 fn okhsl_to_linear([h, s, l]: [f32; 3]) -> [f32; 3] {
     if l >= 1.0 {
         return [1.0; 3];
     }
-    if l <= 0.0 {
+    if l <= OKHSL_BLACK_L {
         return [0.0; 3];
     }
     let (a, b) = hue_direction(h);
@@ -483,7 +485,7 @@ fn okhsv_to_linear([h, s, v]: [f32; 3]) -> [f32; 3] {
     let c_v = s * t_max * OKHSV_S0 / denominator;
 
     let l = toe_inv(v * l_v);
-    let c = v * c_v * l / (v * l_v);
+    let c = c_v * l / l_v;
     let scale_l = okhsv_scale_l(a, b, l_v, c_v);
     oklab_to_linear([l * scale_l, c * scale_l * a, c * scale_l * b])
 }
@@ -795,6 +797,40 @@ mod tests {
             picker_to_linear(PickerSpace::Okhsl, [0.3, 0.7, 1.0]),
             [1.0; 3]
         );
+    }
+
+    #[test]
+    fn values_next_to_black_convert_to_finite_black_in_every_space() {
+        let tiny_ys = [
+            f32::from_bits(1),
+            f32::MIN_POSITIVE,
+            1e-30,
+            1e-20,
+            1e-10,
+            1e-9,
+            1e-8,
+            1e-7,
+        ];
+        for from in PickerSpace::ALL {
+            for y in tiny_ys {
+                for h in (0..=36).map(|i| i as f32 / 36.0) {
+                    for s in [0.0, 0.3, 0.79, 0.8, 0.95, 1.0] {
+                        let linear = picker_to_linear(from, [h, s, y]);
+                        assert!(
+                            linear.iter().all(|c| c.abs() < 1e-6),
+                            "{from:?} [{h}, {s}, {y}]: {linear:?}"
+                        );
+                        for to in PickerSpace::ALL {
+                            let back = linear_to_picker(to, linear);
+                            assert!(
+                                back.iter().all(|c| c.is_finite()),
+                                "{from:?} [{h}, {s}, {y}] -> {to:?}: {back:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
