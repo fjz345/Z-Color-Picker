@@ -291,6 +291,7 @@ pub fn is_in_srgb_gamut(linear: [f32; 3]) -> bool {
     linear.iter().all(|c| (0.0..=1.0).contains(c))
 }
 
+// Just past sRGB blue's hue a ray can leave sRGB and re-enter; this may return the inner edge.
 pub fn largest_scale_in_srgb(linear_at_scale: impl Fn(f32) -> [f32; 3]) -> f32 {
     let (mut inside, mut outside) = (0.0, 1.0);
     for _ in 0..GAMUT_BISECTION_STEPS {
