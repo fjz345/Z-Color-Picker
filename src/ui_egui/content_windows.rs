@@ -223,9 +223,9 @@ pub fn comb_row(
             egui::Checkbox::new(&mut options.is_auto_comb, "Auto comb"),
         )
         .on_hover_text(
-            "Keep each point's curvature: handle lengths are solved so the comb is \
-             continuous. Turn a handle to turn its point; pull it longer or shorter to \
-             change the point's curvature",
+            "Solve the handle lengths so the comb is continuous, keeping each point's \
+             curvature as close as it can. Turn a handle to turn its point; pull it longer \
+             or shorter to change the point's curvature",
         )
         .on_disabled_hover_text(if is_picker_blend {
             "Auto comb only runs in Bezier mode"
@@ -238,8 +238,9 @@ pub fn comb_row(
                 format!("{auto_comb_unsolved} unsolved"),
             )
             .on_hover_text(
-                "Segments whose handle lengths can't meet their points' curvatures with the \
-                 current handle directions; turn a handle or change a curvature there",
+                "Segments that keep their handle lengths: no lengths inside the square make \
+                 the comb continuous at their point with the current handle directions; \
+                 turn a handle there",
             );
         }
     });
