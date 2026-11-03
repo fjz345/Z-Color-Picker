@@ -245,6 +245,7 @@ mod tests {
         ctx: &egui::Context,
         picker: &mut ZColorPickerWrapper,
         points: &mut Vec<ControlPoint>,
+        picker_space: PickerSpace,
         events: Vec<egui::Event>,
     ) -> Vec<(String, Rect)> {
         let input = egui::RawInput {
@@ -258,7 +259,7 @@ mod tests {
                     ui,
                     points,
                     SplineMode::Linear,
-                    PickerSpace::Hsv,
+                    picker_space,
                     BlendSpace::Picker,
                     &ColorStringCopy::HSV,
                 );
@@ -287,10 +288,16 @@ mod tests {
     fn painted_texts(selected: Option<usize>) -> Vec<String> {
         let mut picker = picker_selecting(selected);
         let ctx = egui::Context::default();
-        picker_frame(&ctx, &mut picker, &mut red_point(), Vec::new())
-            .into_iter()
-            .map(|(text, _)| text)
-            .collect()
+        picker_frame(
+            &ctx,
+            &mut picker,
+            &mut red_point(),
+            PickerSpace::Hsv,
+            Vec::new(),
+        )
+        .into_iter()
+        .map(|(text, _)| text)
+        .collect()
     }
 
     #[test]
@@ -310,11 +317,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn rows_show_the_selected_point_through_the_picker_space() {
+        let mut hsl_red = vec![ControlPoint::new_simple(
+            ControlPointValue::new(1.0, 0.5, 0.0),
+            0.0,
+        )];
+        let texts: Vec<String> = picker_frame(
+            &egui::Context::default(),
+            &mut picker_selecting(Some(0)),
+            &mut hsl_red,
+            PickerSpace::Hsl,
+            Vec::new(),
+        )
+        .into_iter()
+        .map(|(text, _)| text)
+        .collect();
+        for row in ReadoutRow::ALL {
+            let expected = row_text(Some(Color32::from_rgb(255, 0, 0)), row);
+            assert!(texts.contains(&expected), "{row:?}: {texts:?}");
+        }
+    }
+
     fn click_text(text: &str) -> Option<(Pos2, ColorStringCopy)> {
         let ctx = egui::Context::default();
         let mut picker = picker_selecting(Some(0));
         let mut points = red_point();
-        let (_, rect) = picker_frame(&ctx, &mut picker, &mut points, Vec::new())
+        let (_, rect) = picker_frame(&ctx, &mut picker, &mut points, PickerSpace::Hsv, Vec::new())
             .into_iter()
             .find(|(painted, _)| painted == text)
             .unwrap_or_else(|| panic!("{text} not painted"));
@@ -330,7 +359,7 @@ mod tests {
             vec![button(true)],
             vec![button(false)],
         ] {
-            let _ = picker_frame(&ctx, &mut picker, &mut points, events);
+            let _ = picker_frame(&ctx, &mut picker, &mut points, PickerSpace::Hsv, events);
         }
         assert_eq!(points, red_point());
         picker.copy_request

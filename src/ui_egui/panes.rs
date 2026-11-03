@@ -196,13 +196,14 @@ impl ZAppPane for View3dPane {
         self.title.clone().unwrap_or_else(|| "Pane".to_owned())
     }
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
-        let (control_points, spline_mode, picker_space, selected_index) = {
+        let (control_points, spline_mode, picker_space, blend_space, selected_index) = {
             let ctx = self.ctx.borrow();
             let selected_index = ctx.z_color_picker.borrow().last_modifying_point_index;
             (
                 ctx.control_points.clone(),
                 ctx.spline_mode,
                 ctx.picker_space,
+                ctx.blend_space,
                 selected_index,
             )
         };
@@ -211,6 +212,7 @@ impl ZAppPane for View3dPane {
             &control_points,
             spline_mode,
             picker_space,
+            blend_space,
             selected_index,
         );
         egui_tiles::UiResponse::None

@@ -96,6 +96,10 @@ pub fn linear_to_srgb(linear: [f32; 3]) -> [f32; 3] {
     linear.map(ecolor::gamma_from_linear)
 }
 
+pub fn linear_to_color32([r, g, b]: [f32; 3]) -> ecolor::Color32 {
+    ecolor::Rgba::from_rgb(r, g, b).into()
+}
+
 pub fn linear_to_oklab(linear: [f32; 3]) -> [f32; 3] {
     let lms = mul(&LINEAR_TO_LMS, linear);
     mul(&LMS_CBRT_TO_OKLAB, lms.map(f32::cbrt))
@@ -551,6 +555,17 @@ mod tests {
         for srgb in [[0.0, 0.5, 1.0], [0.02, 0.3, 0.9]] {
             assert_close(linear_to_srgb(srgb_to_linear(srgb)), srgb, 1e-6);
         }
+    }
+
+    #[test]
+    fn linear_to_color32_gamma_encodes_to_srgb_bytes() {
+        use ecolor::Color32;
+        assert_eq!(linear_to_color32([1.0, 0.0, 0.0]), Color32::RED);
+        assert_eq!(linear_to_color32([0.5; 3]), Color32::from_gray(188));
+        assert_eq!(
+            linear_to_color32(srgb_to_linear(srgb_u8([51, 102, 153]))),
+            Color32::from_rgb(51, 102, 153)
+        );
     }
 
     #[test]

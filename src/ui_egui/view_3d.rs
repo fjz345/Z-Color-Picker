@@ -4,22 +4,19 @@ use eframe::{
     egui::{
         self, Align2, FontId, Painter, PointerButton, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2,
     },
-    epaint::{CircleShape, Color32, Rgba},
+    epaint::{CircleShape, Color32},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     color_space::{
-        linear_to_oklab, linear_to_srgb, srgb_to_hsl, srgb_to_hsv, srgb_to_linear, PickerSpace,
+        linear_to_color32, linear_to_oklab, linear_to_srgb, srgb_to_hsl, srgb_to_hsv,
+        srgb_to_linear, BlendSpace, PickerSpace,
     },
     common::{ColorStringCopy, SplineMode},
     datatypes::control_point::ControlPoint,
     ui_egui::{
-        color_picker::format_color_as,
-        control_points::{
-            control_point_outline, control_points_to_spline, flatten_control_points,
-            sample_spline_normalized,
-        },
+        blend::Gradient, color_picker::format_color_as, control_points::control_point_outline,
     },
 };
 
@@ -29,24 +26,12 @@ fn gradient_linear_samples(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
     picker_space: PickerSpace,
+    blend_space: BlendSpace,
 ) -> Vec<[f32; 3]> {
-    let spline = control_points_to_spline(&flatten_control_points(control_points), spline_mode);
+    let gradient = Gradient::new(control_points, spline_mode, picker_space, blend_space);
     (0..CURVE_SAMPLES)
-        .filter_map(|i| {
-            let x = i as f32 / (CURVE_SAMPLES - 1) as f32;
-            sample_spline_normalized(&spline, spline_mode, x)
-        })
-        .map(|sample| linear_of(sample.color(picker_space)))
+        .filter_map(|i| gradient.linear_at(i as f32 / (CURVE_SAMPLES - 1) as f32))
         .collect()
-}
-
-fn linear_of(color: Color32) -> [f32; 3] {
-    let rgba = Rgba::from(color);
-    [rgba.r(), rgba.g(), rgba.b()]
-}
-
-fn display_color([r, g, b]: [f32; 3]) -> Color32 {
-    Rgba::from_rgb(r, g, b).into()
 }
 
 fn midpoint(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
@@ -223,7 +208,7 @@ fn colored_polyline(
         .windows(2)
         .map(|pair| WorldSegment {
             ends: [space.position(pair[0]), space.position(pair[1])],
-            color: display_color(midpoint(pair[0], pair[1])).gamma_multiply(opacity),
+            color: linear_to_color32(midpoint(pair[0], pair[1])).gamma_multiply(opacity),
             width,
         })
         .collect()
@@ -449,6 +434,7 @@ impl View3d {
         control_points: &[ControlPoint],
         spline_mode: SplineMode,
         picker_space: PickerSpace,
+        blend_space: BlendSpace,
         selected_index: Option<usize>,
     ) {
         ui.horizontal(|ui| {
@@ -466,7 +452,8 @@ impl View3d {
         let (camera, space) = (self.camera, self.space);
         let guide = ui.visuals().weak_text_color();
 
-        let samples = gradient_linear_samples(control_points, spline_mode, picker_space);
+        let samples =
+            gradient_linear_samples(control_points, spline_mode, picker_space, blend_space);
         let mut segments = reference_segments(space, guide.gamma_multiply(REFERENCE_OPACITY));
         segments.extend(colored_polyline(space, &samples, CURVE_WIDTH, 1.0));
         let mut shapes: Vec<(f32, Shape)> = segments
@@ -476,8 +463,9 @@ impl View3d {
 
         let mut point_targets = Vec::new();
         for (index, cp) in control_points.iter().enumerate() {
-            let fill = cp.val().color(picker_space);
-            if let Some(projected) = camera.project(space.position(linear_of(fill)), rect) {
+            let linear = cp.val().linear(picker_space);
+            let fill = linear_to_color32(linear);
+            if let Some(projected) = camera.project(space.position(linear), rect) {
                 shapes.push(point_shape(
                     camera,
                     projected,
@@ -491,7 +479,7 @@ impl View3d {
             .iter()
             .filter_map(|&linear| {
                 let projected = camera.project(space.position(linear), rect)?;
-                Some((projected.pos, display_color(linear)))
+                Some((projected.pos, linear_to_color32(linear)))
             })
             .collect();
 
@@ -517,6 +505,7 @@ mod tests {
     use std::{cell::RefCell, f32::consts::FRAC_PI_2, rc::Rc};
 
     use crate::{
+        color_space::BlendSpace,
         datatypes::control_point::ControlPointValue,
         ui_egui::{
             app::ZColorPickerAppContext,
@@ -623,6 +612,24 @@ mod tests {
         assert_close(View3dSpace::Oklab.position([1.0; 3]), [0.0, 0.5, 0.0]);
     }
 
+    #[test]
+    fn curve_samples_follow_the_picker_and_blend_spaces() {
+        let hsl_red_to_blue = [(0.0, 0.0), (2.0 / 3.0, 1.0)]
+            .map(|(h, t)| ControlPoint::new_simple(ControlPointValue::new(1.0, 0.5, h), t))
+            .to_vec();
+        let samples = gradient_linear_samples(
+            &hsl_red_to_blue,
+            SplineMode::Linear,
+            PickerSpace::Hsl,
+            BlendSpace::LinearRgb,
+        );
+        assert_eq!(samples.len(), CURVE_SAMPLES);
+        for (i, sample) in samples.into_iter().enumerate() {
+            let x = i as f32 / (CURVE_SAMPLES - 1) as f32;
+            assert_close(sample, [1.0 - x, 0.0, x]);
+        }
+    }
+
     fn pane_frame(
         egui_ctx: &egui::Context,
         pane: &mut View3dPane,
@@ -681,6 +688,8 @@ mod tests {
         let ctx = Rc::new(RefCell::new(<ZColorPickerAppContext as Default>::default()));
         ctx.borrow_mut().control_points = points.clone();
         ctx.borrow_mut().spline_mode = SplineMode::Bezier;
+        ctx.borrow_mut().picker_space = PickerSpace::Okhsl;
+        ctx.borrow_mut().blend_space = BlendSpace::Oklab;
         ctx.borrow()
             .z_color_picker
             .borrow_mut()
@@ -706,7 +715,7 @@ mod tests {
                 format!(
                     "#{}",
                     format_color_as(
-                        cp.val().color(PickerSpace::Hsv),
+                        cp.val().color(PickerSpace::Okhsl),
                         ColorStringCopy::HEXNOA,
                         None
                     )

@@ -1,8 +1,8 @@
-use ecolor::{Color32, Rgba};
+use ecolor::Color32;
 use eframe::egui::{Pos2, Vec2};
 use serde::{Deserialize, Serialize};
 
-use crate::color_space::{picker_to_linear, PickerSpace};
+use crate::color_space::{linear_to_color32, picker_to_linear, PickerSpace};
 use crate::math::hue_lerp;
 
 type HsvKeyValueInnerType = [f32; 3];
@@ -45,8 +45,7 @@ impl HsvKeyValue {
     }
 
     pub fn color(&self, space: PickerSpace) -> Color32 {
-        let [r, g, b] = self.linear(space);
-        Rgba::from_rgb(r, g, b).into()
+        linear_to_color32(self.linear(space))
     }
 
     pub fn linear(&self, space: PickerSpace) -> [f32; 3] {

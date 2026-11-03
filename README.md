@@ -22,7 +22,7 @@ T, the strip under the hue bar, is each point's position along the gradient: the
 The selected control point's color is shown in the top left; the H, S, V (L) and T fields under it show its values and take exact ones. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
 The rows under the fields show the selected color as Hex, sRGB (0-255), HSL, Oklab and OkLCh.
 Between the points, the gradient is blended in the Blend space (options Curve row): the picker space itself, sRGB, Linear RGB, Oklab or OkLCh.
-The 3D view above the previewer draws the gradient curve and its control points inside a color space (view only).
+The 3D view above the previewer draws the gradient curve, blended as the previewer shows it, and its control points inside a color space (view only).
 To create a new preset, click the preset combo box and select `<NEW>`
 
 ## Controls
@@ -102,7 +102,6 @@ Previewer:
   - Hue
 - View multiple presets at the same time
 - Photoshop workflow, plugin integration?
-- Different color spaces
 - Better ui widget dynamic rezising
 - Polynomial spline mode
 - Auto gradient button with "undo"

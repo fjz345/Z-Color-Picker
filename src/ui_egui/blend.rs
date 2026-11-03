@@ -1,12 +1,12 @@
 use std::ops::{Add, Div, Mul, Sub};
 
-use ecolor::{Color32, Rgba};
+use ecolor::Color32;
 use splines::Spline;
 
 use crate::{
     color_space::{
-        blend_to_linear, linear_to_blend, linear_to_picker, BlendSpace, PickerSpace,
-        ACHROMATIC_CHROMA,
+        blend_to_linear, linear_to_blend, linear_to_color32, linear_to_picker, BlendSpace,
+        PickerSpace, ACHROMATIC_CHROMA,
     },
     common::SplineMode,
     datatypes::control_point::{ControlPoint, ControlPointValue},
@@ -110,8 +110,7 @@ impl Gradient {
     }
 
     pub fn color_at(&self, x: f32) -> Option<Color32> {
-        let [r, g, b] = self.linear_at(x)?;
-        Some(Rgba::from_rgb(r, g, b).into())
+        self.linear_at(x).map(linear_to_color32)
     }
 
     pub fn picker_value_at(&self, x: f32) -> Option<ControlPointValue> {
