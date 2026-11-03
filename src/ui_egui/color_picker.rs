@@ -1,5 +1,7 @@
 use crate::{
-    color_space::{linear_to_oklab, oklab_to_oklch, srgb_to_hsl, srgb_to_linear, PickerSpace},
+    color_space::{
+        linear_to_oklab, oklab_to_oklch, srgb_to_hsl, srgb_to_linear, BlendSpace, PickerSpace,
+    },
     common::{ColorStringCopy, SplineMode},
     datatypes::{
         control_point::{create_tangent_for_control_point, ControlPoint},
@@ -41,6 +43,7 @@ pub struct MainColorPickerCtx<'a> {
     pub control_points: &'a mut Vec<ControlPoint>,
     pub spline_mode: SplineMode,
     pub picker_space: PickerSpace,
+    pub blend_space: BlendSpace,
     pub color_copy_format: ColorStringCopy,
     pub last_modifying_point_index: &'a mut Option<usize>,
     pub dragging_index: &'a mut Option<usize>,
@@ -162,6 +165,7 @@ impl ZColorPickerWrapper {
         &mut self,
         control_points: &mut Vec<ControlPoint>,
         spline_mode: SplineMode,
+        blend_space: BlendSpace,
     ) {
         normalize_t_with_warning(control_points);
         if spline_mode == SplineMode::Bezier {
@@ -175,7 +179,10 @@ impl ZColorPickerWrapper {
             }
         }
         self.auto_comb_unsolved = 0;
-        if spline_mode == SplineMode::Bezier && self.options.is_auto_comb {
+        if spline_mode == SplineMode::Bezier
+            && blend_space == BlendSpace::Picker
+            && self.options.is_auto_comb
+        {
             // Constrain first: a later clamp would move solved points and unsettle a loaded preset.
             self.apply_control_point_constraints(control_points);
             self.auto_comb_unsolved = apply_auto_comb(control_points, self.dragging_tangent);
@@ -188,15 +195,17 @@ impl ZColorPickerWrapper {
         control_points: &mut Vec<ControlPoint>,
         spline_mode: SplineMode,
         picker_space: PickerSpace,
+        blend_space: BlendSpace,
         color_copy_format: &ColorStringCopy,
     ) -> Response {
         let inner_response = ui.vertical(|ui| {
-            self.pre_draw_update(control_points, spline_mode);
+            self.pre_draw_update(control_points, spline_mode, blend_space);
 
             let mut ctx = MainColorPickerCtx {
                 control_points: control_points,
                 spline_mode: spline_mode,
                 picker_space,
+                blend_space,
                 color_copy_format: *color_copy_format,
                 last_modifying_point_index: &mut self.last_modifying_point_index,
                 dragging_index: &mut self.dragging_index,
@@ -206,7 +215,8 @@ impl ZColorPickerWrapper {
                 is_hue_middle_interpolated: self.options.is_hue_middle_interpolated,
                 is_curve_locked: self.options.is_curve_locked,
                 is_window_lock: self.options.is_window_lock,
-                is_show_curvature_comb: self.options.is_show_curvature_comb,
+                is_show_curvature_comb: self.options.is_show_curvature_comb
+                    && blend_space == BlendSpace::Picker,
                 curvature_comb_scale: self.options.curvature_comb_scale,
             };
 
@@ -560,6 +570,7 @@ pub fn main_color_picker(
             ctx.control_points,
             ctx.spline_mode,
             ctx.picker_space,
+            ctx.blend_space,
             &slider_2d_response,
         );
         if let (SplineMode::HermiteBezier, Some(index)) = (ctx.spline_mode, is_modifying_index) {
@@ -1035,7 +1046,12 @@ fn handle_t_strip(
     ctx: &mut MainColorPickerCtx,
     is_modifying_index: &mut Option<usize>,
 ) {
-    let gradient = gradient_color_at(ctx.control_points, ctx.spline_mode, ctx.picker_space);
+    let gradient = gradient_color_at(
+        ctx.control_points,
+        ctx.spline_mode,
+        ctx.picker_space,
+        ctx.blend_space,
+    );
     let t_response = color_function_gradient(ui, slider_size, gradient)
         .on_hover_text(strip_hint(Strip::T, is_modifying_index.is_some()));
     let (_, t_selected_index) = ui_t_control_points_overlay(
@@ -1287,6 +1303,7 @@ mod tests {
                             &mut points,
                             SplineMode::HermiteBezier,
                             PickerSpace::Hsv,
+                            BlendSpace::Picker,
                             &ColorStringCopy::HEXNOA,
                         )
                         .rect;
@@ -1715,6 +1732,7 @@ mod tests {
                         control_points: &mut *points,
                         spline_mode: SplineMode::Linear,
                         picker_space: PickerSpace::Hsv,
+                        blend_space: BlendSpace::Picker,
                         color_copy_format: ColorStringCopy::HEXNOA,
                         last_modifying_point_index: &mut last_modifying_point_index,
                         dragging_index: &mut dragging_index,
@@ -1846,6 +1864,7 @@ mod tests {
                     points,
                     SplineMode::Linear,
                     PickerSpace::Hsv,
+                    BlendSpace::Picker,
                     &ColorStringCopy::HEXNOA,
                 );
             });
@@ -1935,6 +1954,7 @@ mod tests {
                     points,
                     SplineMode::Linear,
                     PickerSpace::Hsv,
+                    BlendSpace::Picker,
                     &ColorStringCopy::HEXNOA,
                 );
             });
@@ -2110,10 +2130,10 @@ mod tests {
     fn auto_comb_runs_before_drawing_only_in_bezier_mode() {
         let mut picker = auto_comb_picker();
         let mut points = kinked_bezier_points();
-        picker.pre_draw_update(&mut points, SplineMode::Linear);
+        picker.pre_draw_update(&mut points, SplineMode::Linear, BlendSpace::Picker);
         assert_eq!(points, kinked_bezier_points());
 
-        picker.pre_draw_update(&mut points, SplineMode::Bezier);
+        picker.pre_draw_update(&mut points, SplineMode::Bezier, BlendSpace::Picker);
         let (incoming, outgoing) = (handle_unit(&points[1], 0), handle_unit(&points[1], 1));
         assert!(
             (incoming + outgoing).length() < 1e-4,
@@ -2124,7 +2144,11 @@ mod tests {
     #[test]
     fn bezier_handles_are_left_alone_with_auto_comb_off() {
         let mut points = kinked_bezier_points();
-        ZColorPickerWrapper::default().pre_draw_update(&mut points, SplineMode::Bezier);
+        ZColorPickerWrapper::default().pre_draw_update(
+            &mut points,
+            SplineMode::Bezier,
+            BlendSpace::Picker,
+        );
         assert_eq!(points, kinked_bezier_points());
     }
 
@@ -2133,9 +2157,61 @@ mod tests {
         let mut picker = auto_comb_picker();
         picker.dragging_tangent = Some((1, 0));
         let mut points = kinked_bezier_points();
-        picker.pre_draw_update(&mut points, SplineMode::Bezier);
+        picker.pre_draw_update(&mut points, SplineMode::Bezier, BlendSpace::Picker);
         assert!((handle_unit(&points[1], 0) - vec2(-1.0, 0.0)).length() < 1e-4);
         assert!((handle_unit(&points[1], 1) - vec2(1.0, 0.0)).length() < 1e-4);
+    }
+
+    fn comb_teeth_painted(blend_space: BlendSpace) -> usize {
+        let ctx = egui::Context::default();
+        let mut picker = ZColorPickerWrapper::default();
+        let mut points = kinked_bezier_points();
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 900.0))),
+            ..Default::default()
+        };
+        let output = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                picker.draw_ui(
+                    ui,
+                    &mut points,
+                    SplineMode::Bezier,
+                    PickerSpace::Hsv,
+                    blend_space,
+                    &ColorStringCopy::HEXNOA,
+                );
+            });
+        });
+        let tooth_color = Color32::from_rgba_unmultiplied(255, 255, 255, 120);
+        output
+            .shapes
+            .into_iter()
+            .flat_map(|clipped| match clipped.shape {
+                Shape::Vec(shapes) => shapes,
+                shape => vec![shape],
+            })
+            .filter(|shape| {
+                matches!(shape, Shape::LineSegment { stroke, .. } if stroke.color == tooth_color)
+            })
+            .count()
+    }
+
+    #[test]
+    fn comb_and_auto_comb_are_off_in_a_non_picker_blend() {
+        assert!(comb_teeth_painted(BlendSpace::Picker) > 0);
+        for blend in BlendSpace::ALL {
+            if blend == BlendSpace::Picker {
+                continue;
+            }
+            assert_eq!(comb_teeth_painted(blend), 0, "{blend:?}");
+
+            let mut picker = auto_comb_picker();
+            picker.auto_comb_unsolved = 3;
+            let mut points = kinked_bezier_points();
+            picker.pre_draw_update(&mut points, SplineMode::Bezier, blend);
+            assert_eq!(points, kinked_bezier_points(), "{blend:?}");
+            assert_eq!(picker.auto_comb_unsolved, 0, "{blend:?}");
+        }
     }
 
     #[test]
@@ -2145,9 +2221,9 @@ mod tests {
             points_sv(&[(0.25, 0.33), (0.44, 0.38), (0.8, 0.6), (0.9, 0.8)]),
             &[[[-0.01, 0.0], [0.01, 0.0]]; 4],
         );
-        picker.pre_draw_update(&mut staircase, SplineMode::Bezier);
+        picker.pre_draw_update(&mut staircase, SplineMode::Bezier, BlendSpace::Picker);
         assert_eq!(picker.auto_comb_unsolved, 2);
-        picker.pre_draw_update(&mut staircase, SplineMode::Linear);
+        picker.pre_draw_update(&mut staircase, SplineMode::Linear, BlendSpace::Picker);
         assert_eq!(picker.auto_comb_unsolved, 0);
     }
 
@@ -2175,6 +2251,7 @@ mod tests {
                             points,
                             SplineMode::Bezier,
                             PickerSpace::Hsv,
+                            BlendSpace::Picker,
                             &ColorStringCopy::HEXNOA,
                         )
                         .rect;
@@ -2309,7 +2386,11 @@ mod tests {
         ZColorPickerWrapper::default().apply_control_point_constraints(&mut points);
         assert_ts_near(&points, &[0.0, 0.5, 1.0]);
         let mut points = points_t(&[0.0, 1.0, 2.0]);
-        ZColorPickerWrapper::default().pre_draw_update(&mut points, SplineMode::Linear);
+        ZColorPickerWrapper::default().pre_draw_update(
+            &mut points,
+            SplineMode::Linear,
+            BlendSpace::Picker,
+        );
         assert_ts_near(&points, &[0.0, 0.5, 1.0]);
     }
 
@@ -2317,7 +2398,7 @@ mod tests {
     fn constraints_keep_valid_t() {
         let mut points = points_t(&[0.0, 0.1, 1.0]);
         let mut wrapper = ZColorPickerWrapper::default();
-        wrapper.pre_draw_update(&mut points, SplineMode::Linear);
+        wrapper.pre_draw_update(&mut points, SplineMode::Linear, BlendSpace::Picker);
         wrapper.apply_control_point_constraints(&mut points);
         assert_ts_near(&points, &[0.0, 0.1, 1.0]);
     }
@@ -2482,6 +2563,7 @@ mod tests {
                         points,
                         SplineMode::Linear,
                         PickerSpace::Hsv,
+                        BlendSpace::Picker,
                         &ColorStringCopy::HEXNOA,
                     )
                     .rect;

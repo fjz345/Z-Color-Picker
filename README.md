@@ -20,6 +20,7 @@ Each control point is a value in the picker space: HSV, HSL, OKHSV or OKHSL (Spa
 Hue of each individual control point can be changed in the hue bar, and saturation & value (lightness in HSL and OKHSL) in the 2d slider.
 T, the strip under the hue bar, is each point's position along the gradient: the first and last points stay at 0 and 1, the middle points can be dragged between their neighbours.
 The selected control point's color is shown in the top left; the H, S, V (L) and T fields under it show its values and take exact ones. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
+Between the points, the gradient is blended in the Blend space (options Curve row): the picker space itself, sRGB, Linear RGB, Oklab or OkLCh.
 To create a new preset, click the preset combo box and select `<NEW>`
 
 ## Controls
@@ -51,11 +52,12 @@ Points row:
 
 Curve row:
 - Spline: Linear, Bezier (drag the tangent handles) or Hermite (Catmull-Rom, automatic tangents, shown dashed on the selected point)
+- Blend: Color space the gradient is interpolated in: Picker (the square's coordinates and hue, default), sRGB, Linear RGB, Oklab, or OkLCh (hue takes the short way around; a gray takes its neighbour's hue). The points keep their colors and the ribbon on the square follows the blended colors; it is saved with the preset. Any blend but Picker turns off the comb and Auto comb
 - Flip: Reverse the control point order (T is mirrored)
 - Auto comb: Line up each point's two handles and solve their lengths so the comb is continuous (Bezier only); dragging a handle then only turns it. `N unsolved` counts points where the handle directions allow no solution
 
 Comb row:
-- Show: Show the curvature comb (Bezier and Hermite)
+- Show: Show the curvature comb (Bezier and Hermite, Picker blend)
 - Scale: Length of the comb spikes
 
 Previewer:

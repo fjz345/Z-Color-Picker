@@ -4,14 +4,14 @@ use eframe::{
     emath::RectTransform,
     epaint::PathShape,
 };
-use splines::{Interpolation, Key, Spline};
+use splines::{Interpolate, Interpolation, Key, Spline};
 
 use crate::{
-    color_space::{linear_to_picker, PickerSpace},
+    color_space::{linear_to_picker, BlendSpace, PickerSpace},
     common::SplineMode,
     datatypes::control_point::{ControlPoint, ControlPointValue},
     math::shortest_hue_delta,
-    ui_egui::{tangents::ui_control_point_tangents, ui_common::contrast_color},
+    ui_egui::{blend::Gradient, tangents::ui_control_point_tangents, ui_common::contrast_color},
 };
 
 const CONTROL_POINT_RADIUS: f32 = 8.0;
@@ -374,10 +374,7 @@ pub fn key_ts(points: &[ControlPoint]) -> Vec<f32> {
     }
 }
 
-pub fn real_keys(
-    spline: &Spline<f32, ControlPointValue>,
-    spline_mode: SplineMode,
-) -> &[Key<f32, ControlPointValue>] {
+pub fn real_keys<V>(spline: &Spline<f32, V>, spline_mode: SplineMode) -> &[Key<f32, V>] {
     let keys = spline.keys();
     match spline_mode {
         SplineMode::HermiteBezier if keys.len() >= 2 => &keys[1..keys.len() - 1],
@@ -386,12 +383,12 @@ pub fn real_keys(
     }
 }
 
-/// Samples `spline` (built by `control_points_to_spline`) at `x` in [0, 1] across the real control points.
-pub fn sample_spline_normalized(
-    spline: &Spline<f32, ControlPointValue>,
+/// Samples `spline` (built by `spline_through_keys`) at `x` in [0, 1] across the real control points.
+pub fn sample_spline_normalized<V: Interpolate<f32>>(
+    spline: &Spline<f32, V>,
     spline_mode: SplineMode,
     x: f32,
-) -> Option<ControlPointValue> {
+) -> Option<V> {
     let keys = real_keys(spline, spline_mode);
     let (first, last) = (keys.first()?, keys.last()?);
     let t = first.t + x.clamp(0.0, 1.0) * (last.t - first.t);
@@ -405,12 +402,10 @@ pub fn gradient_color_at(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
     picker_space: PickerSpace,
+    blend_space: BlendSpace,
 ) -> impl Fn(f32) -> Color32 {
-    let spline = control_points_to_spline(&flatten_control_points(control_points), spline_mode);
-    move |x| {
-        sample_spline_normalized(&spline, spline_mode, x)
-            .map_or(Color32::TRANSPARENT, |sample| sample.color(picker_space))
-    }
+    let gradient = Gradient::new(control_points, spline_mode, picker_space, blend_space);
+    move |x| gradient.color_at(x).unwrap_or(Color32::TRANSPARENT)
 }
 
 pub fn bezier_handle(cp: &ControlPoint, slot: usize) -> ControlPointValue {
@@ -464,27 +459,37 @@ pub fn control_points_to_spline(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
 ) -> Spline<f32, ControlPointValue> {
-    let ts = key_ts(control_points);
-    let points_at_t = control_points.iter().zip(ts.iter().copied());
+    let keys: Vec<[ControlPointValue; 3]> = control_points
+        .iter()
+        .map(|cp| [*cp.val(), bezier_handle(cp, 0), bezier_handle(cp, 1)])
+        .collect();
+    spline_through_keys(&key_ts(control_points), &keys, spline_mode)
+}
+
+pub fn spline_through_keys<V: Copy>(
+    ts: &[f32],
+    values_and_handles: &[[V; 3]],
+    spline_mode: SplineMode,
+) -> Spline<f32, V> {
+    assert_eq!(ts.len(), values_and_handles.len());
+    let keys_at_t = values_and_handles.iter().zip(ts.iter().copied());
     match spline_mode {
         SplineMode::Linear => Spline::from_vec(
-            points_at_t
-                .map(|(cp, t)| Key::new(t, *cp.val(), Interpolation::Linear))
+            keys_at_t
+                .map(|([value, ..], t)| Key::new(t, *value, Interpolation::Linear))
                 .collect(),
         ),
         SplineMode::Bezier => Spline::from_vec(
-            points_at_t
-                .map(|(cp, t)| {
-                    Key::new(
-                        t,
-                        *cp.val(),
-                        Interpolation::StrokeBezier(bezier_handle(cp, 0), bezier_handle(cp, 1)),
-                    )
+            keys_at_t
+                .map(|(&[value, handle_in, handle_out], t)| {
+                    Key::new(t, value, Interpolation::StrokeBezier(handle_in, handle_out))
                 })
                 .collect(),
         ),
         SplineMode::HermiteBezier => {
-            let (Some(first), Some(last)) = (control_points.first(), control_points.last()) else {
+            let (Some([first, ..]), Some([last, ..])) =
+                (values_and_handles.first(), values_and_handles.last())
+            else {
                 return Spline::from_vec(Vec::new());
             };
             let n = ts.len();
@@ -493,12 +498,11 @@ pub fn control_points_to_spline(
             } else {
                 (ts[0] - 1.0, ts[0] + 1.0)
             };
-            let catmull_rom_key =
-                |t, cp: &ControlPoint| Key::new(t, *cp.val(), Interpolation::CatmullRom);
+            let catmull_rom_key = |t, value: V| Key::new(t, value, Interpolation::CatmullRom);
             Spline::from_vec(
-                std::iter::once(catmull_rom_key(before, first))
-                    .chain(points_at_t.map(|(cp, t)| catmull_rom_key(t, cp)))
-                    .chain(std::iter::once(catmull_rom_key(after, last)))
+                std::iter::once(catmull_rom_key(before, *first))
+                    .chain(keys_at_t.map(|([value, ..], t)| catmull_rom_key(t, *value)))
+                    .chain(std::iter::once(catmull_rom_key(after, *last)))
                     .collect(),
             )
         }
@@ -1013,14 +1017,15 @@ mod tests {
     #[test]
     fn gradient_color_at_hits_the_point_colors_at_their_t() {
         let cps = points_with_t(&[0.0, 0.3, 1.0]);
+        let blend = BlendSpace::Picker;
         for space in PickerSpace::ALL {
-            let color_at = gradient_color_at(&cps, SplineMode::Linear, space);
+            let color_at = gradient_color_at(&cps, SplineMode::Linear, space, blend);
             for cp in &cps {
                 assert_eq!(color_at(*cp.t()), cp.val().color(space), "{space:?}");
             }
         }
         assert_eq!(
-            gradient_color_at(&[], SplineMode::Linear, PickerSpace::Hsv)(0.5),
+            gradient_color_at(&[], SplineMode::Linear, PickerSpace::Hsv, blend)(0.5),
             Color32::TRANSPARENT
         );
     }

@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    color_space::PickerSpace,
+    color_space::{BlendSpace, PickerSpace},
     common::SplineMode,
     datatypes::control_point::ControlPoint,
     error::{Result, ZError},
@@ -33,18 +33,24 @@ impl PresetEntity {
         }
     }
 
-    pub fn into(self) -> (Vec<ControlPoint>, SplineMode, PickerSpace) {
+    pub fn into(self) -> (Vec<ControlPoint>, SplineMode, PickerSpace, BlendSpace) {
         let data = self.data;
-        (data.control_points, data.spline_mode, data.picker_space)
+        (
+            data.control_points,
+            data.spline_mode,
+            data.picker_space,
+            data.blend_space,
+        )
     }
 }
 
-impl From<(Vec<ControlPoint>, SplineMode, PickerSpace)> for AppDataCtx {
-    fn from(value: (Vec<ControlPoint>, SplineMode, PickerSpace)) -> Self {
+impl From<(Vec<ControlPoint>, SplineMode, PickerSpace, BlendSpace)> for AppDataCtx {
+    fn from(value: (Vec<ControlPoint>, SplineMode, PickerSpace, BlendSpace)) -> Self {
         Self {
             control_points: value.0,
             spline_mode: value.1,
             picker_space: value.2,
+            blend_space: value.3,
         }
     }
 }
@@ -305,10 +311,17 @@ impl PresetHandler {
         control_points: &[ControlPoint],
         spline_mode: SplineMode,
         picker_space: PickerSpace,
+        blend_space: BlendSpace,
     ) -> bool {
-        self.presets
-            .iter()
-            .any(|preset| data_matches(&preset.data, control_points, spline_mode, picker_space))
+        self.presets.iter().any(|preset| {
+            data_matches(
+                &preset.data,
+                control_points,
+                spline_mode,
+                picker_space,
+                blend_space,
+            )
+        })
     }
 
     pub fn apply_selected_preset(
@@ -316,13 +329,19 @@ impl PresetHandler {
         control_points: &mut Vec<ControlPoint>,
         spline_mode: &mut SplineMode,
         picker_space: &mut PickerSpace,
+        blend_space: &mut BlendSpace,
     ) {
         if let Some(preset) = self.preset_selected_index.and_then(|i| self.presets.get(i)) {
-            let (preset_control_points, preset_spline_mode, preset_picker_space) =
-                preset.clone().into();
+            let (
+                preset_control_points,
+                preset_spline_mode,
+                preset_picker_space,
+                preset_blend_space,
+            ) = preset.clone().into();
             *control_points = preset_control_points;
             *spline_mode = preset_spline_mode;
             *picker_space = preset_picker_space;
+            *blend_space = preset_blend_space;
             self.failed_auto_save = None;
             log::info!("Preset Applied!");
         } else {
@@ -335,12 +354,19 @@ impl PresetHandler {
         control_points: &[ControlPoint],
         spline_mode: SplineMode,
         picker_space: PickerSpace,
+        blend_space: BlendSpace,
     ) {
         let preset = self
             .preset_selected_index
             .and_then(|s| self.presets.get_mut(s))
             .expect("an applied preset is selected");
-        preset.data = (control_points.to_vec(), spline_mode, picker_space).into();
+        preset.data = (
+            control_points.to_vec(),
+            spline_mode,
+            picker_space,
+            blend_space,
+        )
+            .into();
     }
 
     pub fn init_presets(&mut self) {
@@ -367,6 +393,7 @@ impl PresetHandler {
         control_points: &[ControlPoint],
         spline_mode: SplineMode,
         picker_space: PickerSpace,
+        blend_space: BlendSpace,
     ) -> Result<()> {
         let Some(preset) = self
             .preset_selected_index
@@ -378,7 +405,13 @@ impl PresetHandler {
         };
         let attempt = PresetEntity::new(
             &preset.name,
-            (control_points.to_vec(), spline_mode, picker_space).into(),
+            (
+                control_points.to_vec(),
+                spline_mode,
+                picker_space,
+                blend_space,
+            )
+                .into(),
         );
         save_preset_to_disk(&self.presets_dir, &attempt)?;
         preset.data = attempt.data;
@@ -392,11 +425,18 @@ impl PresetHandler {
         control_points: &Vec<ControlPoint>,
         spline_mode: &SplineMode,
         picker_space: PickerSpace,
+        blend_space: BlendSpace,
     ) -> Result<()> {
         self.check_name(name, None)?;
         ensure_no_preset_file(&self.presets_dir, name)?;
 
-        let data = (control_points.clone(), *spline_mode, picker_space).into();
+        let data = (
+            control_points.clone(),
+            *spline_mode,
+            picker_space,
+            blend_space,
+        )
+            .into();
         let preset = PresetEntity::new(name, data);
         save_preset_to_disk(&self.presets_dir, &preset)?;
         self.presets.push(preset);
@@ -453,11 +493,18 @@ impl PresetHandler {
         control_points: &[ControlPoint],
         spline_mode: SplineMode,
         picker_space: PickerSpace,
+        blend_space: BlendSpace,
     ) -> bool {
         self.preset_selected_index
             .and_then(|s| self.presets.get(s))
             .is_some_and(|preset| {
-                !data_matches(&preset.data, control_points, spline_mode, picker_space)
+                !data_matches(
+                    &preset.data,
+                    control_points,
+                    spline_mode,
+                    picker_space,
+                    blend_space,
+                )
             })
     }
 
@@ -466,14 +513,20 @@ impl PresetHandler {
         control_points: &[ControlPoint],
         spline_mode: SplineMode,
         picker_space: PickerSpace,
+        blend_space: BlendSpace,
     ) -> Result<bool> {
-        let already_failed = self
-            .failed_auto_save
-            .as_ref()
-            .is_some_and(|failed| data_matches(failed, control_points, spline_mode, picker_space));
+        let already_failed = self.failed_auto_save.as_ref().is_some_and(|failed| {
+            data_matches(
+                failed,
+                control_points,
+                spline_mode,
+                picker_space,
+                blend_space,
+            )
+        });
         if !self.auto_save_presets
             || already_failed
-            || !self.is_selected_dirty(control_points, spline_mode, picker_space)
+            || !self.is_selected_dirty(control_points, spline_mode, picker_space, blend_space)
         {
             return Ok(false);
         }
@@ -483,7 +536,13 @@ impl PresetHandler {
             .expect("is_selected_dirty implies a valid selection");
         let attempt = PresetEntity::new(
             &preset.name,
-            (control_points.to_vec(), spline_mode, picker_space).into(),
+            (
+                control_points.to_vec(),
+                spline_mode,
+                picker_space,
+                blend_space,
+            )
+                .into(),
         );
         match save_preset_to_disk(&self.presets_dir, &attempt) {
             Ok(()) => {
@@ -507,10 +566,18 @@ impl PresetHandler {
         control_points: &[ControlPoint],
         spline_mode: SplineMode,
         picker_space: PickerSpace,
+        blend_space: BlendSpace,
     ) {
-        if self.is_selected_dirty(control_points, spline_mode, picker_space) {
-            self.failed_auto_save =
-                Some((control_points.to_vec(), spline_mode, picker_space).into());
+        if self.is_selected_dirty(control_points, spline_mode, picker_space, blend_space) {
+            self.failed_auto_save = Some(
+                (
+                    control_points.to_vec(),
+                    spline_mode,
+                    picker_space,
+                    blend_space,
+                )
+                    .into(),
+            );
         }
     }
 }
@@ -520,9 +587,11 @@ fn data_matches(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
     picker_space: PickerSpace,
+    blend_space: BlendSpace,
 ) -> bool {
     data.spline_mode == spline_mode
         && data.picker_space == picker_space
+        && data.blend_space == blend_space
         && data.control_points.len() == control_points.len()
         && data
             .control_points
@@ -557,6 +626,7 @@ mod tests {
             spline_mode,
             control_points: Vec::new(),
             picker_space: PickerSpace::Hsv,
+            blend_space: BlendSpace::Picker,
         }
     }
 
@@ -566,6 +636,7 @@ mod tests {
             &Vec::new(),
             &spline_mode,
             PickerSpace::Hsv,
+            BlendSpace::Picker,
         )
     }
 
@@ -746,10 +817,17 @@ mod tests {
         let mut points = sample_points();
         let mut spline_mode = SplineMode::Bezier;
         let mut picker_space = PickerSpace::Okhsl;
-        handler.apply_selected_preset(&mut points, &mut spline_mode, &mut picker_space);
+        let mut blend_space = BlendSpace::Oklch;
+        handler.apply_selected_preset(
+            &mut points,
+            &mut spline_mode,
+            &mut picker_space,
+            &mut blend_space,
+        );
         assert_eq!(points, sample_points());
         assert_eq!(spline_mode, SplineMode::Bezier);
         assert_eq!(picker_space, PickerSpace::Okhsl);
+        assert_eq!(blend_space, BlendSpace::Oklch);
     }
 
     #[test]
@@ -913,6 +991,7 @@ mod tests {
             spline_mode: SplineMode::Bezier,
             control_points: sample_points(),
             picker_space: PickerSpace::Hsv,
+            blend_space: BlendSpace::Picker,
         };
         assert_eq!(handler.presets[0].data, expected);
     }
@@ -944,6 +1023,7 @@ mod tests {
                 &sample_points(),
                 &SplineMode::Bezier,
                 PickerSpace::Hsv,
+                BlendSpace::Picker,
             )
             .unwrap();
         let mut reloaded = PresetHandler::new(handler.presets_dir.clone());
@@ -1068,6 +1148,7 @@ mod tests {
                 &sample_points(),
                 &SplineMode::Bezier,
                 PickerSpace::Hsv,
+                BlendSpace::Picker,
             )
             .unwrap();
     }
@@ -1086,7 +1167,12 @@ mod tests {
     fn is_selected_dirty_false_right_after_create() {
         let (_tmp, mut handler) = temp_handler();
         create_sample(&mut handler);
-        assert!(!handler.is_selected_dirty(&sample_points(), SplineMode::Bezier, PickerSpace::Hsv));
+        assert!(!handler.is_selected_dirty(
+            &sample_points(),
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker
+        ));
     }
 
     #[test]
@@ -1096,9 +1182,15 @@ mod tests {
         assert!(handler.is_selected_dirty(
             &moved_points(0.9),
             SplineMode::Bezier,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
-        assert!(handler.is_selected_dirty(&sample_points(), SplineMode::Linear, PickerSpace::Hsv));
+        assert!(handler.is_selected_dirty(
+            &sample_points(),
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker
+        ));
     }
 
     #[test]
@@ -1109,13 +1201,15 @@ mod tests {
         assert!(!handler.is_selected_dirty(
             &moved_points(0.9),
             SplineMode::Linear,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
         handler.preset_selected_index = Some(5);
         assert!(!handler.is_selected_dirty(
             &moved_points(0.9),
             SplineMode::Linear,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
     }
 
@@ -1136,15 +1230,26 @@ mod tests {
                 &sample_points_with_tangents(None),
                 &SplineMode::Linear,
                 PickerSpace::Hsv,
+                BlendSpace::Picker,
             )
             .unwrap();
         handler.auto_save_presets = true;
         let before = read_preset_file(&handler);
         let zero_filled = sample_points_with_tangents(Some(ControlPointValue::default()));
 
-        assert!(!handler.is_selected_dirty(&zero_filled, SplineMode::Linear, PickerSpace::Hsv));
+        assert!(!handler.is_selected_dirty(
+            &zero_filled,
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker
+        ));
         assert!(!handler
-            .auto_save(&zero_filled, SplineMode::Linear, PickerSpace::Hsv)
+            .auto_save(
+                &zero_filled,
+                SplineMode::Linear,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .unwrap());
         assert_eq!(read_preset_file(&handler), before);
     }
@@ -1155,7 +1260,12 @@ mod tests {
         create_sample(&mut handler);
         let mut points = sample_points();
         points[0] = ControlPoint::ControlPointLeftRightTangent(points[0].storage().clone());
-        assert!(!handler.is_selected_dirty(&points, SplineMode::Bezier, PickerSpace::Hsv));
+        assert!(!handler.is_selected_dirty(
+            &points,
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker
+        ));
     }
 
     #[test]
@@ -1164,7 +1274,12 @@ mod tests {
         create_sample(&mut handler);
         let mut points = sample_points();
         points[0].tangents_mut()[0] = Some(ControlPointValue::new(0.1, 0.0, 0.0));
-        assert!(handler.is_selected_dirty(&points, SplineMode::Bezier, PickerSpace::Hsv));
+        assert!(handler.is_selected_dirty(
+            &points,
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker
+        ));
     }
 
     #[test]
@@ -1174,11 +1289,17 @@ mod tests {
         assert!(handler.is_selected_dirty(
             &moved_points(0.9),
             SplineMode::Bezier,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
         let mut points = sample_points();
         *points[1].t_mut() = 0.5;
-        assert!(handler.is_selected_dirty(&points, SplineMode::Bezier, PickerSpace::Hsv));
+        assert!(handler.is_selected_dirty(
+            &points,
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker
+        ));
     }
 
     #[test]
@@ -1186,7 +1307,12 @@ mod tests {
         let (_tmp, mut handler) = temp_handler();
         create_sample(&mut handler);
         let before = read_preset_file(&handler);
-        let saved = handler.auto_save(&moved_points(0.9), SplineMode::Linear, PickerSpace::Hsv);
+        let saved = handler.auto_save(
+            &moved_points(0.9),
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         assert!(!saved.unwrap());
         assert_eq!(read_preset_file(&handler), before);
     }
@@ -1197,7 +1323,12 @@ mod tests {
         create_sample(&mut handler);
         handler.auto_save_presets = true;
         assert!(!handler
-            .auto_save(&sample_points(), SplineMode::Bezier, PickerSpace::Hsv)
+            .auto_save(
+                &sample_points(),
+                SplineMode::Bezier,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .unwrap());
     }
 
@@ -1207,17 +1338,29 @@ mod tests {
         create_sample(&mut handler);
         handler.auto_save_presets = true;
         assert!(handler
-            .auto_save(&moved_points(0.9), SplineMode::Linear, PickerSpace::Hsv)
+            .auto_save(
+                &moved_points(0.9),
+                SplineMode::Linear,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .unwrap());
         let on_disk: AppDataCtx = serde_json::from_str(&read_preset_file(&handler)).unwrap();
         assert_eq!(
             on_disk,
-            (moved_points(0.9), SplineMode::Linear, PickerSpace::Hsv).into()
+            (
+                moved_points(0.9),
+                SplineMode::Linear,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
+                .into()
         );
         assert!(!handler.is_selected_dirty(
             &moved_points(0.9),
             SplineMode::Linear,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
     }
 
@@ -1228,7 +1371,12 @@ mod tests {
         handler.auto_save_presets = true;
         handler.preset_selected_index = Some(5);
         assert!(!handler
-            .auto_save(&moved_points(0.9), SplineMode::Linear, PickerSpace::Hsv)
+            .auto_save(
+                &moved_points(0.9),
+                SplineMode::Linear,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .unwrap());
     }
 
@@ -1248,18 +1396,34 @@ mod tests {
         handler.auto_save_presets = true;
 
         assert!(handler
-            .auto_save(&moved_points(0.9), SplineMode::Linear, PickerSpace::Hsv)
+            .auto_save(
+                &moved_points(0.9),
+                SplineMode::Linear,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .is_err());
         assert!(handler.is_selected_dirty(
             &moved_points(0.9),
             SplineMode::Linear,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
         assert!(!handler
-            .auto_save(&moved_points(0.9), SplineMode::Linear, PickerSpace::Hsv)
+            .auto_save(
+                &moved_points(0.9),
+                SplineMode::Linear,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .unwrap());
         assert!(handler
-            .auto_save(&moved_points(0.8), SplineMode::Linear, PickerSpace::Hsv)
+            .auto_save(
+                &moved_points(0.8),
+                SplineMode::Linear,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .is_err());
     }
 
@@ -1279,26 +1443,48 @@ mod tests {
         let (_tmp, mut handler) = restored_a(true);
         let before = read_preset_file(&handler);
 
-        handler.hold_auto_save_if_dirty(&moved_points(0.9), SplineMode::Bezier, PickerSpace::Hsv);
+        handler.hold_auto_save_if_dirty(
+            &moved_points(0.9),
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
 
         assert!(!handler
-            .auto_save(&moved_points(0.9), SplineMode::Bezier, PickerSpace::Hsv)
+            .auto_save(
+                &moved_points(0.9),
+                SplineMode::Bezier,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .unwrap());
         assert_eq!(read_preset_file(&handler), before);
         assert!(handler.is_selected_dirty(
             &moved_points(0.9),
             SplineMode::Bezier,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
         assert!(handler.has_failed_auto_save());
 
         assert!(handler
-            .auto_save(&moved_points(0.8), SplineMode::Bezier, PickerSpace::Hsv)
+            .auto_save(
+                &moved_points(0.8),
+                SplineMode::Bezier,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .unwrap());
         let on_disk: AppDataCtx = serde_json::from_str(&read_preset_file(&handler)).unwrap();
         assert_eq!(
             on_disk,
-            (moved_points(0.8), SplineMode::Bezier, PickerSpace::Hsv).into()
+            (
+                moved_points(0.8),
+                SplineMode::Bezier,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
+                .into()
         );
         assert!(!handler.has_failed_auto_save());
     }
@@ -1307,12 +1493,22 @@ mod tests {
     fn restore_hold_outlives_enabling_auto_save() {
         let (_tmp, mut handler) = restored_a(false);
         let before = read_preset_file(&handler);
-        handler.hold_auto_save_if_dirty(&moved_points(0.9), SplineMode::Bezier, PickerSpace::Hsv);
+        handler.hold_auto_save_if_dirty(
+            &moved_points(0.9),
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
 
         handler.auto_save_presets = true;
 
         assert!(!handler
-            .auto_save(&moved_points(0.9), SplineMode::Bezier, PickerSpace::Hsv)
+            .auto_save(
+                &moved_points(0.9),
+                SplineMode::Bezier,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .unwrap());
         assert_eq!(read_preset_file(&handler), before);
     }
@@ -1320,11 +1516,21 @@ mod tests {
     #[test]
     fn restore_hold_is_noop_when_clean_or_unselected() {
         let (_tmp, mut handler) = restored_a(true);
-        handler.hold_auto_save_if_dirty(&sample_points(), SplineMode::Bezier, PickerSpace::Hsv);
+        handler.hold_auto_save_if_dirty(
+            &sample_points(),
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         assert!(!handler.has_failed_auto_save());
 
         handler.preset_selected_index = None;
-        handler.hold_auto_save_if_dirty(&moved_points(0.9), SplineMode::Bezier, PickerSpace::Hsv);
+        handler.hold_auto_save_if_dirty(
+            &moved_points(0.9),
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         assert!(!handler.has_failed_auto_save());
     }
 
@@ -1334,10 +1540,21 @@ mod tests {
         create_sample(&mut handler);
 
         handler
-            .save_selected_preset(&moved_points(0.9), SplineMode::Linear, PickerSpace::Hsv)
+            .save_selected_preset(
+                &moved_points(0.9),
+                SplineMode::Linear,
+                PickerSpace::Hsv,
+                BlendSpace::Picker,
+            )
             .unwrap();
 
-        let expected: AppDataCtx = (moved_points(0.9), SplineMode::Linear, PickerSpace::Hsv).into();
+        let expected: AppDataCtx = (
+            moved_points(0.9),
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        )
+            .into();
         let on_disk: AppDataCtx = serde_json::from_str(&read_preset_file(&handler)).unwrap();
         assert_eq!(on_disk, expected);
         assert_eq!(handler.presets[0].data, expected);
@@ -1349,7 +1566,12 @@ mod tests {
         let mut handler = unwritable_handler_with_a(&tmp);
 
         assert!(handler
-            .save_selected_preset(&moved_points(0.9), SplineMode::Bezier, PickerSpace::Hsv)
+            .save_selected_preset(
+                &moved_points(0.9),
+                SplineMode::Bezier,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .is_err());
         assert_eq!(handler.presets[0].data, data(SplineMode::Linear));
     }
@@ -1361,7 +1583,12 @@ mod tests {
         handler.preset_selected_index = Some(5);
 
         assert!(handler
-            .save_selected_preset(&moved_points(0.9), SplineMode::Linear, PickerSpace::Hsv)
+            .save_selected_preset(
+                &moved_points(0.9),
+                SplineMode::Linear,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .is_err());
     }
 
@@ -1371,13 +1598,23 @@ mod tests {
         let mut handler = unwritable_handler_with_a(&tmp);
         handler.auto_save_presets = true;
         assert!(handler
-            .auto_save(&moved_points(0.9), SplineMode::Linear, PickerSpace::Hsv)
+            .auto_save(
+                &moved_points(0.9),
+                SplineMode::Linear,
+                PickerSpace::Hsv,
+                BlendSpace::Picker
+            )
             .is_err());
         assert!(handler.has_failed_auto_save());
         handler.presets_dir = tmp.path().join("writable");
 
         handler
-            .save_selected_preset(&moved_points(0.9), SplineMode::Linear, PickerSpace::Hsv)
+            .save_selected_preset(
+                &moved_points(0.9),
+                SplineMode::Linear,
+                PickerSpace::Hsv,
+                BlendSpace::Picker,
+            )
             .unwrap();
 
         assert!(!handler.has_failed_auto_save());
@@ -1391,9 +1628,12 @@ mod tests {
         let mut points = moved_points(0.9);
         let mut mode = SplineMode::Linear;
         let mut picker_space = PickerSpace::Hsv;
-        assert!(handler.auto_save(&points, mode, picker_space).is_err());
+        let mut blend_space = BlendSpace::Picker;
+        assert!(handler
+            .auto_save(&points, mode, picker_space, blend_space)
+            .is_err());
 
-        handler.apply_selected_preset(&mut points, &mut mode, &mut picker_space);
+        handler.apply_selected_preset(&mut points, &mut mode, &mut picker_space, &mut blend_space);
 
         assert!(!handler.has_failed_auto_save());
     }
@@ -1405,11 +1645,56 @@ mod tests {
     }
 
     #[test]
+    fn preset_json_without_blend_space_loads_as_picker() {
+        let data: AppDataCtx = serde_json::from_str(SAMPLE_PRESET_JSON).unwrap();
+        assert_eq!(data.blend_space, BlendSpace::Picker);
+    }
+
+    #[test]
+    fn is_selected_dirty_true_after_blend_space_change() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        let points = sample_points();
+        let mode = SplineMode::Bezier;
+        let picker_space = PickerSpace::Hsv;
+        assert!(!handler.is_selected_dirty(&points, mode, picker_space, BlendSpace::Picker));
+        assert!(handler.is_selected_dirty(&points, mode, picker_space, BlendSpace::Oklab));
+    }
+
+    #[test]
+    fn auto_save_writes_the_blend_space_and_apply_restores_it() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        handler.auto_save_presets = true;
+        let points = sample_points();
+        assert!(handler
+            .auto_save(
+                &points,
+                SplineMode::Bezier,
+                PickerSpace::Hsv,
+                BlendSpace::Oklch
+            )
+            .unwrap());
+        let on_disk: AppDataCtx = serde_json::from_str(&read_preset_file(&handler)).unwrap();
+        assert_eq!(on_disk.blend_space, BlendSpace::Oklch);
+
+        let (mut points, mut mode) = (Vec::new(), SplineMode::Linear);
+        let (mut picker_space, mut blend_space) = (PickerSpace::Okhsv, BlendSpace::Picker);
+        handler.apply_selected_preset(&mut points, &mut mode, &mut picker_space, &mut blend_space);
+        assert_eq!(blend_space, BlendSpace::Oklch);
+    }
+
+    #[test]
     fn is_selected_dirty_true_after_picker_space_change() {
         let (_tmp, mut handler) = temp_handler();
         create_sample(&mut handler);
         let points = sample_points();
-        assert!(handler.is_selected_dirty(&points, SplineMode::Bezier, PickerSpace::Okhsv));
+        assert!(handler.is_selected_dirty(
+            &points,
+            SplineMode::Bezier,
+            PickerSpace::Okhsv,
+            BlendSpace::Picker
+        ));
     }
 
     #[test]
@@ -1419,14 +1704,23 @@ mod tests {
         handler.auto_save_presets = true;
         let points = sample_points();
         assert!(handler
-            .auto_save(&points, SplineMode::Bezier, PickerSpace::Okhsl)
+            .auto_save(
+                &points,
+                SplineMode::Bezier,
+                PickerSpace::Okhsl,
+                BlendSpace::Picker
+            )
             .unwrap());
         let on_disk: AppDataCtx = serde_json::from_str(&read_preset_file(&handler)).unwrap();
         assert_eq!(on_disk.picker_space, PickerSpace::Okhsl);
 
-        let (mut points, mut mode, mut picker_space) =
-            (Vec::new(), SplineMode::Linear, PickerSpace::Hsv);
-        handler.apply_selected_preset(&mut points, &mut mode, &mut picker_space);
+        let (mut points, mut mode, mut picker_space, mut blend_space) = (
+            Vec::new(),
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
+        handler.apply_selected_preset(&mut points, &mut mode, &mut picker_space, &mut blend_space);
         assert_eq!(picker_space, PickerSpace::Okhsl);
     }
 

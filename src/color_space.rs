@@ -19,6 +19,26 @@ impl PickerSpace {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BlendSpace {
+    #[default]
+    Picker,
+    Srgb,
+    LinearRgb,
+    Oklab,
+    Oklch,
+}
+
+impl BlendSpace {
+    pub const ALL: [Self; 5] = [
+        Self::Picker,
+        Self::Srgb,
+        Self::LinearRgb,
+        Self::Oklab,
+        Self::Oklch,
+    ];
+}
+
 type Mat3 = [[f32; 3]; 3];
 
 const LINEAR_TO_LMS: Mat3 = [
@@ -45,7 +65,7 @@ const LMS_TO_LINEAR: Mat3 = [
     [-0.004_196_086_3, -0.703_418_6, 1.707_614_7],
 ];
 
-const ACHROMATIC_CHROMA: f32 = 1e-5;
+pub const ACHROMATIC_CHROMA: f32 = 1e-5;
 
 fn dot(u: [f32; 3], v: [f32; 3]) -> f32 {
     u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
@@ -134,6 +154,37 @@ pub fn linear_to_picker(space: PickerSpace, linear: [f32; 3]) -> [f32; 3] {
         PickerSpace::Hsl => srgb_to_hsl(linear_to_srgb(linear)),
         PickerSpace::Okhsv => linear_to_okhsv(linear),
         PickerSpace::Okhsl => linear_to_okhsl(linear),
+    }
+}
+
+pub fn oklch_to_oklab([l, chroma, hue]: [f32; 3]) -> [f32; 3] {
+    let (a, b) = hue_direction(hue);
+    [l, chroma * a, chroma * b]
+}
+
+const PICKER_BLEND_HAS_NO_LINEAR_FORM: &str = "the picker blend interpolates picker coordinates";
+
+pub fn linear_to_blend(space: BlendSpace, linear: [f32; 3]) -> [f32; 3] {
+    match space {
+        BlendSpace::Picker => unreachable!("{PICKER_BLEND_HAS_NO_LINEAR_FORM}"),
+        BlendSpace::Srgb => linear_to_srgb(linear),
+        BlendSpace::LinearRgb => linear,
+        BlendSpace::Oklab => linear_to_oklab(linear),
+        BlendSpace::Oklch => oklab_to_oklch(linear_to_oklab(linear)),
+    }
+}
+
+pub fn blend_to_linear(space: BlendSpace, blended: [f32; 3]) -> [f32; 3] {
+    match space {
+        BlendSpace::Picker => unreachable!("{PICKER_BLEND_HAS_NO_LINEAR_FORM}"),
+        BlendSpace::Srgb => srgb_to_linear(blended),
+        BlendSpace::LinearRgb => blended,
+        BlendSpace::Oklab => oklab_to_linear(blended),
+        BlendSpace::Oklch => {
+            let [l, chroma, hue] = blended;
+            // A spline overshooting below zero chroma would otherwise flip the hue.
+            oklab_to_linear(oklch_to_oklab([l, chroma.max(0.0), hue]))
+        }
     }
 }
 
@@ -606,6 +657,45 @@ mod tests {
                 }
             }
         }
+    }
+
+    const MIXED_BLEND_SPACES: [BlendSpace; 4] = [
+        BlendSpace::Srgb,
+        BlendSpace::LinearRgb,
+        BlendSpace::Oklab,
+        BlendSpace::Oklch,
+    ];
+
+    #[test]
+    fn every_mixed_blend_space_round_trips_linear_colors() {
+        for space in MIXED_BLEND_SPACES {
+            for linear in linear_grid() {
+                let blended = linear_to_blend(space, linear);
+                let back = blend_to_linear(space, blended);
+                for i in 0..3 {
+                    assert!(
+                        (back[i] - linear[i]).abs() < 1e-4,
+                        "{space:?} {linear:?} -> {blended:?} -> {back:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn oklch_blend_reads_negative_chroma_as_gray() {
+        let gray = blend_to_linear(BlendSpace::Oklch, [0.6, 0.0, 0.3]);
+        assert_close(
+            blend_to_linear(BlendSpace::Oklch, [0.6, -0.05, 0.3]),
+            gray,
+            1e-6,
+        );
+    }
+
+    #[test]
+    fn oklch_to_oklab_inverts_oklab_to_oklch() {
+        let lab = oklab_of_srgb([200, 40, 90]);
+        assert_close(oklch_to_oklab(oklab_to_oklch(lab)), lab, 1e-6);
     }
 
     #[test]

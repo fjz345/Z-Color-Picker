@@ -3,7 +3,7 @@ use std::path::Path;
 use eframe::egui;
 use eframe::egui::TextEdit;
 
-use crate::color_space::PickerSpace;
+use crate::color_space::{BlendSpace, PickerSpace};
 use crate::common::ColorStringCopy;
 use crate::common::SplineMode;
 use crate::datatypes::control_point::ControlPoint;
@@ -95,6 +95,7 @@ impl WindowZColorPickerOptions {
         options: &mut ZColorPickerOptions,
         spline_mode: &mut SplineMode,
         picker_space: &mut PickerSpace,
+        blend_space: &mut BlendSpace,
         auto_comb_unsolved: usize,
     ) -> bool {
         ui.horizontal_wrapped(|ui| {
@@ -139,7 +140,9 @@ impl WindowZColorPickerOptions {
             });
         });
 
-        let enabled = comb_controls_enabled(*spline_mode, options.is_show_curvature_comb);
+        let enabled =
+            comb_controls_enabled(*spline_mode, *blend_space, options.is_show_curvature_comb);
+        let is_picker_blend = *blend_space == BlendSpace::Picker;
         let is_flip_clicked = ui
             .horizontal_wrapped(|ui| {
                 ui.strong("Curve");
@@ -156,6 +159,22 @@ impl WindowZColorPickerOptions {
                     .response
                     .on_hover_text(spline_mode_hover_text(*spline_mode));
 
+                ui.label("Blend");
+                egui::ComboBox::from_id_salt("blend_space")
+                    .selected_text(blend_space_label(*blend_space))
+                    .show_ui(ui, |ui| {
+                        ui.set_min_width(60.0);
+                        for space in BlendSpace::ALL {
+                            ui.selectable_value(blend_space, space, blend_space_label(space))
+                                .on_hover_text(blend_space_hover_text(space));
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "Color space the gradient is interpolated in; the points keep their \
+                         colors. Any blend but Picker turns off the comb and Auto comb",
+                    );
+
                 let is_flip_clicked = ui
                     .button("Flip")
                     .on_hover_text("Reverse the point order (tangents and T follow)")
@@ -169,7 +188,11 @@ impl WindowZColorPickerOptions {
                     "Line up each point's two handles and solve their lengths so the comb is \
                      continuous; drag a handle to turn it",
                 )
-                .on_disabled_hover_text("Auto comb only runs in Bezier mode");
+                .on_disabled_hover_text(if is_picker_blend {
+                    "Auto comb only runs in Bezier mode"
+                } else {
+                    NON_PICKER_BLEND_COMB_HINT
+                });
                 if enabled.auto && options.is_auto_comb && auto_comb_unsolved > 0 {
                     ui.colored_label(
                         ui.visuals().warn_fg_color,
@@ -185,6 +208,11 @@ impl WindowZColorPickerOptions {
             .inner;
 
         let straight_hint = "Linear segments are straight: there is no curvature to show";
+        let comb_off_hint = if is_picker_blend {
+            straight_hint
+        } else {
+            NON_PICKER_BLEND_COMB_HINT
+        };
         ui.horizontal_wrapped(|ui| {
             ui.strong("Comb");
             ui.add_enabled(
@@ -192,7 +220,7 @@ impl WindowZColorPickerOptions {
                 egui::Checkbox::new(&mut options.is_show_curvature_comb, "Show"),
             )
             .on_hover_text("Curvature comb: spikes show how sharply the curve bends")
-            .on_disabled_hover_text(straight_hint);
+            .on_disabled_hover_text(comb_off_hint);
             ui.add_enabled_ui(enabled.scale, |ui| {
                 ui.label("Scale");
                 ui.add(
@@ -205,7 +233,7 @@ impl WindowZColorPickerOptions {
                 .on_disabled_hover_text(if enabled.show {
                     "Turn on Show first"
                 } else {
-                    straight_hint
+                    comb_off_hint
                 });
             });
         });
@@ -214,6 +242,10 @@ impl WindowZColorPickerOptions {
     }
 }
 
+const NON_PICKER_BLEND_COMB_HINT: &str =
+    "Off while Blend is not Picker: the comb measures the curve on the square, \
+     and the gradient is blended in another space";
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CombControlsEnabled {
     pub show: bool,
@@ -221,12 +253,16 @@ pub struct CombControlsEnabled {
     pub auto: bool,
 }
 
-pub fn comb_controls_enabled(spline_mode: SplineMode, is_shown: bool) -> CombControlsEnabled {
-    let is_curved = spline_mode != SplineMode::Linear;
+pub fn comb_controls_enabled(
+    spline_mode: SplineMode,
+    blend_space: BlendSpace,
+    is_shown: bool,
+) -> CombControlsEnabled {
+    let is_picker_curve = spline_mode != SplineMode::Linear && blend_space == BlendSpace::Picker;
     CombControlsEnabled {
-        show: is_curved,
-        scale: is_curved && is_shown,
-        auto: spline_mode == SplineMode::Bezier,
+        show: is_picker_curve,
+        scale: is_picker_curve && is_shown,
+        auto: spline_mode == SplineMode::Bezier && blend_space == BlendSpace::Picker,
     }
 }
 
@@ -335,6 +371,26 @@ fn picker_space_hover_text(space: PickerSpace) -> &'static str {
     }
 }
 
+fn blend_space_label(space: BlendSpace) -> &'static str {
+    match space {
+        BlendSpace::Picker => "Picker",
+        BlendSpace::Srgb => "sRGB",
+        BlendSpace::LinearRgb => "Linear RGB",
+        BlendSpace::Oklab => "Oklab",
+        BlendSpace::Oklch => "OkLCh",
+    }
+}
+
+fn blend_space_hover_text(space: BlendSpace) -> &'static str {
+    match space {
+        BlendSpace::Picker => "The square's S/V (or S/L) and hue, as drawn on the picker",
+        BlendSpace::Srgb => "Gamma-encoded sRGB channels, like most image editors",
+        BlendSpace::LinearRgb => "Linear-light RGB: mixes like light, bright in the middle",
+        BlendSpace::Oklab => "Perceptual Lab: even lightness steps, no hue shift",
+        BlendSpace::Oklch => "Perceptual lightness, chroma and hue; hue takes the short way around",
+    }
+}
+
 fn selected_preset(preset_handler: &PresetHandler) -> Option<&PresetEntity> {
     preset_handler
         .preset_selected_index
@@ -346,8 +402,9 @@ fn has_unsaved_changes(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
     picker_space: PickerSpace,
+    blend_space: BlendSpace,
 ) -> bool {
-    preset_handler.is_selected_dirty(control_points, spline_mode, picker_space)
+    preset_handler.is_selected_dirty(control_points, spline_mode, picker_space, blend_space)
         && (!preset_handler.auto_save_presets || preset_handler.has_failed_auto_save())
 }
 
@@ -356,10 +413,16 @@ fn points_saved_nowhere(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
     picker_space: PickerSpace,
+    blend_space: BlendSpace,
 ) -> bool {
     selected_preset(preset_handler).is_none()
         && !control_points.is_empty()
-        && !preset_handler.matches_any_preset(control_points, spline_mode, picker_space)
+        && !preset_handler.matches_any_preset(
+            control_points,
+            spline_mode,
+            picker_space,
+            blend_space,
+        )
 }
 
 fn combo_selected_text(name: Option<&str>, dirty: bool) -> String {
@@ -388,10 +451,11 @@ fn apply_preset(
     control_points: &mut Vec<ControlPoint>,
     spline_mode: &mut SplineMode,
     picker_space: &mut PickerSpace,
+    blend_space: &mut BlendSpace,
 ) -> PresetEntity {
     preset_handler.preset_selected_index = Some(index);
     log::info!("Selected Preset {index}");
-    preset_handler.apply_selected_preset(control_points, spline_mode, picker_space);
+    preset_handler.apply_selected_preset(control_points, spline_mode, picker_space, blend_space);
     preset_handler.presets[index].clone()
 }
 
@@ -468,10 +532,21 @@ impl WindowPreset {
         control_points: &mut Vec<ControlPoint>,
         spline_mode: &mut SplineMode,
         picker_space: &mut PickerSpace,
+        blend_space: &mut BlendSpace,
     ) -> Option<PresetEntity> {
-        if has_unsaved_changes(preset_handler, control_points, *spline_mode, *picker_space)
-            || points_saved_nowhere(preset_handler, control_points, *spline_mode, *picker_space)
-        {
+        if has_unsaved_changes(
+            preset_handler,
+            control_points,
+            *spline_mode,
+            *picker_space,
+            *blend_space,
+        ) || points_saved_nowhere(
+            preset_handler,
+            control_points,
+            *spline_mode,
+            *picker_space,
+            *blend_space,
+        ) {
             self.pending_switch = Some(index);
             self.save_error = None;
             return None;
@@ -482,6 +557,7 @@ impl WindowPreset {
             control_points,
             spline_mode,
             picker_space,
+            blend_space,
         ))
     }
 
@@ -492,13 +568,20 @@ impl WindowPreset {
         control_points: &mut Vec<ControlPoint>,
         spline_mode: &mut SplineMode,
         picker_space: &mut PickerSpace,
+        blend_space: &mut BlendSpace,
     ) -> Option<PresetEntity> {
         let target = self.pending_switch?;
         let should_apply = match action {
             PendingSwitchAction::Cancel => false,
             PendingSwitchAction::Discard => true,
             PendingSwitchAction::SaveAndSwitch => {
-                self.save_selected(preset_handler, control_points, *spline_mode, *picker_space);
+                self.save_selected(
+                    preset_handler,
+                    control_points,
+                    *spline_mode,
+                    *picker_space,
+                    *blend_space,
+                );
                 if self.save_error.is_some() {
                     return None;
                 }
@@ -513,6 +596,7 @@ impl WindowPreset {
                 control_points,
                 spline_mode,
                 picker_space,
+                blend_space,
             )
         })
     }
@@ -523,12 +607,18 @@ impl WindowPreset {
         control_points: &[ControlPoint],
         spline_mode: SplineMode,
         picker_space: PickerSpace,
+        blend_space: BlendSpace,
     ) {
         let Some(name) = selected_preset(preset_handler).map(|p| p.name.clone()) else {
             self.save_error = Some("No preset selected".to_string());
             return;
         };
-        match preset_handler.save_selected_preset(control_points, spline_mode, picker_space) {
+        match preset_handler.save_selected_preset(
+            control_points,
+            spline_mode,
+            picker_space,
+            blend_space,
+        ) {
             Ok(()) => {
                 log::info!("Saved preset [{name}]");
                 self.save_error = None;
@@ -553,9 +643,16 @@ impl WindowPreset {
         control_points: &[ControlPoint],
         spline_mode: SplineMode,
         picker_space: PickerSpace,
+        blend_space: BlendSpace,
     ) {
         if selected_preset(preset_handler).is_some() {
-            self.save_selected(preset_handler, control_points, spline_mode, picker_space);
+            self.save_selected(
+                preset_handler,
+                control_points,
+                spline_mode,
+                picker_space,
+                blend_space,
+            );
         } else {
             self.open_create_window();
         }
@@ -568,6 +665,7 @@ impl WindowPreset {
         control_points: &mut Vec<ControlPoint>,
         spline_mode: &mut SplineMode,
         picker_space: &mut PickerSpace,
+        blend_space: &mut BlendSpace,
     ) -> WindowPresetDrawResult {
         let mut draw_result = WindowPresetDrawResult::default();
 
@@ -579,8 +677,13 @@ impl WindowPreset {
         });
 
         ui.horizontal(|ui| {
-            let dirty =
-                has_unsaved_changes(preset_handler, control_points, *spline_mode, *picker_space);
+            let dirty = has_unsaved_changes(
+                preset_handler,
+                control_points,
+                *spline_mode,
+                *picker_space,
+                *blend_space,
+            );
             let combobox_selected_text_to_show = combo_selected_text(
                 selected_preset(preset_handler).map(|p| p.name.as_str()),
                 dirty,
@@ -628,6 +731,7 @@ impl WindowPreset {
                         control_points,
                         spline_mode,
                         picker_space,
+                        blend_space,
                     );
                 }
                 Some(PresetComboChoice::Clear) => preset_handler.preset_selected_index = None,
@@ -655,7 +759,13 @@ impl WindowPreset {
                 .on_hover_text(save_hover_text)
                 .clicked_by(PointerButton::Primary)
             {
-                self.on_save_clicked(preset_handler, control_points, *spline_mode, *picker_space);
+                self.on_save_clicked(
+                    preset_handler,
+                    control_points,
+                    *spline_mode,
+                    *picker_space,
+                    *blend_space,
+                );
             }
 
             let rename_button = ui
@@ -717,6 +827,7 @@ impl WindowPreset {
                 control_points,
                 spline_mode,
                 picker_space,
+                blend_space,
             ) {
                 draw_result.preset_result.should_apply = Some(applied);
             }
@@ -793,6 +904,7 @@ impl WindowPreset {
         control_points: &mut Vec<ControlPoint>,
         spline_mode: &mut SplineMode,
         picker_space: &mut PickerSpace,
+        blend_space: &mut BlendSpace,
     ) -> Option<PresetEntity> {
         let name = selected_preset(preset_handler).map(|preset| preset.name.clone());
         let buttons = pending_switch_buttons(
@@ -833,6 +945,7 @@ impl WindowPreset {
             control_points,
             spline_mode,
             picker_space,
+            blend_space,
         )
     }
 
@@ -888,6 +1001,7 @@ mod tests {
                 spline_mode: SplineMode::Linear,
                 control_points: Vec::new(),
                 picker_space: PickerSpace::Hsv,
+                blend_space: BlendSpace::Picker,
             };
             handler.presets.push(PresetEntity::new(name, data));
         }
@@ -907,6 +1021,7 @@ mod tests {
         let mut control_points = Vec::new();
         let mut spline_mode = SplineMode::Linear;
         let mut picker_space = PickerSpace::Hsv;
+        let mut blend_space = BlendSpace::Picker;
         let input = egui::RawInput {
             events,
             ..Default::default()
@@ -919,6 +1034,7 @@ mod tests {
                     &mut control_points,
                     &mut spline_mode,
                     &mut picker_space,
+                    &mut blend_space,
                 );
             });
         })
@@ -991,6 +1107,7 @@ mod tests {
                 &Vec::new(),
                 &SplineMode::Linear,
                 PickerSpace::Hsv,
+                BlendSpace::Picker,
             )
             .unwrap();
         handler.preset_selected_index = Some(0);
@@ -1102,6 +1219,7 @@ mod tests {
                     &mut options,
                     &mut spline_mode,
                     &mut PickerSpace::Hsv,
+                    &mut BlendSpace::Picker,
                     auto_comb_unsolved,
                 );
             });
@@ -1129,7 +1247,14 @@ mod tests {
         };
         ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                window.draw_content(ui, options, &mut spline_mode, &mut PickerSpace::Hsv, 0);
+                window.draw_content(
+                    ui,
+                    options,
+                    &mut spline_mode,
+                    &mut PickerSpace::Hsv,
+                    &mut BlendSpace::Picker,
+                    0,
+                );
             });
         })
     }
@@ -1171,11 +1296,43 @@ mod tests {
         ];
         for (mode, is_shown, expected) in cases {
             assert_eq!(
-                comb_controls_enabled(mode, is_shown),
+                comb_controls_enabled(mode, BlendSpace::Picker, is_shown),
                 expected,
                 "{mode:?} show={is_shown}"
             );
         }
+    }
+
+    #[test]
+    fn comb_controls_are_off_in_a_non_picker_blend() {
+        let off = CombControlsEnabled {
+            show: false,
+            scale: false,
+            auto: false,
+        };
+        for blend in BlendSpace::ALL {
+            if blend == BlendSpace::Picker {
+                continue;
+            }
+            for mode in SplineMode::ALL {
+                for is_shown in [true, false] {
+                    assert_eq!(
+                        comb_controls_enabled(mode, blend, is_shown),
+                        off,
+                        "{blend:?} {mode:?} show={is_shown}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn blend_combo_sits_in_the_curve_row() {
+        let texts = options_painted_texts(true);
+        let position = |wanted: &str| texts.iter().position(|text| text == wanted);
+        let [curve, blend, picker, comb] = ["Curve", "Blend", "Picker", "Comb"].map(position);
+        assert!(curve < blend && blend < comb, "{texts:?}");
+        assert_eq!(picker, blend.map(|i| i + 1), "{texts:?}");
     }
 
     #[test]
@@ -1251,12 +1408,19 @@ mod tests {
                 spline_mode: SplineMode::Linear,
                 control_points: Vec::new(),
                 picker_space: PickerSpace::Hsv,
+                blend_space: BlendSpace::Picker,
             },
         ));
         handler.preset_selected_index = Some(0);
         let mut window = WindowPreset::new();
 
-        window.save_selected(&mut handler, &[], SplineMode::Bezier, PickerSpace::Hsv);
+        window.save_selected(
+            &mut handler,
+            &[],
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
 
         assert!(window.save_error.is_some());
         assert_eq!(handler.presets.len(), 1);
@@ -1271,7 +1435,13 @@ mod tests {
         let mut window = WindowPreset::new();
         window.save_error = Some("old".to_string());
 
-        window.save_selected(&mut handler, &[], SplineMode::Bezier, PickerSpace::Hsv);
+        window.save_selected(
+            &mut handler,
+            &[],
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
 
         assert_eq!(window.save_error, None);
         assert!(tmp.path().join("A.json").is_file());
@@ -1284,7 +1454,13 @@ mod tests {
         handler.preset_selected_index = Some(0);
         let mut window = WindowPreset::new();
 
-        window.save_selected(&mut handler, &[], SplineMode::Bezier, PickerSpace::Hsv);
+        window.save_selected(
+            &mut handler,
+            &[],
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
 
         assert!(window.save_error.is_some());
     }
@@ -1399,6 +1575,7 @@ mod tests {
             spline_mode: SplineMode::Bezier,
             control_points: three_points(),
             picker_space: PickerSpace::Hsv,
+            blend_space: BlendSpace::Picker,
         };
         handler.preset_selected_index = Some(0);
         (handler, three_points()[..2].to_vec())
@@ -1413,6 +1590,7 @@ mod tests {
             &mut points,
             &mut SplineMode::Linear,
             &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
         );
         assert!(applied.is_none());
         (window, handler, points)
@@ -1432,6 +1610,7 @@ mod tests {
             &mut points,
             &mut mode,
             &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
         );
 
         assert!(applied.is_none());
@@ -1454,6 +1633,7 @@ mod tests {
             &mut points,
             &mut mode,
             &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
         );
 
         assert_eq!(applied.map(|p| p.name), Some("B".to_string()));
@@ -1476,6 +1656,7 @@ mod tests {
             &mut points,
             &mut mode,
             &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
         );
 
         assert!(applied.is_none());
@@ -1500,6 +1681,7 @@ mod tests {
             &mut points,
             &mut mode,
             &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
         );
 
         let saved: AppDataCtx =
@@ -1525,6 +1707,7 @@ mod tests {
                     spline_mode: SplineMode::Linear,
                     control_points: Vec::new(),
                     picker_space: PickerSpace::Hsv,
+                    blend_space: BlendSpace::Picker,
                 },
             ));
         }
@@ -1546,7 +1729,8 @@ mod tests {
                 &mut handler,
                 &mut points,
                 &mut mode,
-                &mut PickerSpace::Hsv
+                &mut PickerSpace::Hsv,
+                &mut BlendSpace::Picker
             )
             .is_none());
 
@@ -1556,6 +1740,7 @@ mod tests {
             &mut points,
             &mut mode,
             &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
         );
 
         assert!(applied.is_none());
@@ -1567,7 +1752,8 @@ mod tests {
             &handler,
             &points,
             mode,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
     }
 
@@ -1580,13 +1766,16 @@ mod tests {
         let edited = three_points();
         let mut points = edited.clone();
         let mut mode = SplineMode::Linear;
-        assert!(handler.auto_save(&points, mode, PickerSpace::Hsv).is_err());
+        assert!(handler
+            .auto_save(&points, mode, PickerSpace::Hsv, BlendSpace::Picker)
+            .is_err());
 
         assert!(has_unsaved_changes(
             &handler,
             &points,
             mode,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
         assert!(window
             .choose_preset(
@@ -1594,7 +1783,8 @@ mod tests {
                 &mut handler,
                 &mut points,
                 &mut mode,
-                &mut PickerSpace::Hsv
+                &mut PickerSpace::Hsv,
+                &mut BlendSpace::Picker
             )
             .is_none());
         assert_eq!(window.pending_switch, Some(1));
@@ -1613,6 +1803,7 @@ mod tests {
             &three_points(),
             SplineMode::Linear,
             PickerSpace::Hsv,
+            BlendSpace::Picker,
         );
 
         assert!(window.save_error.is_some());
@@ -1621,7 +1812,8 @@ mod tests {
             &handler,
             &three_points(),
             SplineMode::Linear,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
     }
 
@@ -1646,6 +1838,7 @@ mod tests {
                 &mut points,
                 &mut mode,
                 &mut PickerSpace::Hsv,
+                &mut BlendSpace::Picker,
             );
 
             assert_eq!(applied.map(|p| p.name), Some("B".to_string()), "{case}");
@@ -1671,6 +1864,7 @@ mod tests {
             &mut points,
             &mut mode,
             &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
         );
 
         assert!(applied.is_none());
@@ -1697,6 +1891,7 @@ mod tests {
                 spline_mode: SplineMode::Linear,
                 control_points: edited,
                 picker_space: PickerSpace::Hsv,
+                blend_space: BlendSpace::Picker,
             };
             handler.preset_selected_index = None;
             let mut window = WindowPreset::new();
@@ -1707,6 +1902,7 @@ mod tests {
                 &mut points,
                 &mut mode,
                 &mut PickerSpace::Hsv,
+                &mut BlendSpace::Picker,
             );
 
             assert_eq!(applied.map(|p| p.name), Some("B".to_string()), "{case}");
@@ -1729,6 +1925,7 @@ mod tests {
             &mut points,
             &mut SplineMode::Linear,
             &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
         );
         assert!(applied.is_none());
         (window, handler, points)
@@ -1746,6 +1943,7 @@ mod tests {
             &mut points,
             &mut mode,
             &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
         );
 
         assert_eq!(applied.map(|p| p.name), Some("B".to_string()));
@@ -1768,6 +1966,7 @@ mod tests {
             &mut points,
             &mut mode,
             &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
         );
 
         assert!(applied.is_none());
@@ -1800,21 +1999,30 @@ mod tests {
             &handler,
             &[],
             SplineMode::Linear,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
         assert!(has_unsaved_changes(
             &handler,
             &edited,
             SplineMode::Linear,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
 
-        window.save_selected(&mut handler, &edited, SplineMode::Linear, PickerSpace::Hsv);
+        window.save_selected(
+            &mut handler,
+            &edited,
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         assert!(!has_unsaved_changes(
             &handler,
             &edited,
             SplineMode::Linear,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
 
         handler.auto_save_presets = true;
@@ -1822,7 +2030,8 @@ mod tests {
             &handler,
             &[],
             SplineMode::Bezier,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
     }
 
@@ -1915,6 +2124,7 @@ mod tests {
             &three_points(),
             SplineMode::Bezier,
             PickerSpace::Hsv,
+            BlendSpace::Picker,
         );
 
         assert!(window.new_preset_is_open);
@@ -1935,6 +2145,7 @@ mod tests {
             &three_points(),
             SplineMode::Bezier,
             PickerSpace::Hsv,
+            BlendSpace::Picker,
         );
 
         let saved: AppDataCtx =
@@ -1996,7 +2207,8 @@ mod tests {
             &handler,
             &points,
             mode,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
 
         assert!(window
@@ -2005,7 +2217,8 @@ mod tests {
                 &mut handler,
                 &mut points,
                 &mut mode,
-                &mut PickerSpace::Hsv
+                &mut PickerSpace::Hsv,
+                &mut BlendSpace::Picker
             )
             .is_none());
         assert_eq!(window.pending_switch, Some(0));
@@ -2016,6 +2229,7 @@ mod tests {
             &mut points,
             &mut mode,
             &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
         );
 
         assert_eq!(applied.map(|p| p.name), Some("A".to_string()));
@@ -2026,7 +2240,8 @@ mod tests {
             &handler,
             &points,
             mode,
-            PickerSpace::Hsv
+            PickerSpace::Hsv,
+            BlendSpace::Picker
         ));
     }
 }

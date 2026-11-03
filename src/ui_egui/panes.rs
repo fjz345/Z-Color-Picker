@@ -8,7 +8,7 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    color_space::PickerSpace,
+    color_space::{BlendSpace, PickerSpace},
     common::{ColorStringCopy, SplineMode},
     datatypes::control_point::ControlPoint,
     logger::ui_log_window,
@@ -103,6 +103,7 @@ impl ZAppPane for ColorPickerPane {
         let mut control_points = mut_ctx.control_points.clone();
         let spline_mode = mut_ctx.spline_mode;
         let picker_space = mut_ctx.picker_space;
+        let blend_space = mut_ctx.blend_space;
 
         // ui.painter().rect_filled(ui.max_rect(), 0.0, Color32::WHITE);
         ui.allocate_ui(ui.max_rect().size(), |ui| {
@@ -111,6 +112,7 @@ impl ZAppPane for ColorPickerPane {
                 &mut control_points,
                 spline_mode,
                 picker_space,
+                blend_space,
                 &color_copy_format,
             );
             *mut_ctx.z_color_picker.borrow_mut() = color_picker;
@@ -142,6 +144,7 @@ impl ZAppPane for ColorPickerOptionsPane {
         let mut control_points = mut_ctx.control_points.clone();
         let mut spline_mode = mut_ctx.spline_mode;
         let mut picker_space = mut_ctx.picker_space;
+        let mut blend_space = mut_ctx.blend_space;
 
         let mut options = color_picker.options.clone();
         let mut options_window = mut_ctx.options_window.clone();
@@ -152,6 +155,7 @@ impl ZAppPane for ColorPickerOptionsPane {
             &mut options,
             &mut spline_mode,
             &mut picker_space,
+            &mut blend_space,
             color_picker.auto_comb_unsolved,
         );
         convert_picker_space(&mut control_points, mut_ctx.picker_space, picker_space);
@@ -168,6 +172,7 @@ impl ZAppPane for ColorPickerOptionsPane {
         mut_ctx.control_points = control_points;
         mut_ctx.spline_mode = spline_mode;
         mut_ctx.picker_space = picker_space;
+        mut_ctx.blend_space = blend_space;
 
         *mut_ctx.z_color_picker.borrow_mut() = color_picker;
 
@@ -195,7 +200,12 @@ impl ZAppPane for PreviewerPane {
 
         let mut previewer = mut_ctx.previewer.clone();
 
-        previewer.update(&control_points, spline_mode, mut_ctx.picker_space);
+        previewer.update(
+            &control_points,
+            spline_mode,
+            mut_ctx.picker_space,
+            mut_ctx.blend_space,
+        );
         let response = previewer.draw_ui(ui, ColorStringCopy::HEXNOA);
         if previewer.data.control_points != control_points {
             mut_ctx.control_points = previewer.data.control_points.clone();
@@ -235,6 +245,7 @@ pub fn preset_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egu
     let mut control_points = mut_ctx.control_points.clone();
     let mut spline_mode = mut_ctx.spline_mode;
     let mut picker_space = mut_ctx.picker_space;
+    let mut blend_space = mut_ctx.blend_space;
     let mut presets_window = mut_ctx.presets_window.clone();
     presets_window.update();
 
@@ -244,6 +255,7 @@ pub fn preset_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egu
         &mut control_points,
         &mut spline_mode,
         &mut picker_space,
+        &mut blend_space,
     );
     if presets_result.preset_result.should_apply.is_some() {
         normalize_applied_preset(
@@ -252,6 +264,7 @@ pub fn preset_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egu
             &mut control_points,
             spline_mode,
             picker_space,
+            blend_space,
         );
     }
 
@@ -259,6 +272,7 @@ pub fn preset_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egu
     mut_ctx.control_points = control_points;
     mut_ctx.spline_mode = spline_mode;
     mut_ctx.picker_space = picker_space;
+    mut_ctx.blend_space = blend_space;
     mut_ctx.preset_handler = preset_handler;
 }
 
@@ -274,12 +288,18 @@ fn normalize_applied_preset(
     control_points: &mut Vec<ControlPoint>,
     spline_mode: SplineMode,
     picker_space: PickerSpace,
+    blend_space: BlendSpace,
 ) {
-    color_picker.pre_draw_update(control_points, spline_mode);
+    color_picker.pre_draw_update(control_points, spline_mode, blend_space);
     // Twice: the hue lerp runs before the clamp, so one pass lerps from unclamped endpoint hues.
     color_picker.apply_control_point_constraints(control_points);
     color_picker.apply_control_point_constraints(control_points);
-    preset_handler.set_selected_data_in_memory(control_points, spline_mode, picker_space);
+    preset_handler.set_selected_data_in_memory(
+        control_points,
+        spline_mode,
+        picker_space,
+        blend_space,
+    );
     color_picker.last_modifying_point_index = None;
     color_picker.dragging_index = None;
 }
@@ -293,6 +313,7 @@ mod tests {
 
     const MODE: SplineMode = SplineMode::Bezier;
     const SPACE: PickerSpace = PickerSpace::Hsv;
+    const BLEND: BlendSpace = BlendSpace::Picker;
 
     fn unconstrained_points() -> Vec<ControlPoint> {
         vec![
@@ -304,7 +325,7 @@ mod tests {
     }
 
     fn next_picker_frame(color_picker: &mut ZColorPickerWrapper, points: &mut Vec<ControlPoint>) {
-        color_picker.pre_draw_update(points, MODE);
+        color_picker.pre_draw_update(points, MODE, BLEND);
         color_picker.apply_control_point_constraints(points);
     }
 
@@ -330,14 +351,21 @@ mod tests {
         let mut handler = PresetHandler::new(tmp.path().into());
         handler.auto_save_presets = true;
         handler
-            .create_preset(&"A".to_string(), &preset_points, &MODE, SPACE)
+            .create_preset(&"A".to_string(), &preset_points, &MODE, SPACE, BLEND)
             .unwrap();
         handler.preset_selected_index = Some(0);
         let mut points = Vec::new();
         let mut spline_mode = SplineMode::Linear;
         let mut picker_space = PickerSpace::Okhsl;
-        handler.apply_selected_preset(&mut points, &mut spline_mode, &mut picker_space);
+        let mut blend_space = BlendSpace::Oklch;
+        handler.apply_selected_preset(
+            &mut points,
+            &mut spline_mode,
+            &mut picker_space,
+            &mut blend_space,
+        );
         assert_eq!(picker_space, SPACE);
+        assert_eq!(blend_space, BLEND);
         assert_eq!(spline_mode, MODE);
         let mut color_picker = ZColorPickerWrapper::default();
         normalize_applied_preset(
@@ -346,6 +374,7 @@ mod tests {
             &mut points,
             spline_mode,
             picker_space,
+            blend_space,
         );
         SelectedPreset {
             tmp,
@@ -360,17 +389,17 @@ mod tests {
         let mut selected = select_preset_with_auto_save();
         assert!(!selected
             .handler
-            .is_selected_dirty(&selected.points, MODE, SPACE));
+            .is_selected_dirty(&selected.points, MODE, SPACE, BLEND));
         let before = selected.file_bytes();
 
         next_picker_frame(&mut selected.color_picker, &mut selected.points);
         assert!(!selected
             .handler
-            .auto_save(&selected.points, MODE, SPACE)
+            .auto_save(&selected.points, MODE, SPACE, BLEND)
             .unwrap());
         assert!(!selected
             .handler
-            .auto_save(&selected.points, MODE, SPACE)
+            .auto_save(&selected.points, MODE, SPACE, BLEND)
             .unwrap());
         assert_eq!(selected.file_bytes(), before);
     }
@@ -384,7 +413,7 @@ mod tests {
         next_picker_frame(&mut selected.color_picker, &mut selected.points);
         assert!(selected
             .handler
-            .auto_save(&selected.points, MODE, SPACE)
+            .auto_save(&selected.points, MODE, SPACE, BLEND)
             .unwrap());
         assert_ne!(selected.file_bytes(), before);
     }
@@ -401,6 +430,7 @@ mod tests {
             &mut selected.points,
             MODE,
             SPACE,
+            BLEND,
         );
 
         assert_eq!(selected.color_picker.last_modifying_point_index, None);
@@ -419,13 +449,13 @@ mod tests {
             assert_eq!(ts, [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0]);
             assert!(!selected
                 .handler
-                .is_selected_dirty(&selected.points, MODE, SPACE));
+                .is_selected_dirty(&selected.points, MODE, SPACE, BLEND));
             let before = selected.file_bytes();
 
             next_picker_frame(&mut selected.color_picker, &mut selected.points);
             assert!(!selected
                 .handler
-                .auto_save(&selected.points, MODE, SPACE)
+                .auto_save(&selected.points, MODE, SPACE, BLEND)
                 .unwrap());
             assert_eq!(selected.file_bytes(), before);
         }
@@ -492,6 +522,7 @@ mod tests {
                 &outside_until_clamped.to_vec(),
                 &MODE,
                 SPACE,
+                BLEND,
             )
             .unwrap();
         handler.preset_selected_index = Some(0);
@@ -499,7 +530,13 @@ mod tests {
         let mut points = Vec::new();
         let mut spline_mode = SplineMode::Linear;
         let mut picker_space = PickerSpace::Okhsl;
-        handler.apply_selected_preset(&mut points, &mut spline_mode, &mut picker_space);
+        let mut blend_space = BlendSpace::Oklch;
+        handler.apply_selected_preset(
+            &mut points,
+            &mut spline_mode,
+            &mut picker_space,
+            &mut blend_space,
+        );
         let mut color_picker = ZColorPickerWrapper {
             options: crate::ui_egui::app::ZColorPickerOptions {
                 is_auto_comb: true,
@@ -513,10 +550,11 @@ mod tests {
             &mut points,
             spline_mode,
             picker_space,
+            blend_space,
         );
 
         next_picker_frame(&mut color_picker, &mut points);
-        assert!(!handler.auto_save(&points, MODE, SPACE).unwrap());
+        assert!(!handler.auto_save(&points, MODE, SPACE, BLEND).unwrap());
         assert_eq!(fs::read(tmp.path().join("A.json")).unwrap(), before);
     }
 

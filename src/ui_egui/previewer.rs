@@ -1,21 +1,16 @@
 use eframe::{
     egui::{self, lerp, CursorIcon, Layout, PointerButton, Response, Sense, TextStyle, Ui, Vec2},
-    epaint::Rect,
+    epaint::{Color32, Rect},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    color_space::PickerSpace,
+    color_space::{BlendSpace, PickerSpace},
     common::{ColorStringCopy, SplineMode},
-    datatypes::{
-        control_point::{ControlPoint, ControlPointValue},
-        hsv_key_value::HsvKeyValue,
-    },
+    datatypes::control_point::ControlPoint,
     ui_egui::{
-        control_points::{
-            control_points_to_spline, drag_grab_offset_x, drag_t, flatten_control_points,
-            gradient_color_at, key_ts, sample_spline_normalized, space_t_evenly, t_at_pointer,
-        },
+        blend::Gradient,
+        control_points::{drag_grab_offset_x, drag_t, key_ts, space_t_evenly, t_at_pointer},
         gradient::color_function_gradient,
         ui_common::{color_button, show_color_at},
     },
@@ -35,8 +30,7 @@ fn on_hover_strip_hint(response: Response, text: &str) -> Response {
 fn ui_previewer_colors(
     ui: &mut Ui,
     size: Vec2,
-    control_points: &[ControlPointValue],
-    picker_space: PickerSpace,
+    colors: &[Color32],
     _color_copy_format: ColorStringCopy,
 ) -> Response {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
@@ -51,13 +45,13 @@ fn ui_previewer_colors(
 
     let ui_size: Vec2 = previewer_ui_control_points.available_size();
 
-    let num_control_points = control_points.len();
+    let num_control_points = colors.len();
     let size_per_color_x = ui_size.x / (num_control_points as f32);
     let size_per_color_y = ui_size.y;
     let hover_text =
         format!("{num_control_points} quantized colors; middle-click copies the strip as an image");
 
-    for cp in control_points {
+    for color in colors {
         let size_weight: f32 = 1.0;
         let response_button = color_button(
             &mut previewer_ui_control_points,
@@ -65,7 +59,7 @@ fn ui_previewer_colors(
                 x: size_weight * size_per_color_x,
                 y: size_per_color_y,
             },
-            cp.color(picker_space),
+            *color,
             true,
         );
         on_hover_strip_hint(response_button, &hover_text);
@@ -132,13 +126,7 @@ fn ui_previewer_control_points_with_drag(
     response
 }
 
-fn ui_previewer_curve(
-    ui: &mut Ui,
-    size: Vec2,
-    control_points: &[ControlPoint],
-    spline_mode: SplineMode,
-    picker_space: PickerSpace,
-) -> Response {
+fn ui_previewer_curve(ui: &mut Ui, size: Vec2, gradient: &Gradient) -> Response {
     let rect = Rect::from_min_size(ui.available_rect_before_wrap().min, size);
     ui.allocate_rect(rect, Sense::click_and_drag());
     let mut previewer_ui_curve = ui.new_child(
@@ -148,11 +136,9 @@ fn ui_previewer_curve(
     );
     previewer_ui_curve.spacing_mut().item_spacing = Vec2::ZERO;
 
-    let response = color_function_gradient(
-        &mut previewer_ui_curve,
-        rect.size(),
-        gradient_color_at(control_points, spline_mode, picker_space),
-    );
+    let response = color_function_gradient(&mut previewer_ui_curve, rect.size(), |x| {
+        gradient.color_at(x).unwrap_or(Color32::TRANSPARENT)
+    });
 
     on_hover_strip_hint(
         response,
@@ -163,34 +149,26 @@ fn ui_previewer_curve(
 fn ui_previewer_curve_quantized(
     ui: &mut Ui,
     size: Vec2,
-    control_points: &[ControlPoint],
-    spline_mode: SplineMode,
-    picker_space: PickerSpace,
+    gradient: &Gradient,
     color_copy_format: ColorStringCopy,
     number_levels: usize,
 ) -> Response {
-    let quantized_colors = quantized_colors(control_points, spline_mode, number_levels);
+    let quantized_colors = quantized_colors(gradient, number_levels);
 
-    let response =
-        ui_previewer_colors(ui, size, &quantized_colors, picker_space, color_copy_format);
+    let response = ui_previewer_colors(ui, size, &quantized_colors, color_copy_format);
     response
 }
 
-fn quantized_colors(
-    control_points: &[ControlPoint],
-    spline_mode: SplineMode,
-    levels: usize,
-) -> Vec<HsvKeyValue> {
-    if control_points.is_empty() {
+fn quantized_colors(gradient: &Gradient, levels: usize) -> Vec<Color32> {
+    if gradient.key_ts().is_empty() {
         return Vec::new();
     }
-    let flatten_control_points = flatten_control_points(control_points);
-    let spline = control_points_to_spline(&flatten_control_points[..], spline_mode);
-
     (0..levels)
         .map(|i| {
             let x = i as f32 / (levels - 1).max(1) as f32;
-            sample_spline_normalized(&spline, spline_mode, x).unwrap_or_default()
+            gradient
+                .color_at(x)
+                .expect("a gradient with keys has a color everywhere")
         })
         .collect()
 }
@@ -278,19 +256,17 @@ pub fn ui_previewer(
             &mut previewer_data.control_points,
             picker_space,
         );
-        let response_curve = ui_previewer_curve(
-            ui,
-            Vec2::new(width, curve_height),
+        let gradient = Gradient::new(
             &previewer_data.control_points,
             spline_mode,
             picker_space,
+            previewer_data.blend_space,
         );
+        let response_curve = ui_previewer_curve(ui, Vec2::new(width, curve_height), &gradient);
         let response_curve_quantized = ui_previewer_curve_quantized(
             ui,
             Vec2::new(width, quantized_height),
-            &previewer_data.control_points,
-            spline_mode,
-            picker_space,
+            &gradient,
             color_copy_format,
             previewer_data.quantize_num_levels,
         );
@@ -347,6 +323,8 @@ pub struct PreviewerData {
     pub spline_mode: SplineMode,
     #[serde(default)]
     pub picker_space: PickerSpace,
+    #[serde(default)]
+    pub blend_space: BlendSpace,
     pub quantize_num_levels: usize,
 }
 
@@ -356,6 +334,7 @@ impl PreviewerData {
             control_points: vec![ControlPoint::default(); num],
             spline_mode: SplineMode::HermiteBezier,
             picker_space: PickerSpace::default(),
+            blend_space: BlendSpace::default(),
             quantize_num_levels: 4,
         }
     }
@@ -378,9 +357,11 @@ impl ZPreviewer {
         control_points: &[ControlPoint],
         spline_mode: SplineMode,
         picker_space: PickerSpace,
+        blend_space: BlendSpace,
     ) {
         self.data.spline_mode = spline_mode;
         self.data.picker_space = picker_space;
+        self.data.blend_space = blend_space;
         self.data.control_points.clear();
         self.data.control_points.extend_from_slice(control_points);
     }
@@ -406,8 +387,18 @@ impl Default for ZPreviewer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::datatypes::hsv_key_value::test_support::assert_close;
+    use crate::datatypes::control_point::ControlPointValue;
     use crate::ui_egui::control_points::MIN_T_GAP;
+    use splines::Interpolate;
+
+    fn quantized(points: &[ControlPoint], mode: SplineMode, levels: usize) -> Vec<Color32> {
+        let gradient = Gradient::new(points, mode, PickerSpace::Hsv, BlendSpace::Picker);
+        quantized_colors(&gradient, levels)
+    }
+
+    fn color_of(value: ControlPointValue) -> Color32 {
+        value.color(PickerSpace::Hsv)
+    }
 
     #[test]
     fn strip_heights_plus_controls_fill_total() {
@@ -441,20 +432,23 @@ mod tests {
     #[test]
     fn quantized_colors_two_points_exceed_point_count() {
         let cps = two_points();
-        let colors = quantized_colors(&cps, SplineMode::Linear, 8);
+        let colors = quantized(&cps, SplineMode::Linear, 8);
         assert_eq!(colors.len(), 8);
-        assert_close(colors[0], *cps[0].val());
-        assert_close(colors[7], *cps[1].val());
-        assert!(colors.windows(2).all(|w| w[0].s() < w[1].s()), "{colors:?}");
+        for (level, color) in colors.iter().enumerate() {
+            let x = level as f32 / 7.0;
+            let expected = ControlPointValue::lerp(x, *cps[0].val(), *cps[1].val());
+            assert_eq!(*color, color_of(expected), "level {level}");
+        }
     }
 
     #[test]
     fn quantized_colors_one_level_is_first_point_and_zero_is_empty() {
         let cps = two_points();
-        let one = quantized_colors(&cps, SplineMode::Linear, 1);
-        assert_eq!(one.len(), 1);
-        assert_close(one[0], *cps[0].val());
-        assert!(quantized_colors(&cps, SplineMode::Linear, 0).is_empty());
+        assert_eq!(
+            quantized(&cps, SplineMode::Linear, 1),
+            [color_of(*cps[0].val())]
+        );
+        assert!(quantized(&cps, SplineMode::Linear, 0).is_empty());
     }
 
     fn sv_ramp_points(ts: [f32; 3]) -> Vec<ControlPoint> {
@@ -468,29 +462,32 @@ mod tests {
     #[test]
     fn quantized_colors_levels_equal_to_points_hit_every_key() {
         let cps = sv_ramp_points([0.0, 0.5, 1.0]);
-        let colors = quantized_colors(&cps, SplineMode::Linear, 3);
-        assert_eq!(colors.len(), 3);
-        for (color, cp) in colors.iter().zip(&cps) {
-            assert_close(*color, *cp.val());
-        }
+        let colors = quantized(&cps, SplineMode::Linear, 3);
+        let expected: Vec<Color32> = cps.iter().map(|cp| color_of(*cp.val())).collect();
+        assert_eq!(colors, expected);
     }
 
     #[test]
     fn quantized_colors_follow_t() {
         let cps = sv_ramp_points([0.0, 0.25, 1.0]);
-        let colors = quantized_colors(&cps, SplineMode::Linear, 3);
-        for c in 0..2 {
-            assert!((colors[1][c] - 2.0 / 3.0).abs() < 1e-5, "{colors:?}");
-        }
+        let colors = quantized(&cps, SplineMode::Linear, 3);
+        let expected = color_of(ControlPointValue::new(2.0 / 3.0, 2.0 / 3.0, 0.2));
+        let channel_gaps: Vec<i16> = (0..3)
+            .map(|c| i16::from(colors[1][c]) - i16::from(expected[c]))
+            .collect();
+        assert!(
+            channel_gaps.iter().all(|gap| gap.abs() <= 1),
+            "{colors:?} vs {expected:?}"
+        );
     }
 
     #[test]
     fn quantized_colors_hit_every_key_at_its_t() {
         let cps = sv_ramp_points([0.0, 1.0 / 3.0, 1.0]);
         for mode in SplineMode::ALL {
-            let colors = quantized_colors(&cps, mode, 4);
+            let colors = quantized(&cps, mode, 4);
             for (level, key) in [(0, 0), (1, 1), (3, 2)] {
-                assert_close(colors[level], *cps[key].val());
+                assert_eq!(colors[level], color_of(*cps[key].val()), "{mode:?}");
             }
         }
     }
@@ -525,7 +522,7 @@ mod tests {
             SplineMode::HermiteBezier,
         ] {
             for levels in [2, 32] {
-                let colors = quantized_colors(&[], spline_mode, levels);
+                let colors = quantized(&[], spline_mode, levels);
                 assert!(colors.is_empty(), "{spline_mode:?} {levels}: {colors:?}");
             }
         }
@@ -698,6 +695,7 @@ mod tests {
         assert_eq!(data.quantize_num_levels, 7);
         assert_eq!(data.spline_mode, SplineMode::Linear);
         assert_eq!(data.picker_space, PickerSpace::Hsv);
+        assert_eq!(data.blend_space, BlendSpace::Picker);
     }
 
     #[test]
@@ -715,9 +713,10 @@ mod tests {
             for from in 0..=5 {
                 for to in 0..=5 {
                     let mut previewer = ZPreviewer::default();
-                    previewer.update(&pool[..from], spline_mode, PickerSpace::Hsv);
-                    previewer.update(&pool[..to], spline_mode, PickerSpace::Hsv);
-                    let colors = quantized_colors(&previewer.data.control_points, spline_mode, 8);
+                    for points in [&pool[..from], &pool[..to]] {
+                        previewer.update(points, spline_mode, PickerSpace::Hsv, BlendSpace::Picker);
+                    }
+                    let colors = quantized(&previewer.data.control_points, spline_mode, 8);
                     assert_eq!(
                         colors.len(),
                         if to == 0 { 0 } else { 8 },

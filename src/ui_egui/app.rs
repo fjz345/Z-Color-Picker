@@ -11,7 +11,7 @@ use std::{
 };
 
 use crate::{
-    color_space::PickerSpace,
+    color_space::{BlendSpace, PickerSpace},
     common::{ColorStringCopy, SplineMode},
     datatypes::control_point::{
         ControlPoint, ControlPointStorage, ControlPointTangent, ControlPointValue,
@@ -54,6 +54,8 @@ pub struct AppDataCtx {
     pub control_points: Vec<ControlPoint>,
     #[serde(default)]
     pub picker_space: PickerSpace,
+    #[serde(default)]
+    pub blend_space: BlendSpace,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +95,8 @@ pub struct ZColorPickerAppContext {
     pub spline_mode: SplineMode,
     #[serde(default)]
     pub picker_space: PickerSpace,
+    #[serde(default)]
+    pub blend_space: BlendSpace,
 
     pub preset_handler: PresetHandler,
 
@@ -186,6 +190,7 @@ impl ZColorPickerAppContext {
             control_points: Self::DEFAULT_STARTUP_CONTROL_POINTS.to_vec(),
             spline_mode: SplineMode::HermiteBezier,
             picker_space: PickerSpace::default(),
+            blend_space: BlendSpace::default(),
 
             preset_handler,
 
@@ -263,6 +268,7 @@ impl ZApp {
             &ctx.control_points,
             ctx.spline_mode,
             ctx.picker_space,
+            ctx.blend_space,
         );
     }
 
@@ -378,12 +384,21 @@ impl ZApp {
             return;
         }
 
-        let (mut text, spline_mode, picker_space, control_points, preset_handler, create_error) = {
+        let (
+            mut text,
+            spline_mode,
+            picker_space,
+            blend_space,
+            control_points,
+            preset_handler,
+            create_error,
+        ) = {
             let ctx_ref = self.app_ctx.borrow();
             (
                 ctx_ref.presets_window.new_preset_window_text.clone(),
                 ctx_ref.spline_mode.clone(),
                 ctx_ref.picker_space,
+                ctx_ref.blend_space,
                 ctx_ref.control_points.clone(),
                 ctx_ref.preset_handler.clone(),
                 ctx_ref.presets_window.create_error.clone(),
@@ -449,6 +464,7 @@ impl ZApp {
                 &control_points,
                 &spline_mode,
                 picker_space,
+                blend_space,
             ) {
                 Ok(()) => {
                     // Reset state
@@ -523,6 +539,7 @@ impl ZApp {
                     &app_ctx.control_points,
                     app_ctx.spline_mode,
                     app_ctx.picker_space,
+                    app_ctx.blend_space,
                 ) {
                     Ok(true) => app_ctx.presets_window.save_error = None,
                     Ok(false) => {}
@@ -1180,7 +1197,13 @@ mod tests {
             .to_vec();
         let preset = crate::preset::PresetEntity::new(
             "Old",
-            (old_points.clone(), SplineMode::Linear, PickerSpace::Hsv).into(),
+            (
+                old_points.clone(),
+                SplineMode::Linear,
+                PickerSpace::Hsv,
+                BlendSpace::Picker,
+            )
+                .into(),
         );
         crate::preset::save_preset_to_disk(tmp.path(), &preset).unwrap();
         let preset_file = tmp.path().join("Old.json");
@@ -1211,12 +1234,18 @@ mod tests {
         assert!(!ctx.preset_handler.is_selected_dirty(
             &ctx.control_points,
             ctx.spline_mode,
-            ctx.picker_space
+            ctx.picker_space,
+            ctx.blend_space
         ));
         assert!(!ctx.preset_handler.has_failed_auto_save());
         assert!(!ctx
             .preset_handler
-            .auto_save(&ctx.control_points, ctx.spline_mode, ctx.picker_space)
+            .auto_save(
+                &ctx.control_points,
+                ctx.spline_mode,
+                ctx.picker_space,
+                ctx.blend_space
+            )
             .unwrap());
         assert_eq!(std::fs::read(&preset_file).unwrap(), file_before);
     }
