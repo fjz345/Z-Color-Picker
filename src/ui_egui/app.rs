@@ -294,6 +294,13 @@ impl ZApp {
                 "Restored control point T was not increasing from 0 to 1; spaced the points evenly"
             );
         }
+        // The first frame's pass (tangents, auto comb) is no edit, so the hold has to see its result.
+        ctx.z_color_picker.borrow_mut().pre_draw_update(
+            &mut ctx.control_points,
+            ctx.spline_mode,
+            ctx.picker_space,
+            ctx.blend_space,
+        );
         ctx.preset_handler.hold_auto_save_if_dirty(
             &ctx.control_points,
             ctx.spline_mode,
@@ -1653,6 +1660,78 @@ mod tests {
             ctx.blend_space
         ));
         assert!(!ctx.preset_handler.has_failed_auto_save());
+        assert!(!ctx
+            .preset_handler
+            .auto_save(
+                &ctx.control_points,
+                ctx.spline_mode,
+                ctx.picker_space,
+                ctx.blend_space
+            )
+            .unwrap());
+        assert_eq!(std::fs::read(&preset_file).unwrap(), file_before);
+    }
+
+    #[test]
+    fn init_holds_a_selected_preset_that_auto_comb_rewrites_on_the_first_frame() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let uncombed: Vec<ControlPoint> = [([0.2, 0.2], 0.0), ([0.5, 0.7], 0.5), ([0.8, 0.3], 1.0)]
+            .map(|([s, v], t)| {
+                let mut cp = ControlPoint::new_simple([s, v, 0.3].into(), t);
+                *cp.tangents_mut() = [Some([-0.1, 0.0, 0.0].into()), Some([0.1, 0.0, 0.0].into())];
+                cp
+            })
+            .to_vec();
+        let preset = crate::preset::PresetEntity::new(
+            "Old",
+            (
+                uncombed.clone(),
+                SplineMode::Bezier,
+                PickerSpace::Hsv,
+                BlendSpace::Picker,
+            )
+                .into(),
+        );
+        crate::preset::save_preset_to_disk(tmp.path(), &preset).unwrap();
+        let preset_file = tmp.path().join("Old.json");
+        let file_before = std::fs::read(&preset_file).unwrap();
+        let mut preset_handler = PresetHandler::new(tmp.path().into());
+        preset_handler.auto_save_presets = true;
+        preset_handler.preset_selected_index = Some(0);
+        let app_ctx = Rc::new(RefCell::new(ZColorPickerAppContext {
+            control_points: uncombed.clone(),
+            spline_mode: SplineMode::Bezier,
+            preset_handler,
+            ..<ZColorPickerAppContext as Default>::default()
+        }));
+        app_ctx
+            .borrow()
+            .z_color_picker
+            .borrow_mut()
+            .options
+            .is_auto_comb = true;
+        let mut app = ZApp {
+            state: AppState::Startup,
+            tree: ZApp::create_tree(app_ctx.clone()),
+            app_ctx,
+            is_log_expanded: false,
+            layout_version: LAYOUT_VERSION,
+            log_buffer: Arc::new(Mutex::new(Vec::new())),
+            had_keyboard_focus: false,
+        };
+
+        app.init();
+        let ctx = &mut *app.app_ctx.borrow_mut();
+        let mut picker = ctx.z_color_picker.borrow_mut();
+        picker.pre_draw_update(
+            &mut ctx.control_points,
+            ctx.spline_mode,
+            ctx.picker_space,
+            ctx.blend_space,
+        );
+        picker.apply_control_point_constraints(&mut ctx.control_points, ctx.picker_space);
+
+        assert_ne!(ctx.control_points, uncombed);
         assert!(!ctx
             .preset_handler
             .auto_save(
