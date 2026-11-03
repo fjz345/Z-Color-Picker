@@ -567,36 +567,36 @@ pub fn format_color_as(
     let [linear_r, linear_g, linear_b] = linear;
     let [hue, saturation, value] = srgb_to_rounded_hsv(r, g, b);
     match format_type {
-        ColorStringCopy::HEX if no_alpha == Some(true) => format!("{r:02X}{g:02X}{b:02X}"),
-        ColorStringCopy::HEX => format!("{a:02X}{r:02X}{g:02X}{b:02X}"),
-        ColorStringCopy::HEXNOA => format!("{r:02X}{g:02X}{b:02X}"),
-        ColorStringCopy::SRGBHEX => format!("#{r:02X}{g:02X}{b:02X}{a:02X}"),
-        ColorStringCopy::SRGB => format!("rgb({r}, {g}, {b})"),
-        ColorStringCopy::SRGBA => format!("rgba({r}, {g}, {b}, {alpha:.2})"),
-        ColorStringCopy::RGB => format!("rgb({linear_r:.3}, {linear_g:.3}, {linear_b:.3})"),
-        ColorStringCopy::RGBA => {
+        ColorStringCopy::Hex if no_alpha == Some(true) => format!("{r:02X}{g:02X}{b:02X}"),
+        ColorStringCopy::Hex => format!("{a:02X}{r:02X}{g:02X}{b:02X}"),
+        ColorStringCopy::HexNoAlpha => format!("{r:02X}{g:02X}{b:02X}"),
+        ColorStringCopy::SrgbHex => format!("#{r:02X}{g:02X}{b:02X}{a:02X}"),
+        ColorStringCopy::Srgb => format!("rgb({r}, {g}, {b})"),
+        ColorStringCopy::Srgba => format!("rgba({r}, {g}, {b}, {alpha:.2})"),
+        ColorStringCopy::Rgb => format!("rgb({linear_r:.3}, {linear_g:.3}, {linear_b:.3})"),
+        ColorStringCopy::Rgba => {
             format!("rgba({linear_r:.3}, {linear_g:.3}, {linear_b:.3}, {alpha:.3})")
         }
-        ColorStringCopy::HSV => format!("hsv({hue}, {saturation}%, {value}%)"),
-        ColorStringCopy::HSVA => format!("hsva({hue}, {saturation}%, {value}%, {alpha:.2})"),
-        ColorStringCopy::INT => u32::from_be_bytes([a, r, g, b]).to_string(),
-        ColorStringCopy::FLOAT => format!(
+        ColorStringCopy::Hsv => format!("hsv({hue}, {saturation}%, {value}%)"),
+        ColorStringCopy::Hsva => format!("hsva({hue}, {saturation}%, {value}%, {alpha:.2})"),
+        ColorStringCopy::Int => u32::from_be_bytes([a, r, g, b]).to_string(),
+        ColorStringCopy::Float => format!(
             "{:.3}, {:.3}, {:.3}, {alpha:.3}",
             r as f32 / 255.0,
             g as f32 / 255.0,
             b as f32 / 255.0
         ),
         // Fewest decimals that map every 8-bit color back to itself.
-        ColorStringCopy::HSL => {
+        ColorStringCopy::Hsl => {
             let [h, s, l] = srgb_to_hsl(srgb);
             let [h, s, l] = [h * 360.0, s * 100.0, l * 100.0].map(|v| css_number(v, 1));
             format!("hsl({h} {s}% {l}%)")
         }
-        ColorStringCopy::OKLAB => {
+        ColorStringCopy::Oklab => {
             let [ok_l, ok_a, ok_b] = linear_to_oklab(linear).map(|v| css_number(v, 5));
             format!("oklab({ok_l} {ok_a} {ok_b})")
         }
-        ColorStringCopy::OKLCH => {
+        ColorStringCopy::Oklch => {
             let [l, c, h] = oklab_to_oklch(linear_to_oklab(linear));
             let [l, c, h] = [css_number(l, 5), css_number(c, 5), css_number(h * 360.0, 2)];
             format!("oklch({l} {c} {h})")
@@ -867,7 +867,7 @@ fn selected_color_readout(
     format: ColorStringCopy,
 ) -> Option<Pos2> {
     let text = RichText::new(readout_text(color, format));
-    let hover_text = format!("Selected color as {format:?}");
+    let hover_text = format!("Selected color as {}", format.label());
     ui.horizontal(|ui| {
         if color.is_none() {
             ui.add(Label::new(text.weak()).truncate())
@@ -1665,7 +1665,7 @@ mod tests {
                     &mut SplineMode::HermiteBezier,
                     &mut PickerSpace::Hsv,
                     &mut BlendSpace::Picker,
-                    &ColorStringCopy::HEXNOA,
+                    &ColorStringCopy::HexNoAlpha,
                 );
                 square = Some(response.rect);
             }));
@@ -1863,7 +1863,7 @@ mod tests {
                         spline_mode,
                         &mut PickerSpace::Hsv,
                         &mut BlendSpace::Picker,
-                        &ColorStringCopy::HEXNOA,
+                        &ColorStringCopy::HexNoAlpha,
                     )
                     .rect;
             });
@@ -2054,7 +2054,7 @@ mod tests {
                         &mut SplineMode::Linear,
                         &mut drawn_space,
                         &mut BlendSpace::Picker,
-                        &ColorStringCopy::HEXNOA,
+                        &ColorStringCopy::HexNoAlpha,
                     );
                 });
             });
@@ -2232,7 +2232,7 @@ mod tests {
                             &mut SplineMode::Linear,
                             &mut space,
                             &mut BlendSpace::Picker,
-                            &ColorStringCopy::HEXNOA,
+                            &ColorStringCopy::HexNoAlpha,
                         )
                         .rect;
                 });
@@ -2612,7 +2612,7 @@ mod tests {
                         spline_mode: &mut SplineMode::Linear,
                         picker_space: &mut PickerSpace::Hsv,
                         blend_space: &mut BlendSpace::Picker,
-                        color_copy_format: ColorStringCopy::HEXNOA,
+                        color_copy_format: ColorStringCopy::HexNoAlpha,
                         last_modifying_point_index: &mut last_modifying_point_index,
                         dragging_index: &mut dragging_index,
                         dragging_tangent: &mut dragging_tangent,
@@ -2741,7 +2741,7 @@ mod tests {
                     &mut SplineMode::Linear,
                     &mut PickerSpace::Hsv,
                     &mut BlendSpace::Picker,
-                    &ColorStringCopy::HEXNOA,
+                    &ColorStringCopy::HexNoAlpha,
                 );
             });
         });
@@ -2760,7 +2760,7 @@ mod tests {
     #[test]
     fn readout_text_without_color_is_placeholder() {
         assert_eq!(
-            readout_text(None, ColorStringCopy::HEXNOA),
+            readout_text(None, ColorStringCopy::HexNoAlpha),
             NO_SELECTION_READOUT
         );
     }
@@ -2768,16 +2768,16 @@ mod tests {
     #[test]
     fn readout_text_follows_format() {
         assert_eq!(
-            readout_text(Some(orange()), ColorStringCopy::HEXNOA),
+            readout_text(Some(orange()), ColorStringCopy::HexNoAlpha),
             "FF8000"
         );
         assert_eq!(
-            readout_text(Some(orange()), ColorStringCopy::SRGB),
+            readout_text(Some(orange()), ColorStringCopy::Srgb),
             "rgb(255, 128, 0)"
         );
         assert_eq!(
-            readout_text(Some(orange()), ColorStringCopy::HSV),
-            format_orange(ColorStringCopy::HSV)
+            readout_text(Some(orange()), ColorStringCopy::Hsv),
+            format_orange(ColorStringCopy::Hsv)
         );
     }
 
@@ -2798,7 +2798,7 @@ mod tests {
             };
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    anchor = anchor.or(selected_color_readout(ui, color, ColorStringCopy::HEXNOA));
+                    anchor = anchor.or(selected_color_readout(ui, color, ColorStringCopy::HexNoAlpha));
                 });
             });
         }
@@ -2831,7 +2831,7 @@ mod tests {
                     &mut SplineMode::Linear,
                     &mut PickerSpace::Hsv,
                     &mut BlendSpace::Picker,
-                    &ColorStringCopy::HEXNOA,
+                    &ColorStringCopy::HexNoAlpha,
                 );
             });
         });
@@ -2846,7 +2846,7 @@ mod tests {
         let mut points = points_sv(&[(0.5, 0.5)]);
         let selected_text = readout_text(
             Some(points[0].val().color(PickerSpace::Hsv)),
-            ColorStringCopy::HEXNOA,
+            ColorStringCopy::HexNoAlpha,
         );
         assert!(paints_text(&mut points, None, NO_SELECTION_READOUT));
         assert!(!paints_text(&mut points, None, &selected_text));
@@ -2856,28 +2856,28 @@ mod tests {
 
     #[test]
     fn format_color_as_hex() {
-        assert_eq!(format_orange(ColorStringCopy::HEX), "CCFF8000");
+        assert_eq!(format_orange(ColorStringCopy::Hex), "CCFF8000");
     }
 
     #[test]
     fn format_color_as_hexnoa() {
-        assert_eq!(format_orange(ColorStringCopy::HEXNOA), "FF8000");
+        assert_eq!(format_orange(ColorStringCopy::HexNoAlpha), "FF8000");
     }
 
     #[test]
     fn format_color_as_srgbhex() {
-        assert_eq!(format_orange(ColorStringCopy::SRGBHEX), "#FF8000CC");
+        assert_eq!(format_orange(ColorStringCopy::SrgbHex), "#FF8000CC");
     }
 
     #[test]
     fn format_color_as_srgb() {
-        assert_eq!(format_orange(ColorStringCopy::SRGB), "rgb(255, 128, 0)");
+        assert_eq!(format_orange(ColorStringCopy::Srgb), "rgb(255, 128, 0)");
     }
 
     #[test]
     fn format_color_as_srgba() {
         assert_eq!(
-            format_orange(ColorStringCopy::SRGBA),
+            format_orange(ColorStringCopy::Srgba),
             "rgba(255, 128, 0, 0.80)"
         );
     }
@@ -2885,7 +2885,7 @@ mod tests {
     #[test]
     fn format_color_as_rgb() {
         assert_eq!(
-            format_orange(ColorStringCopy::RGB),
+            format_orange(ColorStringCopy::Rgb),
             "rgb(1.000, 0.216, 0.000)"
         );
     }
@@ -2893,33 +2893,33 @@ mod tests {
     #[test]
     fn format_color_as_rgba() {
         assert_eq!(
-            format_orange(ColorStringCopy::RGBA),
+            format_orange(ColorStringCopy::Rgba),
             "rgba(1.000, 0.216, 0.000, 0.800)"
         );
     }
 
     #[test]
     fn format_color_as_hsv() {
-        assert_eq!(format_orange(ColorStringCopy::HSV), "hsv(30, 100%, 100%)");
+        assert_eq!(format_orange(ColorStringCopy::Hsv), "hsv(30, 100%, 100%)");
     }
 
     #[test]
     fn format_color_as_hsva() {
         assert_eq!(
-            format_orange(ColorStringCopy::HSVA),
+            format_orange(ColorStringCopy::Hsva),
             "hsva(30, 100%, 100%, 0.80)"
         );
     }
 
     #[test]
     fn format_color_as_int() {
-        assert_eq!(format_orange(ColorStringCopy::INT), "3439296512");
+        assert_eq!(format_orange(ColorStringCopy::Int), "3439296512");
     }
 
     #[test]
     fn format_color_as_float() {
         assert_eq!(
-            format_orange(ColorStringCopy::FLOAT),
+            format_orange(ColorStringCopy::Float),
             "1.000, 0.502, 0.000, 0.800"
         );
     }
@@ -2927,7 +2927,7 @@ mod tests {
     #[test]
     fn format_color_as_hsv_gray_has_zero_hue() {
         assert_eq!(
-            format_color_as(Color32::from_rgb(128, 128, 128), ColorStringCopy::HSV, None),
+            format_color_as(Color32::from_rgb(128, 128, 128), ColorStringCopy::Hsv, None),
             "hsv(0, 0%, 50%)"
         );
     }
@@ -2938,33 +2938,33 @@ mod tests {
 
     #[test]
     fn format_color_as_hsl() {
-        assert_eq!(format_orange(ColorStringCopy::HSL), "hsl(30.1 100% 50%)");
+        assert_eq!(format_orange(ColorStringCopy::Hsl), "hsl(30.1 100% 50%)");
         assert_eq!(
-            format_rgb([51, 102, 153], ColorStringCopy::HSL),
+            format_rgb([51, 102, 153], ColorStringCopy::Hsl),
             "hsl(210 50% 40%)"
         );
-        assert_eq!(format_rgb([0; 3], ColorStringCopy::HSL), "hsl(0 0% 0%)");
-        assert_eq!(format_rgb([255; 3], ColorStringCopy::HSL), "hsl(0 0% 100%)");
+        assert_eq!(format_rgb([0; 3], ColorStringCopy::Hsl), "hsl(0 0% 0%)");
+        assert_eq!(format_rgb([255; 3], ColorStringCopy::Hsl), "hsl(0 0% 100%)");
     }
 
     #[test]
     fn format_color_as_oklab() {
         assert_eq!(
-            format_rgb([255, 0, 0], ColorStringCopy::OKLAB),
+            format_rgb([255, 0, 0], ColorStringCopy::Oklab),
             "oklab(0.62796 0.22486 0.12585)"
         );
-        assert_eq!(format_rgb([0; 3], ColorStringCopy::OKLAB), "oklab(0 0 0)");
-        assert_eq!(format_rgb([255; 3], ColorStringCopy::OKLAB), "oklab(1 0 0)");
+        assert_eq!(format_rgb([0; 3], ColorStringCopy::Oklab), "oklab(0 0 0)");
+        assert_eq!(format_rgb([255; 3], ColorStringCopy::Oklab), "oklab(1 0 0)");
     }
 
     #[test]
     fn format_color_as_oklch() {
         assert_eq!(
-            format_rgb([255, 0, 0], ColorStringCopy::OKLCH),
+            format_rgb([255, 0, 0], ColorStringCopy::Oklch),
             "oklch(0.62796 0.25768 29.23)"
         );
-        assert_eq!(format_rgb([0; 3], ColorStringCopy::OKLCH), "oklch(0 0 0)");
-        assert_eq!(format_rgb([255; 3], ColorStringCopy::OKLCH), "oklch(1 0 0)");
+        assert_eq!(format_rgb([0; 3], ColorStringCopy::Oklch), "oklch(0 0 0)");
+        assert_eq!(format_rgb([255; 3], ColorStringCopy::Oklch), "oklch(1 0 0)");
     }
 
     fn with_handles(mut points: Vec<ControlPoint>, handles: &[[[f32; 2]; 2]]) -> Vec<ControlPoint> {
@@ -3084,7 +3084,7 @@ mod tests {
                             &mut SplineMode::Bezier,
                             &mut space,
                             &mut BlendSpace::Picker,
-                            &ColorStringCopy::HEXNOA,
+                            &ColorStringCopy::HexNoAlpha,
                         )
                         .rect;
                 });
@@ -3145,7 +3145,7 @@ mod tests {
                     &mut SplineMode::Bezier,
                     &mut PickerSpace::Hsv,
                     &mut blend_space,
-                    &ColorStringCopy::HEXNOA,
+                    &ColorStringCopy::HexNoAlpha,
                 );
             });
         });
@@ -3288,7 +3288,7 @@ mod tests {
                             &mut SplineMode::Bezier,
                             &mut PickerSpace::Hsv,
                             &mut BlendSpace::Picker,
-                            &ColorStringCopy::HEXNOA,
+                            &ColorStringCopy::HexNoAlpha,
                         )
                         .rect;
                 });
@@ -3618,7 +3618,7 @@ mod tests {
                         &mut SplineMode::Linear,
                         &mut space,
                         &mut BlendSpace::Picker,
-                        &ColorStringCopy::HEXNOA,
+                        &ColorStringCopy::HexNoAlpha,
                     )
                     .rect;
             });

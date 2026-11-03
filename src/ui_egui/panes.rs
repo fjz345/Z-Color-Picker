@@ -236,7 +236,7 @@ impl ZAppPane for PreviewerPane {
             mut_ctx.picker_space,
             mut_ctx.blend_space,
         );
-        let response = previewer.draw_ui(ui, ColorStringCopy::HEXNOA);
+        let response = previewer.draw_ui(ui, ColorStringCopy::HexNoAlpha);
         if previewer.data.control_points != control_points {
             mut_ctx.control_points = previewer.data.control_points.clone();
         }

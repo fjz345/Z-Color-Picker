@@ -314,20 +314,20 @@ pub struct WindowPreset {
 }
 
 const COPY_FORMATS: [ColorStringCopy; 14] = [
-    ColorStringCopy::HEX,
-    ColorStringCopy::HEXNOA,
-    ColorStringCopy::SRGBHEX,
-    ColorStringCopy::HSV,
-    ColorStringCopy::HSVA,
-    ColorStringCopy::INT,
-    ColorStringCopy::FLOAT,
-    ColorStringCopy::RGB,
-    ColorStringCopy::SRGB,
-    ColorStringCopy::RGBA,
-    ColorStringCopy::SRGBA,
-    ColorStringCopy::HSL,
-    ColorStringCopy::OKLAB,
-    ColorStringCopy::OKLCH,
+    ColorStringCopy::Hex,
+    ColorStringCopy::HexNoAlpha,
+    ColorStringCopy::SrgbHex,
+    ColorStringCopy::Hsv,
+    ColorStringCopy::Hsva,
+    ColorStringCopy::Int,
+    ColorStringCopy::Float,
+    ColorStringCopy::Rgb,
+    ColorStringCopy::Srgb,
+    ColorStringCopy::Rgba,
+    ColorStringCopy::Srgba,
+    ColorStringCopy::Hsl,
+    ColorStringCopy::Oklab,
+    ColorStringCopy::Oklch,
 ];
 
 const COPY_FORMAT_SAMPLE: egui::Color32 = egui::Color32::from_rgb(255, 128, 0);
@@ -337,7 +337,7 @@ const SAVE_ERROR_MAX_WIDTH: f32 = 320.0;
 
 fn copy_format_label(format: ColorStringCopy) -> String {
     let sample = format_color_as(COPY_FORMAT_SAMPLE, format, None);
-    format!("{format:?}  {sample}")
+    format!("{}  {sample}", format.label())
 }
 
 fn spline_mode_label(mode: SplineMode) -> &'static str {
@@ -1159,7 +1159,7 @@ mod tests {
         for format in COPY_FORMATS {
             let label = copy_format_label(format);
             let sample = label
-                .strip_prefix(&format!("{format:?}"))
+                .strip_prefix(format.label())
                 .unwrap_or_else(|| panic!("{label:?} does not start with {format:?}"))
                 .trim()
                 .to_string();
@@ -1167,6 +1167,18 @@ mod tests {
             assert!(!samples.contains(&sample), "{format:?} repeats {sample:?}");
             samples.push(sample);
         }
+    }
+
+    #[test]
+    fn copy_format_labels_keep_the_all_caps_names() {
+        let labels = COPY_FORMATS.map(ColorStringCopy::label);
+        assert_eq!(
+            labels,
+            [
+                "HEX", "HEXNOA", "SRGBHEX", "HSV", "HSVA", "INT", "FLOAT", "RGB", "SRGB", "RGBA",
+                "SRGBA", "HSL", "OKLAB", "OKLCH"
+            ]
+        );
     }
 
     #[test]

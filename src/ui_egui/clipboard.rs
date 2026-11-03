@@ -486,11 +486,11 @@ mod tests {
     fn one_pixel_becomes_text_in_the_copy_format() {
         let image = ColorImage::new([1, 1], Color32::from_rgb(255, 128, 0));
         assert_eq!(
-            clipboard_payload(&image, ColorStringCopy::HEXNOA),
+            clipboard_payload(&image, ColorStringCopy::HexNoAlpha),
             Some(ClipboardPayload::Text("FF8000".to_string()))
         );
         assert_eq!(
-            clipboard_payload(&image, ColorStringCopy::SRGB),
+            clipboard_payload(&image, ColorStringCopy::Srgb),
             Some(ClipboardPayload::Text("rgb(255, 128, 0)".to_string()))
         );
     }
@@ -501,7 +501,7 @@ mod tests {
         set_pixel(&mut image, 0, 0, Color32::from_rgb(1, 2, 3));
         set_pixel(&mut image, 1, 0, Color32::from_rgb(4, 5, 6));
         assert_eq!(
-            clipboard_payload(&image, ColorStringCopy::HEXNOA),
+            clipboard_payload(&image, ColorStringCopy::HexNoAlpha),
             Some(ClipboardPayload::Image {
                 width: 2,
                 height: 1,
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn three_by_two_image_is_opaque_rgba() {
         let image = ColorImage::new([3, 2], Color32::from_rgba_unmultiplied(10, 20, 30, 40));
-        match clipboard_payload(&image, ColorStringCopy::HEXNOA) {
+        match clipboard_payload(&image, ColorStringCopy::HexNoAlpha) {
             Some(ClipboardPayload::Image {
                 width: 3,
                 height: 2,
@@ -529,7 +529,7 @@ mod tests {
     #[test]
     fn empty_image_has_no_payload() {
         assert_eq!(
-            clipboard_payload(&black_image(0, 0), ColorStringCopy::HEXNOA),
+            clipboard_payload(&black_image(0, 0), ColorStringCopy::HexNoAlpha),
             None
         );
     }
@@ -551,9 +551,9 @@ mod tests {
     #[test]
     fn selected_color_payload_without_a_valid_selection_is_none() {
         let points = red_and_green_points();
-        assert_eq!(payload(&points, None, ColorStringCopy::HEXNOA), None);
+        assert_eq!(payload(&points, None, ColorStringCopy::HexNoAlpha), None);
         assert_eq!(
-            payload(&points, Some(points.len()), ColorStringCopy::HEXNOA),
+            payload(&points, Some(points.len()), ColorStringCopy::HexNoAlpha),
             None
         );
     }
@@ -562,11 +562,11 @@ mod tests {
     fn selected_color_payload_is_the_selected_point_as_text_in_the_copy_format() {
         let points = red_and_green_points();
         assert_eq!(
-            payload(&points, Some(1), ColorStringCopy::HEXNOA),
+            payload(&points, Some(1), ColorStringCopy::HexNoAlpha),
             Some(ClipboardPayload::Text("00FF00".to_string()))
         );
         assert_eq!(
-            payload(&points, Some(1), ColorStringCopy::HSV),
+            payload(&points, Some(1), ColorStringCopy::Hsv),
             Some(ClipboardPayload::Text("hsv(120, 100%, 100%)".to_string()))
         );
     }
@@ -582,7 +582,7 @@ mod tests {
                 &half_lightness_red,
                 Some(0),
                 PickerSpace::Hsl,
-                ColorStringCopy::HEXNOA
+                ColorStringCopy::HexNoAlpha
             ),
             Some(ClipboardPayload::Text("FF0000".to_string()))
         );

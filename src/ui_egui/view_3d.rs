@@ -1175,7 +1175,7 @@ impl View3d {
             .or_else(|| nearest(response.hover_pos()?, &sample_targets))
             .map(|(_, color)| color);
         if let Some(color) = hovered {
-            let hex = format_color_as(color, ColorStringCopy::HEXNOA, None);
+            let hex = format_color_as(color, ColorStringCopy::HexNoAlpha, None);
             response.on_hover_text_at_pointer(format!("#{hex}"));
         }
         dragged
@@ -1778,7 +1778,7 @@ mod tests {
             "#{}",
             format_color_as(
                 points[0].val().color(PickerSpace::Okhsl),
-                ColorStringCopy::HEXNOA,
+                ColorStringCopy::HexNoAlpha,
                 None
             )
         );

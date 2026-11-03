@@ -547,7 +547,7 @@ mod tests {
                     ui,
                     SplineMode::Linear,
                     previewer_data,
-                    ColorStringCopy::HEXNOA,
+                    ColorStringCopy::HexNoAlpha,
                 )
                 .get_rects();
             });

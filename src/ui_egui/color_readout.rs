@@ -34,11 +34,11 @@ impl ReadoutRow {
 
     fn copy_format(self) -> ColorStringCopy {
         match self {
-            Self::Hex => ColorStringCopy::HEXNOA,
-            Self::Srgb => ColorStringCopy::SRGB,
-            Self::Hsl => ColorStringCopy::HSL,
-            Self::Oklab => ColorStringCopy::OKLAB,
-            Self::Oklch => ColorStringCopy::OKLCH,
+            Self::Hex => ColorStringCopy::HexNoAlpha,
+            Self::Srgb => ColorStringCopy::Srgb,
+            Self::Hsl => ColorStringCopy::Hsl,
+            Self::Oklab => ColorStringCopy::Oklab,
+            Self::Oklch => ColorStringCopy::Oklch,
         }
     }
 }
@@ -284,7 +284,7 @@ mod tests {
                     &mut SplineMode::Linear,
                     &mut picker_space,
                     &mut BlendSpace::Picker,
-                    &ColorStringCopy::HSV,
+                    &ColorStringCopy::Hsv,
                 );
             });
         });
@@ -446,8 +446,8 @@ mod tests {
     #[test]
     fn clicking_the_main_readout_still_copies_in_the_copy_as_format() {
         let red = Color32::from_rgb(255, 0, 0);
-        let readout = format_color_as(red, ColorStringCopy::HSV, None);
+        let readout = format_color_as(red, ColorStringCopy::Hsv, None);
         let (_, format) = click_text(&readout).expect("no copy request");
-        assert_eq!(format, ColorStringCopy::HSV);
+        assert_eq!(format, ColorStringCopy::Hsv);
     }
 }
