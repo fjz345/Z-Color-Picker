@@ -261,6 +261,71 @@ mod tests {
         }
     }
 
+    const EVEN_TS: [f32; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
+
+    #[test]
+    fn hermite_picker_blend_reproduces_a_quadratic_through_evenly_spaced_keys() {
+        let quadratic = |t: f32| {
+            ControlPointValue::new(
+                0.2 + 0.9 * t - 0.6 * t * t,
+                0.8 - 0.3 * t * t,
+                0.9 + 0.3 * t - 0.1 * t * t,
+            )
+        };
+        let points = EVEN_TS.map(|t| {
+            let value = quadratic(t);
+            point(value.s(), value.v(), value.h().rem_euclid(1.0), t)
+        });
+        let gradient = Gradient::new(
+            &points,
+            SplineMode::HermiteBezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
+        for x in xs() {
+            let [actual, expected] = [gradient.picker_value_at(x).unwrap(), quadratic(x)];
+            assert!(
+                (actual.s() - expected.s()).abs() < 1e-5
+                    && (actual.v() - expected.v()).abs() < 1e-5
+                    && hue_abs_distance(actual.h(), expected.h()) < 1e-5,
+                "at {x}: {actual:?} vs {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hermite_mixed_blends_reproduce_a_quadratic_through_evenly_spaced_keys() {
+        let quadratic = |t: f32| {
+            [
+                0.55 + 0.2 * t - 0.15 * t * t,
+                0.04 + 0.06 * t - 0.03 * t * t,
+                0.05 + 0.05 * t - 0.08 * t * t,
+            ]
+        };
+        for blend in BlendSpace::ALL {
+            if blend == BlendSpace::Picker {
+                continue;
+            }
+            let points = EVEN_TS.map(|t| {
+                let linear = blend_to_linear(blend, quadratic(t));
+                let [hue, s, v] = linear_to_picker(PickerSpace::Hsv, linear);
+                point(s, v, hue, t)
+            });
+            let gradient =
+                Gradient::new(&points, SplineMode::HermiteBezier, PickerSpace::Hsv, blend);
+            for x in xs() {
+                let actual = linear_to_blend(blend, gradient.linear_at(x).unwrap());
+                let expected = quadratic(x);
+                for i in 0..3 {
+                    assert!(
+                        (actual[i] - expected[i]).abs() < 1e-4,
+                        "{blend:?} at {x}: {actual:?} vs {expected:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn componentwise_blends_lerp_their_coordinates() {
         type Conversion = fn([f32; 3]) -> [f32; 3];

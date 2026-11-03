@@ -373,6 +373,51 @@ mod tests {
         }
     }
 
+    fn c_shape(degrees: &[f32], ts: &[f32]) -> Vec<ControlPoint> {
+        degrees
+            .iter()
+            .zip(ts)
+            .map(|(degree, &t)| {
+                let (sin, cos) = degree.to_radians().sin_cos();
+                let value = ControlPointValue::new(0.5 + 0.35 * cos, 0.5 + 0.35 * sin, 0.5);
+                ControlPoint::new_simple(value, t)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn hermite_comb_of_a_c_shape_bends_one_way_on_every_segment() {
+        let even = [0.0, 0.25, 0.5, 0.75, 1.0];
+        let degrees = [70.0, 130.0, 180.0, 250.0, 290.0];
+        let by_angle = degrees.map(|d| (d - degrees[0]) / (degrees[4] - degrees[0]));
+        for points in [
+            c_shape(&[60.0, 120.0, 180.0, 240.0, 300.0], &even),
+            c_shape(&degrees, &even),
+            c_shape(&degrees, &by_angle),
+            c_shape(&degrees[..4], &[0.0, 0.3, 0.6, 1.0]),
+        ] {
+            let cubics = comb_cubics(&points, SplineMode::HermiteBezier, RECT);
+            assert_eq!(cubics.len(), points.len() - 1);
+            let curvatures: Vec<f32> = cubics
+                .iter()
+                .flat_map(|cubic| {
+                    (0..=SAMPLES_PER_SEGMENT)
+                        .map(|i| curvature(cubic, i as f32 / SAMPLES_PER_SEGMENT as f32).unwrap())
+                })
+                .collect();
+            let sign = curvatures[curvatures.len() / 2].signum();
+            for (i, k) in curvatures.iter().enumerate() {
+                let segment = i / (SAMPLES_PER_SEGMENT + 1);
+                assert_eq!(
+                    k.signum(),
+                    sign,
+                    "{} points, segment {segment}: {k}",
+                    points.len()
+                );
+            }
+        }
+    }
+
     #[test]
     fn linear_mode_has_no_comb() {
         let points = points_sv(&[(0.1, 0.2), (0.4, 0.9), (0.7, 0.3)]);
