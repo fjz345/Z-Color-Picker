@@ -449,6 +449,7 @@ fn convert_point(cp: &mut ControlPoint, from: PickerSpace, to: PickerSpace) {
     let handles = [0, 1].map(|slot| bezier_handle(cp, slot));
     let new = value_in_picker_space(old, from, to);
     *cp.val_mut() = new;
+    *cp.curvature_mut() = None;
     let value_hue_shift = shortest_hue_delta(old.h(), new.h());
     for (tangent, handle) in cp.tangents_mut().iter_mut().zip(handles) {
         let Some(tangent) = tangent else {
@@ -1157,6 +1158,18 @@ mod tests {
                 assert_eq!(after, before, "{from:?} -> {to:?}");
             }
         }
+    }
+
+    #[test]
+    fn switching_space_drops_stored_curvature() {
+        let mut points = space_switch_points();
+        for cp in points.iter_mut() {
+            *cp.curvature_mut() = Some(2.0);
+        }
+        convert_picker_space(&mut points, PickerSpace::Hsv, PickerSpace::Hsv);
+        assert!(points.iter().all(|cp| cp.curvature() == Some(2.0)));
+        convert_picker_space(&mut points, PickerSpace::Hsv, PickerSpace::Okhsl);
+        assert!(points.iter().all(|cp| cp.curvature().is_none()));
     }
 
     #[test]

@@ -18,6 +18,8 @@ pub struct ControlPointStorage {
     pub val: ControlPointValue,
     pub t: ControlPointT,
     pub tangents: ControlPointTangents,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curvature: Option<f32>,
 }
 
 impl ControlPointStorage {
@@ -26,6 +28,7 @@ impl ControlPointStorage {
             val: ControlPointValue::default(),
             t: 0.0,
             tangents: [None; 2],
+            curvature: None,
         }
     }
 }
@@ -86,6 +89,13 @@ impl ControlPoint {
         &mut self.storage_mut().tangents
     }
 
+    pub fn curvature(&self) -> Option<f32> {
+        self.storage().curvature
+    }
+    pub fn curvature_mut(&mut self) -> &mut Option<f32> {
+        &mut self.storage_mut().curvature
+    }
+
     pub fn flip_tangents(&mut self) {
         self.tangents_mut().swap(0, 1);
     }
@@ -130,6 +140,7 @@ mod tests {
             val: ControlPointValue::new(0.5, 0.25, 0.125),
             t: 1.0,
             tangents: [None, Some(ControlPointTangent::new(0.125, -0.25, 0.0))],
+            curvature: None,
         });
         let json = round_trip(&cp);
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -141,5 +152,16 @@ mod tests {
             storage["tangents"][1]["val"],
             serde_json::json!([0.125, -0.25, 0.0])
         );
+    }
+
+    #[test]
+    fn curvature_round_trips_and_json_without_it_loads_as_none() {
+        let mut cp = ControlPoint::new_simple(ControlPointValue::new(0.25, 0.5, 0.75), 0.5);
+        *cp.curvature_mut() = Some(-2.5);
+        assert!(round_trip(&cp).contains(r#""curvature":-2.5"#));
+
+        let old = r#"{"ControlPointSimple":{"val":{"val":[0.25,0.5,0.75]},"t":0.5,"tangents":[null,null]}}"#;
+        let loaded: ControlPoint = serde_json::from_str(old).unwrap();
+        assert_eq!(loaded.curvature(), None);
     }
 }

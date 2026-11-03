@@ -143,6 +143,7 @@ impl ZColorPickerAppContext {
                     val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
                 }),
             ],
+            curvature: None,
         }),
         ControlPoint::ControlPointSimple(ControlPointStorage {
             val: ControlPointValue {
@@ -157,6 +158,7 @@ impl ZColorPickerAppContext {
                     val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
                 }),
             ],
+            curvature: None,
         }),
         ControlPoint::ControlPointSimple(ControlPointStorage {
             val: ControlPointValue {
@@ -171,6 +173,7 @@ impl ZColorPickerAppContext {
                     val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
                 }),
             ],
+            curvature: None,
         }),
         ControlPoint::ControlPointSimple(ControlPointStorage {
             val: ControlPointValue {
@@ -185,6 +188,7 @@ impl ZColorPickerAppContext {
                     val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
                 }),
             ],
+            curvature: None,
         }),
     ];
 
