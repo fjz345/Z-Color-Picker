@@ -1,10 +1,10 @@
 //https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
 
+use crate::color_space::{BlendSpace, PickerSpace};
 use crate::common::SplineMode;
 use crate::datatypes::control_point::{ControlPoint, ControlPointValue};
-use crate::ui_egui::control_points::{
-    bezier_handle, control_points_to_spline, flatten_control_points, real_keys,
-};
+use crate::ui_egui::blend::Gradient;
+use crate::ui_egui::control_points::{bezier_handle, flatten_control_points};
 use crate::ui_egui::ui_common::contrast_color;
 use eframe::egui::{self, Sense, Ui};
 use eframe::emath;
@@ -58,26 +58,23 @@ fn ribbon_segment_length_bound_px(
 }
 
 pub fn generate_spline_points(
-    control_points: &[ControlPoint],
-    spline_mode: SplineMode,
+    gradient: &Gradient,
     samples_per_segment: usize,
 ) -> Vec<ControlPointValue> {
     assert!(samples_per_segment > 0);
-    if control_points.len() <= 1 {
+    let key_ts = gradient.key_ts();
+    if key_ts.len() <= 1 {
         return Vec::new();
     }
 
-    let spline = control_points_to_spline(control_points, spline_mode);
-    let keys = real_keys(&spline, spline_mode);
-    let mut spline_samples: Vec<ControlPointValue> = keys
+    let mut spline_samples: Vec<ControlPointValue> = key_ts
         .windows(2)
         .flat_map(|pair| {
-            (0..samples_per_segment).map(move |i| {
-                emath::lerp(pair[0].t..=pair[1].t, i as f32 / samples_per_segment as f32)
-            })
+            (0..samples_per_segment)
+                .map(move |i| emath::lerp(pair[0]..=pair[1], i as f32 / samples_per_segment as f32))
         })
-        .filter_map(|t| spline.clamped_sample(t))
-        .chain(keys.last().map(|key| key.value))
+        .chain(key_ts.last().copied())
+        .filter_map(|t| gradient.picker_value_at(t))
         .collect();
     spline_samples.dedup();
     spline_samples
@@ -87,6 +84,8 @@ pub fn ui_ordered_spline_gradient(
     ui: &mut Ui,
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
+    picker_space: PickerSpace,
+    blend_space: BlendSpace,
     parent_response: &egui::Response,
 ) -> Option<egui::Response> {
     let num_control_points = control_points.len();
@@ -109,8 +108,7 @@ pub fn ui_ordered_spline_gradient(
     let length_bound_px =
         ribbon_segment_length_bound_px(&flattened_points, spline_mode, &to_screen);
     let spline_points = generate_spline_points(
-        &flattened_points,
-        spline_mode,
+        &Gradient::new(control_points, spline_mode, picker_space, blend_space),
         ribbon_samples_per_segment(length_bound_px),
     );
 
@@ -125,7 +123,7 @@ pub fn ui_ordered_spline_gradient(
             ribbon_screen_pos(&to_screen, first),
             ribbon_screen_pos(&to_screen, next),
         ];
-        let fill = Stroke::new(control_point_radius * 1.6, first.color());
+        let fill = Stroke::new(control_point_radius * 1.6, first.color(picker_space));
         halos.push(Shape::line_segment(
             segment,
             ribbon_halo_stroke(fill.color, fill.width),
@@ -176,6 +174,10 @@ mod tests {
         assert_eq!(halo.color, Color32::BLACK.gamma_multiply_u8(halo.color.a()));
     }
 
+    fn picker_gradient(points: &[ControlPoint], mode: SplineMode) -> Gradient {
+        Gradient::new(points, mode, PickerSpace::Hsv, BlendSpace::Picker)
+    }
+
     fn zigzag_points(n: usize) -> Vec<ControlPoint> {
         (0..n)
             .map(|i| {
@@ -218,8 +220,8 @@ mod tests {
             0.0,
         )];
         for mode in SplineMode::ALL {
-            assert!(generate_spline_points(&[], mode, 4).is_empty());
-            assert!(generate_spline_points(&single, mode, 4).is_empty());
+            assert!(generate_spline_points(&picker_gradient(&[], mode), 4).is_empty());
+            assert!(generate_spline_points(&picker_gradient(&single, mode), 4).is_empty());
         }
     }
 
@@ -228,7 +230,7 @@ mod tests {
         for mode in SplineMode::ALL {
             for n in 2..=6 {
                 let points = zigzag_points(n);
-                let samples = generate_spline_points(&points, mode, 4);
+                let samples = generate_spline_points(&picker_gradient(&points, mode), 4);
                 assert_eq!(samples.first(), Some(points[0].val()), "{mode:?} n={n}");
                 assert_eq!(samples.last(), Some(points[n - 1].val()), "{mode:?} n={n}");
             }
@@ -240,8 +242,10 @@ mod tests {
         for mode in SplineMode::ALL {
             for n in 2..=6 {
                 for samples_per_segment in [1, 4, 100] {
-                    let samples =
-                        generate_spline_points(&zigzag_points(n), mode, samples_per_segment);
+                    let samples = generate_spline_points(
+                        &picker_gradient(&zigzag_points(n), mode),
+                        samples_per_segment,
+                    );
                     assert!(
                         samples.windows(2).all(|pair| pair[0] != pair[1]),
                         "{mode:?} n={n} samples_per_segment={samples_per_segment}"
@@ -253,7 +257,8 @@ mod tests {
 
     #[test]
     fn linear_spline_points_take_samples_per_segment() {
-        let samples = generate_spline_points(&zigzag_points(3), SplineMode::Linear, 2);
+        let samples =
+            generate_spline_points(&picker_gradient(&zigzag_points(3), SplineMode::Linear), 2);
         assert_eq!(samples.len(), 5);
     }
 
@@ -262,7 +267,7 @@ mod tests {
         let mut points = zigzag_points(3);
         *points[1].t_mut() = 0.1;
         for mode in SplineMode::ALL {
-            let samples = generate_spline_points(&points, mode, 2);
+            let samples = generate_spline_points(&picker_gradient(&points, mode), 2);
             assert_eq!(samples.len(), 5, "{mode:?}");
             assert_eq!(samples[2], *points[1].val(), "{mode:?}");
         }
@@ -278,7 +283,7 @@ mod tests {
                         ControlPoint::new_simple(ControlPointValue::new(x, x, 0.3), x)
                     })
                     .collect();
-                let samples = generate_spline_points(&points, mode, 16);
+                let samples = generate_spline_points(&picker_gradient(&points, mode), 16);
                 for pair in samples.windows(2) {
                     assert!(pair[1][0] >= pair[0][0] - 1e-5, "{mode:?} n={n} {pair:?}");
                 }

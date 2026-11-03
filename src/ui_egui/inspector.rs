@@ -4,6 +4,7 @@ use eframe::egui::{DragValue, Ui};
 use eframe::epaint::Vec2;
 
 use crate::{
+    color_space::PickerSpace,
     datatypes::control_point::ControlPoint,
     ui_egui::{
         color_picker::{
@@ -24,10 +25,11 @@ pub enum InspectorField {
 impl InspectorField {
     const ALL: [Self; 4] = [Self::H, Self::S, Self::V, Self::T];
 
-    fn label(self) -> &'static str {
+    fn label(self, picker_space: PickerSpace) -> &'static str {
         match self {
             Self::H => "H",
             Self::S => "S",
+            Self::V if picker_space.is_y_lightness() => "L",
             Self::V => "V",
             Self::T => "T",
         }
@@ -56,13 +58,14 @@ impl InspectorField {
         }
     }
 
-    fn hint(self) -> &'static str {
+    fn hint(self, picker_space: PickerSpace) -> &'static str {
         match self {
             Self::H => "Hue in degrees",
             Self::S => {
                 "Saturation: the point's x in the square. The HSV readout derives S from the \
                  sRGB bytes, so the two can differ"
             }
+            Self::V if picker_space.is_y_lightness() => "Lightness: the point's y in the square",
             Self::V => "Value: the point's y in the square",
             Self::T => "T: the point's position along the gradient, between its neighbours",
         }
@@ -79,6 +82,7 @@ pub struct InspectorOptions {
     pub is_hue_middle_interpolated: bool,
     pub is_curve_locked: bool,
     pub is_window_lock: bool,
+    pub picker_space: PickerSpace,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -200,7 +204,7 @@ pub fn point_inspector(
     ui.push_id(("inspector", selected), |ui| {
         ui.horizontal(|ui| {
             for (field, state) in InspectorField::ALL.into_iter().zip(states) {
-                ui.label(field.label());
+                ui.label(field.label(opts.picker_space));
                 let mut value = state.value.unwrap_or_default();
                 let drag = DragValue::new(&mut value)
                     .range(state.range)
@@ -214,7 +218,7 @@ pub fn point_inspector(
                 };
                 let mut response = ui
                     .add_enabled(state.disabled_reason.is_none(), drag)
-                    .on_hover_text(format!("{}. {EDIT_HINT}", field.hint()));
+                    .on_hover_text(format!("{}. {EDIT_HINT}", field.hint(opts.picker_space)));
                 if let Some(reason) = state.disabled_reason {
                     response = response.on_disabled_hover_text(reason);
                 }
@@ -244,6 +248,7 @@ mod tests {
         is_hue_middle_interpolated: false,
         is_curve_locked: false,
         is_window_lock: false,
+        picker_space: PickerSpace::Hsv,
     };
 
     fn points_at(svht: &[(f32, f32, f32, f32)]) -> Vec<ControlPoint> {
@@ -431,12 +436,43 @@ mod tests {
         })
     }
 
+    #[test]
+    fn y_label_follows_the_picker_space() {
+        for (picker_space, label) in [
+            (PickerSpace::Hsv, "V"),
+            (PickerSpace::Hsl, "L"),
+            (PickerSpace::Okhsv, "V"),
+            (PickerSpace::Okhsl, "L"),
+        ] {
+            let ctx = egui::Context::default();
+            let opts = InspectorOptions {
+                picker_space,
+                ..FREE
+            };
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    point_inspector(ui, &mut three_points(), Some(0), opts);
+                });
+            });
+            let labels: Vec<&str> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text()),
+                    _ => None,
+                })
+                .filter(|text| text.len() == 1 && text.chars().all(char::is_alphabetic))
+                .collect();
+            assert_eq!(labels, ["H", "S", label, "T"], "{picker_space:?}");
+        }
+    }
+
     fn field_pos(output: &egui::FullOutput, field: InspectorField) -> Pos2 {
         let label = output
             .shapes
             .iter()
             .find_map(|clipped| match &clipped.shape {
-                egui::Shape::Text(text) if text.galley.text() == field.label() => {
+                egui::Shape::Text(text) if text.galley.text() == field.label(FREE.picker_space) => {
                     Some(text.galley.rect.translate(text.pos.to_vec2()))
                 }
                 _ => None,
@@ -549,6 +585,7 @@ mod tests {
             is_hue_middle_interpolated: true,
             is_curve_locked: true,
             is_window_lock: true,
+            picker_space: PickerSpace::Okhsl,
         };
         for opts in [FREE, clamp_only, all_on] {
             for selected in [None, Some(0), Some(1), Some(2)] {

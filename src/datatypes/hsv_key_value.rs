@@ -1,7 +1,8 @@
-use ecolor::{Color32, HsvaGamma};
+use ecolor::{Color32, Rgba};
 use eframe::egui::{Pos2, Vec2};
 use serde::{Deserialize, Serialize};
 
+use crate::color_space::{picker_to_linear, PickerSpace};
 use crate::math::hue_lerp;
 
 type HsvKeyValueInnerType = [f32; 3];
@@ -43,17 +44,20 @@ impl HsvKeyValue {
         self[1]
     }
 
-    pub fn color(&self) -> Color32 {
-        self.hsv().into()
+    pub fn color(&self, space: PickerSpace) -> Color32 {
+        let [r, g, b] = self.linear(space);
+        Rgba::from_rgb(r, g, b).into()
     }
 
-    pub fn hsv(&self) -> HsvaGamma {
-        HsvaGamma {
-            h: self[2].rem_euclid(1.0),
-            s: self[0].clamp(0.0, 1.0),
-            v: self[1].clamp(0.0, 1.0),
-            a: 1.0,
-        }
+    pub fn linear(&self, space: PickerSpace) -> [f32; 3] {
+        picker_to_linear(
+            space,
+            [
+                self[2].rem_euclid(1.0),
+                self[0].clamp(0.0, 1.0),
+                self[1].clamp(0.0, 1.0),
+            ],
+        )
     }
 }
 
@@ -313,6 +317,7 @@ pub mod test_support {
 mod tests {
     use super::test_support::assert_close;
     use super::*;
+    use ecolor::HsvaGamma;
     use splines::interpolate::Interpolate;
 
     fn bezier(t: f32, a: HsvKeyValue, b: HsvKeyValue) -> HsvKeyValue {
@@ -350,32 +355,59 @@ mod tests {
 
     #[test]
     fn color_of_out_of_range_sv_matches_clamped_value() {
-        for s in [-0.2, 0.5, 1.3] {
-            for v in [-0.2, 0.5, 1.3] {
-                let raw = HsvKeyValue::new(s, v, 0.1);
-                let clamped = HsvKeyValue::new(s.clamp(0.0, 1.0), v.clamp(0.0, 1.0), 0.1);
-                assert_eq!(raw.color(), clamped.color(), "s = {s}, v = {v}");
+        for space in PickerSpace::ALL {
+            for s in [-0.2, 0.5, 1.3] {
+                for v in [-0.2, 0.5, 1.3] {
+                    let raw = HsvKeyValue::new(s, v, 0.1);
+                    let clamped = HsvKeyValue::new(s.clamp(0.0, 1.0), v.clamp(0.0, 1.0), 0.1);
+                    assert_eq!(
+                        raw.color(space),
+                        clamped.color(space),
+                        "{space:?} s = {s}, v = {v}"
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn hsv_passes_in_range_values_through() {
-        let hsv = HsvKeyValue::new(0.3, 0.7, 0.1).hsv();
+    fn hsv_color_is_the_hsva_gamma_color() {
+        let expected = Color32::from(HsvaGamma {
+            h: 0.1,
+            s: 0.3,
+            v: 0.7,
+            a: 1.0,
+        });
         assert_eq!(
-            hsv,
-            HsvaGamma {
-                h: 0.1,
-                s: 0.3,
-                v: 0.7,
-                a: 1.0
-            }
+            HsvKeyValue::new(0.3, 0.7, 0.1).color(PickerSpace::Hsv),
+            expected
         );
     }
 
     #[test]
-    fn hsv_wraps_negative_hue() {
-        let hsv = HsvKeyValue::new(0.3, 0.7, -0.1).hsv();
-        assert!((hsv.h - 0.9).abs() < 1e-6, "{hsv:?}");
+    fn color_wraps_hue() {
+        for space in PickerSpace::ALL {
+            let expected = HsvKeyValue::new(0.3, 0.7, 0.9).color(space);
+            for hue in [-0.1, 1.9] {
+                assert_eq!(
+                    HsvKeyValue::new(0.3, 0.7, hue).color(space),
+                    expected,
+                    "{space:?} {hue}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn y_is_lightness_in_hsl_spaces() {
+        let top_left = HsvKeyValue::new(0.0, 1.0, 0.3);
+        for space in PickerSpace::ALL {
+            assert_eq!(top_left.color(space), Color32::WHITE, "{space:?}");
+        }
+        let full_saturation_mid_y = HsvKeyValue::new(1.0, 0.5, 0.0);
+        assert_eq!(
+            full_saturation_mid_y.color(PickerSpace::Hsl),
+            Color32::from_rgb(255, 0, 0)
+        );
     }
 }

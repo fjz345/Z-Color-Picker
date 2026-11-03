@@ -14,6 +14,9 @@ pub enum ColorStringCopy {
     SRGB,
     RGBA,
     SRGBA,
+    HSL,
+    OKLAB,
+    OKLCH,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize, Default)]
@@ -49,6 +52,9 @@ mod tests {
             ColorStringCopy::SRGB => "SRGB",
             ColorStringCopy::RGBA => "RGBA",
             ColorStringCopy::SRGBA => "SRGBA",
+            ColorStringCopy::HSL => "HSL",
+            ColorStringCopy::OKLAB => "OKLAB",
+            ColorStringCopy::OKLCH => "OKLCH",
         }
     }
 
@@ -74,10 +80,13 @@ mod tests {
             ColorStringCopy::SRGB,
             ColorStringCopy::RGBA,
             ColorStringCopy::SRGBA,
+            ColorStringCopy::HSL,
+            ColorStringCopy::OKLAB,
+            ColorStringCopy::OKLCH,
         ];
         let distinct: std::collections::HashSet<_> =
             all.iter().map(|&f| copy_format_json_name(f)).collect();
-        assert_eq!(distinct.len(), 11);
+        assert_eq!(distinct.len(), 14);
 
         for f in all {
             let json = format!("\"{}\"", copy_format_json_name(f));
