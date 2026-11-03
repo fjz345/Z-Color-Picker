@@ -147,17 +147,6 @@ fn catmull_rom_cubics(spline: &Spline<f32, ControlPointValue>) -> Vec<Cubic> {
         .collect()
 }
 
-pub fn catmull_rom_handles(control_points: &[ControlPoint], index: usize) -> [Option<Pos2>; 2] {
-    let spline = control_points_to_spline(control_points, SplineMode::HermiteBezier);
-    let cubics = catmull_rom_cubics(&spline);
-    let incoming = index
-        .checked_sub(1)
-        .and_then(|i| cubics.get(i))
-        .map(|c| c.p2);
-    let outgoing = cubics.get(index).map(|c| c.p1);
-    [incoming, outgoing]
-}
-
 fn comb_cubics(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
@@ -373,28 +362,55 @@ mod tests {
         }
     }
 
+    fn c_shape(degrees: &[f32], ts: &[f32]) -> Vec<ControlPoint> {
+        degrees
+            .iter()
+            .zip(ts)
+            .map(|(degree, &t)| {
+                let (sin, cos) = degree.to_radians().sin_cos();
+                let value = ControlPointValue::new(0.5 + 0.35 * cos, 0.5 + 0.35 * sin, 0.5);
+                ControlPoint::new_simple(value, t)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn hermite_comb_of_a_c_shape_bends_one_way_on_every_segment() {
+        let even = [0.0, 0.25, 0.5, 0.75, 1.0];
+        let degrees = [70.0, 130.0, 180.0, 250.0, 290.0];
+        let by_angle = degrees.map(|d| (d - degrees[0]) / (degrees[4] - degrees[0]));
+        for points in [
+            c_shape(&[60.0, 120.0, 180.0, 240.0, 300.0], &even),
+            c_shape(&degrees, &even),
+            c_shape(&degrees, &by_angle),
+            c_shape(&degrees[..4], &[0.0, 0.3, 0.6, 1.0]),
+        ] {
+            let cubics = comb_cubics(&points, SplineMode::HermiteBezier, RECT);
+            assert_eq!(cubics.len(), points.len() - 1);
+            let curvatures: Vec<f32> = cubics
+                .iter()
+                .flat_map(|cubic| {
+                    (0..=SAMPLES_PER_SEGMENT)
+                        .map(|i| curvature(cubic, i as f32 / SAMPLES_PER_SEGMENT as f32).unwrap())
+                })
+                .collect();
+            let sign = curvatures[curvatures.len() / 2].signum();
+            for (i, k) in curvatures.iter().enumerate() {
+                let segment = i / (SAMPLES_PER_SEGMENT + 1);
+                assert_eq!(
+                    k.signum(),
+                    sign,
+                    "{} points, segment {segment}: {k}",
+                    points.len()
+                );
+            }
+        }
+    }
+
     #[test]
     fn linear_mode_has_no_comb() {
         let points = points_sv(&[(0.1, 0.2), (0.4, 0.9), (0.7, 0.3)]);
         assert!(comb_cubics(&points, SplineMode::Linear, RECT).is_empty());
-    }
-
-    #[test]
-    fn hermite_handles_of_a_middle_point_span_a_sixth_of_the_neighbour_chord() {
-        let points = points_sv(&[(0.1, 0.2), (0.4, 0.9), (0.7, 0.3)]);
-        let [incoming, outgoing] = catmull_rom_handles(&points, 1);
-        let point = Pos2::new(0.4, 0.1);
-        let chord = Vec2::new(0.6, -0.1);
-        assert!((incoming.unwrap() - (point - chord / 6.0)).length() < 1e-5);
-        assert!((outgoing.unwrap() - (point + chord / 6.0)).length() < 1e-5);
-    }
-
-    #[test]
-    fn hermite_end_points_have_only_their_inner_handle() {
-        let points = points_sv(&[(0.1, 0.2), (0.4, 0.9), (0.7, 0.3)]);
-        assert!(matches!(catmull_rom_handles(&points, 0), [None, Some(_)]));
-        assert!(matches!(catmull_rom_handles(&points, 2), [Some(_), None]));
-        assert!(matches!(catmull_rom_handles(&points[..1], 0), [None, None]));
     }
 
     #[test]

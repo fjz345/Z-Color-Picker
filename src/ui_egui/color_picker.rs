@@ -20,7 +20,6 @@ use crate::{
         curvature::draw_curvature_comb,
         gradient::color_function_gradient,
         inspector::{point_inspector, InspectorOptions},
-        tangents::paint_auto_tangents,
         ui_common::contrast_color,
     },
 };
@@ -612,10 +611,6 @@ pub fn main_color_picker(
             ctx.blend_space,
             &slider_2d_response,
         );
-        if let (SplineMode::HermiteBezier, Some(index)) = (ctx.spline_mode, is_modifying_index) {
-            paint_auto_tangents(ui, slider_2d_response.rect, ctx.control_points, index);
-        }
-
         handle_control_points_ui(ui, ctx, &slider_2d_response, &mut is_modifying_index);
 
         slider_2d_response

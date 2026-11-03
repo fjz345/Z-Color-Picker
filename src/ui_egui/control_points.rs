@@ -5,6 +5,7 @@ use eframe::{
     epaint::PathShape,
 };
 use splines::{Interpolate, Interpolation, Key, Spline};
+use std::ops::{Add, Mul, Sub};
 
 use crate::{
     color_space::{linear_to_picker, BlendSpace, PickerSpace},
@@ -466,11 +467,28 @@ pub fn control_points_to_spline(
     spline_through_keys(&key_ts(control_points), &keys, spline_mode)
 }
 
-pub fn spline_through_keys<V: Copy>(
+fn polynomial_through<V>(keys: &[Key<f32, V>], t: f32) -> V
+where
+    V: Copy + Add<Output = V> + Sub<Output = V> + Mul<f32, Output = V>,
+{
+    let mut values: Vec<V> = keys.iter().map(|key| key.value).collect();
+    for width in 1..keys.len() {
+        for i in 0..keys.len() - width {
+            let s = (t - keys[i].t) / (keys[i + width].t - keys[i].t);
+            values[i] = values[i] + (values[i + 1] - values[i]) * s;
+        }
+    }
+    values[0]
+}
+
+pub fn spline_through_keys<V>(
     ts: &[f32],
     values_and_handles: &[[V; 3]],
     spline_mode: SplineMode,
-) -> Spline<f32, V> {
+) -> Spline<f32, V>
+where
+    V: Copy + Add<Output = V> + Sub<Output = V> + Mul<f32, Output = V>,
+{
     assert_eq!(ts.len(), values_and_handles.len());
     let keys_at_t = values_and_handles.iter().zip(ts.iter().copied());
     match spline_mode {
@@ -487,22 +505,26 @@ pub fn spline_through_keys<V: Copy>(
                 .collect(),
         ),
         SplineMode::HermiteBezier => {
-            let (Some([first, ..]), Some([last, ..])) =
-                (values_and_handles.first(), values_and_handles.last())
-            else {
-                return Spline::from_vec(Vec::new());
-            };
             let n = ts.len();
+            if n == 0 {
+                return Spline::from_vec(Vec::new());
+            }
             let (before, after) = if n >= 2 {
                 (2.0 * ts[0] - ts[1], 2.0 * ts[n - 1] - ts[n - 2])
             } else {
                 (ts[0] - 1.0, ts[0] + 1.0)
             };
             let catmull_rom_key = |t, value: V| Key::new(t, value, Interpolation::CatmullRom);
+            let keys: Vec<Key<f32, V>> = keys_at_t
+                .map(|([value, ..], t)| catmull_rom_key(t, *value))
+                .collect();
+            let end_count = n.min(3);
+            let phantom_before = polynomial_through(&keys[..end_count], before);
+            let phantom_after = polynomial_through(&keys[n - end_count..], after);
             Spline::from_vec(
-                std::iter::once(catmull_rom_key(before, *first))
-                    .chain(keys_at_t.map(|([value, ..], t)| catmull_rom_key(t, *value)))
-                    .chain(std::iter::once(catmull_rom_key(after, *last)))
+                std::iter::once(catmull_rom_key(before, phantom_before))
+                    .chain(keys)
+                    .chain(std::iter::once(catmull_rom_key(after, phantom_after)))
                     .collect(),
             )
         }
@@ -515,6 +537,7 @@ mod tests {
     use crate::datatypes::control_point::test_support::{
         point_with_tangent, RUNAWAY_POINT, RUNAWAY_TANGENT,
     };
+    use crate::datatypes::hsv_key_value::test_support::assert_close;
     use crate::math::hue_abs_distance;
 
     fn three_points() -> Vec<ControlPoint> {
@@ -985,6 +1008,31 @@ mod tests {
     }
 
     #[test]
+    fn hermite_phantoms_extend_the_polynomial_through_the_end_keys() {
+        let line = |t: f32| ControlPointValue::new(0.2 + 0.5 * t, 0.7 - 0.4 * t, 0.95 + 0.2 * t);
+        let quadratic = |t: f32| {
+            ControlPointValue::new(
+                0.2 + 0.9 * t - 0.6 * t * t,
+                0.8 - 0.3 * t * t,
+                0.9 + 0.3 * t - 0.1 * t * t,
+            )
+        };
+        type Polynomial = fn(f32) -> ControlPointValue;
+        let cases: [(&[f32], Polynomial); 3] = [
+            (&[0.0, 1.0], line),
+            (&[0.0, 0.3, 1.0], quadratic),
+            (&[0.0, 0.25, 0.4, 1.0], quadratic),
+        ];
+        for (ts, polynomial) in cases {
+            let keys: Vec<_> = ts.iter().map(|&t| [polynomial(t); 3]).collect();
+            let spline = spline_through_keys(ts, &keys, SplineMode::HermiteBezier);
+            for phantom in [&spline.keys()[0], &spline.keys()[spline.len() - 1]] {
+                assert_close(phantom.value, polynomial(phantom.t));
+            }
+        }
+    }
+
+    #[test]
     fn hermite_single_point_phantoms_are_one_apart() {
         let hermite = control_points_to_spline(&points_with_t(&[0.0]), SplineMode::HermiteBezier);
         assert_eq!(key_ts(&hermite), [-1.0, 0.0, 1.0]);
@@ -1247,17 +1295,17 @@ mod tests {
     }
 
     #[test]
-    fn hermite_two_point_gradient_eases_at_the_ends() {
+    fn hermite_through_collinear_evenly_spaced_keys_is_linear() {
         let two = [
             ControlPoint::new_simple(ControlPointValue::new(0.0, 0.0, 0.2), 0.0),
             ControlPoint::new_simple(ControlPointValue::new(1.0, 1.0, 0.2), 1.0),
         ];
         let three = three_points();
         for (cps, x, sv) in [
-            (&two[..], 0.25, 0.203125),
+            (&two[..], 0.25, 0.25),
             (&two[..], 0.5, 0.5),
-            (&two[..], 0.75, 0.796875),
-            (&three[..], 0.25, 0.21875),
+            (&two[..], 0.75, 0.75),
+            (&three[..], 0.25, 0.25),
         ] {
             let spline = control_points_to_spline(cps, SplineMode::HermiteBezier);
             assert_sample_near(
