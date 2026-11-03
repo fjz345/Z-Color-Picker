@@ -23,7 +23,7 @@ T, the strip under the hue bar, is each point's position along the gradient: the
 The selected control point's color is shown in the top left, with its readout beside it; the H, S, V (L) and T fields under them show its values and take exact ones. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
 The rows under the fields show the selected color as Hex, sRGB (0-255), HSL, Oklab and OkLCh.
 Between the points, the gradient is blended in the Blend space (toolbar): the picker space itself, sRGB, Linear RGB, Oklab or OkLCh.
-The 3D view above the previewer draws the gradient curve, blended as the previewer shows it, and its control points inside a color space (view only).
+The 3D view above the previewer draws the gradient curve, blended as the previewer shows it, and its control points inside a color space, where the points and the selected point's Bezier handles can be dragged too.
 To create a new preset, click the preset combo box and select `<NEW>`
 
 ## Controls
@@ -37,7 +37,7 @@ To create a new preset, click the preset combo box and select `<NEW>`
 - Middle-click: Copy screen color as the selected format, on previewer, copies image to clipboard
 - H/S/V/T fields: drag, or click and type a value; Enter or Tab commits, Esc cancels. H is read-only for middle points under Auto hue, T for the first and last points; with Lock, S and V move every point
 - Click the log header (bottom of the window): expand or collapse the log; collapsed, it shows the last line; expanded, drag its top edge to resize it
-- 3D view: Drag-M1 orbits, scroll zooms, double-click resets the camera; hover a point or the curve for its hex color
+- 3D view: Drag-M1 on a point (or, in Bezier mode, on a handle of the selected point) moves it across the view, keeping its T; Drag-M1 elsewhere orbits; click a point to select it; scroll zooms, double-click resets the camera; hover a point, handle or the curve for its hex color
 - F12: debug window with the control point values
 - Esc: quit (ignored while typing, or while a popup, dialog or the Create Preset window is open)
 
@@ -74,6 +74,7 @@ Previewer:
 
 3D view:
 - Space: sRGB cube, Linear RGB cube, HSV cylinder, HSL cylinder, or Oklab (L up, a/b across, with the sRGB gamut outline)
+- Gamut: Opacity of the shaded gamut faces (0 hides them); the curve and points show through the near faces
 
 ## Presets
 

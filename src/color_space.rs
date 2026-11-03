@@ -216,7 +216,7 @@ fn linear_to_hsv(linear: [f32; 3]) -> [f32; 3] {
     [hue_turns(linear, max, chroma), chroma / max, value]
 }
 
-fn hsl_to_srgb([h, s, l]: [f32; 3]) -> [f32; 3] {
+pub fn hsl_to_srgb([h, s, l]: [f32; 3]) -> [f32; 3] {
     let amplitude = s * l.min(1.0 - l);
     [0.0, 8.0, 4.0].map(|offset: f32| {
         let k = (offset + 12.0 * h).rem_euclid(12.0);
