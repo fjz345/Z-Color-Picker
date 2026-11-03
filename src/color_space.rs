@@ -293,10 +293,14 @@ pub fn is_in_srgb_gamut(linear: [f32; 3]) -> bool {
 
 // Just past sRGB blue's hue a ray can leave sRGB and re-enter; this may return the inner edge.
 pub fn largest_scale_in_srgb(linear_at_scale: impl Fn(f32) -> [f32; 3]) -> f32 {
+    largest_fraction_where(|scale| is_in_srgb_gamut(linear_at_scale(scale)))
+}
+
+pub fn largest_fraction_where(is_inside: impl Fn(f32) -> bool) -> f32 {
     let (mut inside, mut outside) = (0.0, 1.0);
     for _ in 0..GAMUT_BISECTION_STEPS {
         let mid = 0.5 * (inside + outside);
-        if is_in_srgb_gamut(linear_at_scale(mid)) {
+        if is_inside(mid) {
             inside = mid;
         } else {
             outside = mid;

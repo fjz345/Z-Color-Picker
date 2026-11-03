@@ -89,8 +89,9 @@ pub fn clip_to_srgb_checkbox(ui: &mut Ui, picker_space: &mut PickerSpace) {
         egui::Checkbox::new(&mut clip_to_srgb, "Clip"),
     )
     .on_hover_text(
-        "Clip to sRGB: blank the colors outside sRGB, and pull every point you edit into \
-         sRGB by reducing its chroma. Turning it on pulls in every point once",
+        "Clip to sRGB: blank the colors outside sRGB, and pull every point and handle you edit \
+         into sRGB by reducing its chroma; under Lock the group stops at the edge instead. \
+         Turning it on pulls in every point and handle once",
     )
     .on_disabled_hover_text("Only OkLCh and Oklab reach outside sRGB");
     *picker_space = picker_space.with_clip_to_srgb(clip_to_srgb);
