@@ -2171,4 +2171,49 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn auto_hue_drag_under_lock_with_clip_stops_the_group_at_the_srgb_edge_keeping_its_shape() {
+        let clipping = PickerSpace::Oklch { clip_to_srgb: true };
+        let [first_hue, last_hue] = [0.3, 0.5];
+        let middle_hue = crate::math::hue_lerp(first_hue, last_hue, 0.5);
+        let original: Vec<ControlPoint> = [
+            (0.2, 0.5, first_hue, 0.0),
+            (0.15, 0.55, middle_hue, 0.5),
+            (0.1, 0.6, last_hue, 1.0),
+        ]
+        .map(|(s, v, h, t)| ControlPoint::new_simple(ControlPointValue::new(s, v, h), t))
+        .to_vec();
+        assert!(original.iter().all(|cp| cp.val().is_in_srgb(clipping)));
+        let mut pane = pane_with(&original, SplineMode::Linear, None);
+        pane.ctx.borrow_mut().picker_space = clipping;
+        pane.ctx
+            .borrow()
+            .z_color_picker
+            .borrow_mut()
+            .options
+            .is_curve_locked = true;
+        let egui_ctx = egui::Context::default();
+        let rect = view_rect(&pane_frame(&egui_ctx, &mut pane, Vec::new()));
+        let start = screen_pos(&pane, rect, *original[1].val());
+        let end = screen_pos(&pane, rect, ControlPointValue::new(0.6, 0.55, middle_hue));
+        drag(&egui_ctx, &mut pane, start, end);
+
+        let points = pane.ctx.borrow().control_points.clone();
+        let offsets = |points: &[ControlPoint]| {
+            [1, 2].map(|i| points[i].val().vec2() - points[0].val().vec2())
+        };
+        for (offset, before) in offsets(&points).into_iter().zip(offsets(&original)) {
+            assert!((offset - before).length() < 1e-5, "{points:?}");
+        }
+        assert!(points.iter().all(|cp| cp.val().is_in_srgb(clipping)));
+        let hues = points.iter().map(|cp| cp.val().h().to_bits());
+        assert!(hues.eq([first_hue, middle_hue, last_hue].map(f32::to_bits)));
+        assert!(points[0].val().s() > 0.2, "{points:?}");
+        let is_at_edge = |cp: &ControlPoint| {
+            let [s, v, h] = cp.val().val;
+            !ControlPointValue::new(s + 1e-3, v, h).is_in_srgb(clipping)
+        };
+        assert!(points.iter().any(is_at_edge), "{points:?}");
+    }
 }
