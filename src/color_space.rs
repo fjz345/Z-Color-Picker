@@ -92,6 +92,10 @@ pub fn srgb_to_linear(srgb: [f32; 3]) -> [f32; 3] {
     srgb.map(ecolor::linear_from_gamma)
 }
 
+pub fn linear_to_srgb(linear: [f32; 3]) -> [f32; 3] {
+    linear.map(ecolor::gamma_from_linear)
+}
+
 pub fn linear_to_oklab(linear: [f32; 3]) -> [f32; 3] {
     let lms = mul(&LINEAR_TO_LMS, linear);
     mul(&LMS_CBRT_TO_OKLAB, lms.map(f32::cbrt))
@@ -107,6 +111,17 @@ pub fn oklab_to_oklch([l, a, b]: [f32; 3]) -> [f32; 3] {
     [l, chroma, hue]
 }
 
+fn hue_turns([r, g, b]: [f32; 3], max: f32, chroma: f32) -> f32 {
+    let hue_sector = if max == r {
+        (g - b) / chroma
+    } else if max == g {
+        (b - r) / chroma + 2.0
+    } else {
+        (r - g) / chroma + 4.0
+    };
+    wrap_turns(hue_sector / 6.0)
+}
+
 pub fn srgb_to_hsl([r, g, b]: [f32; 3]) -> [f32; 3] {
     let max = r.max(g).max(b);
     let min = r.min(g).min(b);
@@ -119,19 +134,13 @@ pub fn srgb_to_hsl([r, g, b]: [f32; 3]) -> [f32; 3] {
     [hue_turns([r, g, b], max, chroma), saturation, lightness]
 }
 
-fn hue_turns([r, g, b]: [f32; 3], max: f32, chroma: f32) -> f32 {
-    let hue_sector = if max == r {
-        (g - b) / chroma
-    } else if max == g {
-        (b - r) / chroma + 2.0
-    } else {
-        (r - g) / chroma + 4.0
-    };
-    wrap_turns(hue_sector / 6.0)
-}
-
-pub fn linear_to_srgb(linear: [f32; 3]) -> [f32; 3] {
-    linear.map(ecolor::gamma_from_linear)
+pub fn srgb_to_hsv([r, g, b]: [f32; 3]) -> [f32; 3] {
+    let max = r.max(g).max(b);
+    let chroma = max - r.min(g).min(b);
+    if chroma < ACHROMATIC_CHROMA {
+        return [0.0, 0.0, max];
+    }
+    [hue_turns([r, g, b], max, chroma), chroma / max, max]
 }
 
 pub fn oklab_to_linear(lab: [f32; 3]) -> [f32; 3] {
@@ -538,6 +547,13 @@ mod tests {
     }
 
     #[test]
+    fn linear_to_srgb_inverts_srgb_to_linear() {
+        for srgb in [[0.0, 0.5, 1.0], [0.02, 0.3, 0.9]] {
+            assert_close(linear_to_srgb(srgb_to_linear(srgb)), srgb, 1e-6);
+        }
+    }
+
+    #[test]
     fn oklab_of_white_is_one_zero_zero() {
         assert_close(linear_to_oklab([1.0; 3]), [1.0, 0.0, 0.0], 1e-4);
     }
@@ -693,6 +709,21 @@ mod tests {
     }
 
     #[test]
+    fn hsv_of_known_colors() {
+        assert_close(srgb_to_hsv(srgb_u8([255, 0, 0])), [0.0, 1.0, 1.0], 1e-6);
+        assert_close(
+            srgb_to_hsv(srgb_u8([51, 102, 153])),
+            [210.0 / 360.0, 2.0 / 3.0, 0.6],
+            1e-6,
+        );
+        assert_close(
+            srgb_to_hsv(srgb_u8([255, 0, 255])),
+            [300.0 / 360.0, 1.0, 1.0],
+            1e-6,
+        );
+    }
+
+    #[test]
     fn oklch_to_oklab_inverts_oklab_to_oklch() {
         let lab = oklab_of_srgb([200, 40, 90]);
         assert_close(oklch_to_oklab(oklab_to_oklch(lab)), lab, 1e-6);
@@ -798,5 +829,12 @@ mod tests {
         let [r, g, b] = picker_to_linear(PickerSpace::Hsv, hsv);
         assert_eq!([r, g, b, 1.0], expected.to_array());
         assert_close(linear_to_picker(PickerSpace::Hsv, [r, g, b]), hsv, 1e-6);
+    }
+
+    #[test]
+    fn hsv_of_grays_has_zero_hue_and_saturation() {
+        assert_eq!(srgb_to_hsv([0.0; 3]), [0.0; 3]);
+        assert_eq!(srgb_to_hsv([1.0; 3]), [0.0, 0.0, 1.0]);
+        assert_eq!(srgb_to_hsv([0.5; 3]), [0.0, 0.0, 0.5]);
     }
 }

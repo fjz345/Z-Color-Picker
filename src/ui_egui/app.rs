@@ -31,10 +31,11 @@ use crate::{
         debug_windows::DebugWindowControlPoints,
         panes::{
             copy_format_bar_ui, preset_bar_ui, ColorPickerOptionsPane, ColorPickerPane, Pane,
-            PreviewerPane, TreeBehavior, ZAppPane,
+            PreviewerPane, TreeBehavior, View3dPane, ZAppPane,
         },
         previewer::{PreviewerUiResponses, ZPreviewer},
         ui_common::ContentWindow,
+        view_3d::View3d,
     },
 };
 use eframe::epaint::{Pos2, Vec2};
@@ -341,21 +342,33 @@ impl ZApp {
             title: None,
             ctx: ctx.clone(),
         };
+        let pane_view_3d = View3dPane {
+            title: Some("3D view".to_string()),
+            ctx: ctx.clone(),
+            view: View3d::default(),
+        };
 
         let tile_color_picker = tiles.insert_pane(Pane::ColorPicker(pane_color_picker));
         let tile_options = tiles.insert_pane(Pane::ColorPickerOptionsPane(pane_options));
+        let tile_view_3d = tiles.insert_pane(Pane::View3d(pane_view_3d));
         let tile_previewer = tiles.insert_pane(Pane::Previewer(pane_previewer));
 
         const PICKER_FRACTION: f32 = 0.85;
         const PICKER_COLUMN_FRACTION: f32 = 0.3;
+        const VIEW_3D_FRACTION: f32 = 0.5;
         let vertical_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
             egui_tiles::LinearDir::Vertical,
             [tile_color_picker, tile_options],
             PICKER_FRACTION,
         ));
+        let right_column_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
+            egui_tiles::LinearDir::Vertical,
+            [tile_view_3d, tile_previewer],
+            VIEW_3D_FRACTION,
+        ));
         let master_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
             egui_tiles::LinearDir::Horizontal,
-            [vertical_tile, tile_previewer],
+            [vertical_tile, right_column_tile],
             PICKER_COLUMN_FRACTION,
         ));
         tabs.push(master_tile);
@@ -1275,7 +1288,13 @@ mod tests {
             restored_rects.iter().all(Option::is_some),
             "{restored_rects:?}"
         );
-        assert_eq!(restored_rects, laid_out_pane_rects(&mut test_app()));
+        let mut default_app = test_app();
+        let mut expected = laid_out_pane_rects(&mut default_app);
+        let view_3d = pane_rect(&default_app.tree, |pane| matches!(pane, Pane::View3d(_)));
+        expected[2] = view_3d
+            .zip(expected[2])
+            .map(|(view_3d, previewer)| view_3d.union(previewer));
+        assert_eq!(restored_rects, expected);
     }
 
     #[test]

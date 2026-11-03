@@ -15,3 +15,4 @@ pub mod panes;
 pub mod previewer;
 pub mod tangents;
 pub mod ui_common;
+pub mod view_3d;
