@@ -201,6 +201,31 @@ pub fn blend_to_linear(space: BlendSpace, blended: [f32; 3]) -> [f32; 3] {
     }
 }
 
+const GAMUT_BISECTION_STEPS: usize = 24;
+
+fn is_in_srgb_gamut(linear: [f32; 3]) -> bool {
+    linear.iter().all(|c| (0.0..=1.0).contains(c))
+}
+
+pub fn map_into_srgb_gamut(linear: [f32; 3]) -> [f32; 3] {
+    if is_in_srgb_gamut(linear) {
+        return linear;
+    }
+    let [l, a, b] = linear_to_oklab(linear);
+    let l = l.clamp(0.0, 1.0);
+    let with_chroma_scaled = |scale: f32| oklab_to_linear([l, scale * a, scale * b]);
+    let (mut inside, mut outside) = (0.0, 1.0);
+    for _ in 0..GAMUT_BISECTION_STEPS {
+        let mid = 0.5 * (inside + outside);
+        if is_in_srgb_gamut(with_chroma_scaled(mid)) {
+            inside = mid;
+        } else {
+            outside = mid;
+        }
+    }
+    with_chroma_scaled(inside)
+}
+
 // ecolor's HsvaGamma: HSV over linear RGB, with only V gamma-encoded.
 fn hsv_to_linear([h, s, v]: [f32; 3]) -> [f32; 3] {
     ecolor::rgb_from_hsv((h, s, ecolor::linear_from_gamma(v)))
@@ -860,6 +885,85 @@ mod tests {
             gray,
             1e-6,
         );
+    }
+
+    fn out_of_gamut_oklch() -> Vec<[f32; 3]> {
+        let mut colors = Vec::new();
+        for l in [0.05, 0.2, 0.45, 0.62, 0.8, 0.93] {
+            for chroma in [0.33, 0.6] {
+                for hue in (0..24).map(|i| i as f32 / 24.0) {
+                    colors.push([l, chroma, hue]);
+                }
+            }
+        }
+        colors
+    }
+
+    fn assert_in_unit_cube(linear: [f32; 3], context: impl std::fmt::Debug) {
+        assert!(
+            linear.iter().all(|c| (0.0..=1.0).contains(c)),
+            "{context:?}: {linear:?}"
+        );
+    }
+
+    #[test]
+    fn gamut_map_keeps_srgb_colors_bit_for_bit() {
+        for linear in linear_grid() {
+            assert_eq!(map_into_srgb_gamut(linear), linear);
+        }
+    }
+
+    #[test]
+    fn gamut_map_reduces_chroma_onto_the_srgb_surface_at_the_same_lightness_and_hue() {
+        for lch in out_of_gamut_oklch() {
+            let unmapped = oklab_to_linear(oklch_to_oklab(lch));
+            assert!(!unmapped.iter().all(|c| (0.0..=1.0).contains(c)), "{lch:?}");
+            let [unmapped_l, unmapped_chroma, unmapped_hue] =
+                oklab_to_oklch(linear_to_oklab(unmapped));
+            let mapped = map_into_srgb_gamut(unmapped);
+            assert_in_unit_cube(mapped, lch);
+            let [l, chroma, hue] = oklab_to_oklch(linear_to_oklab(mapped));
+            assert!((l - unmapped_l).abs() < 1e-4, "{lch:?}: L {l}");
+            assert!(chroma < unmapped_chroma, "{lch:?}: chroma {chroma}");
+            assert!(
+                crate::math::hue_abs_distance(hue, unmapped_hue) < 1e-3,
+                "{lch:?}: hue {hue}"
+            );
+            let on_surface = mapped.iter().any(|c| !(1e-5..=1.0 - 1e-5).contains(c));
+            assert!(on_surface, "{lch:?}: {mapped:?}");
+        }
+    }
+
+    #[test]
+    fn gamut_map_sends_lightness_above_one_to_white_and_below_zero_to_black() {
+        for linear in [[1.5; 3], [2.0, 1.5, 1.0], [1.0, 1.0, 1.2]] {
+            let mapped = map_into_srgb_gamut(linear);
+            assert_in_unit_cube(mapped, linear);
+            assert_close(mapped, [1.0; 3], 1e-6);
+        }
+        for linear in [[-0.2; 3], [-0.5, -0.1, 0.0], [0.0, 0.0, -1e-3]] {
+            let mapped = map_into_srgb_gamut(linear);
+            assert_in_unit_cube(mapped, linear);
+            assert_close(mapped, [0.0; 3], 1e-6);
+        }
+    }
+
+    #[test]
+    fn gamut_map_of_grays_at_lightness_one_is_white_inside_the_cube() {
+        for l in [1.0, 1.0 + 1e-6, 0.999_999] {
+            let gray = oklab_to_linear([l, 0.0, 0.0]);
+            let mapped = map_into_srgb_gamut(gray);
+            assert_in_unit_cube(mapped, l);
+            assert_close(mapped, [1.0; 3], 1e-5);
+        }
+    }
+
+    #[test]
+    fn gamut_map_of_a_mapped_color_is_itself() {
+        for lch in out_of_gamut_oklch() {
+            let mapped = map_into_srgb_gamut(oklab_to_linear(oklch_to_oklab(lch)));
+            assert_eq!(map_into_srgb_gamut(mapped), mapped, "{lch:?}");
+        }
     }
 
     #[test]

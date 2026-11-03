@@ -5,8 +5,8 @@ use splines::Spline;
 
 use crate::{
     color_space::{
-        blend_to_linear, linear_to_blend, linear_to_color32, linear_to_picker, BlendSpace,
-        PickerSpace, ACHROMATIC_CHROMA,
+        blend_to_linear, linear_to_blend, linear_to_color32, linear_to_picker, map_into_srgb_gamut,
+        BlendSpace, PickerSpace, ACHROMATIC_CHROMA,
     },
     common::SplineMode,
     datatypes::control_point::{ControlPoint, ControlPointValue},
@@ -106,7 +106,7 @@ impl Gradient {
                 sample_spline_normalized(spline, self.spline_mode, x)?.0,
             ),
         };
-        Some(linear.map(|c| c.clamp(0.0, 1.0)))
+        Some(map_into_srgb_gamut(linear))
     }
 
     pub fn color_at(&self, x: f32) -> Option<Color32> {
@@ -335,6 +335,38 @@ mod tests {
                 assert!(hue_abs_distance(hue, orange_hue) < 1e-3, "at {x}: {hue}");
             }
         }
+    }
+
+    #[test]
+    fn oklch_samples_outside_srgb_keep_their_oklch_lightness_and_hue() {
+        let green = point(1.0, 1.0, 1.0 / 3.0, 0.0);
+        let blue = point(1.0, 1.0, 2.0 / 3.0, 1.0);
+        let [from, to] = [&green, &blue].map(|cp| oklch_of(cp.val().linear(PickerSpace::Hsv)));
+        let unmapped = [
+            0.5 * (from[0] + to[0]),
+            0.5 * (from[1] + to[1]),
+            from[2] + 0.5 * shortest_hue_delta(from[2], to[2]),
+        ];
+        let clipped =
+            oklch_of(blend_to_linear(BlendSpace::Oklch, unmapped).map(|c| c.clamp(0.0, 1.0)));
+        assert!(
+            hue_abs_distance(clipped[2], unmapped[2]) > 0.01,
+            "{clipped:?} {unmapped:?}"
+        );
+        let gradient = Gradient::new(
+            &[green, blue],
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Oklch,
+        );
+        let mapped = gradient.linear_at(0.5).unwrap();
+        assert!(mapped.iter().all(|c| (0.0..=1.0).contains(c)), "{mapped:?}");
+        let [l, _, hue] = oklch_of(mapped);
+        assert!((l - unmapped[0]).abs() < 1e-4, "{l} vs {unmapped:?}");
+        assert!(
+            hue_abs_distance(hue, unmapped[2]) < 1e-3,
+            "{hue} vs {unmapped:?}"
+        );
     }
 
     #[test]

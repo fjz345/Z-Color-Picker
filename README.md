@@ -47,7 +47,7 @@ Groups, left to right: Preset, Curve (Spline, Blend, Flip) and Copy as; Log at t
 
 - Preset: Pick a preset, then Save, Rename... (opens a name field; Enter renames), Delete, Auto-save (rewrite the selected preset file after every edit). A failed save shows its error at the end of the row
 - Spline: Linear, Bezier (drag the tangent handles) or Hermite (Catmull-Rom, automatic tangents, shown dashed on the selected point)
-- Blend: Color space the gradient is interpolated in: Picker (the square's coordinates and hue, default), sRGB, Linear RGB, Oklab, or OkLCh (hue takes the short way around; a gray takes its neighbour's hue). The points keep their colors and the ribbon on the square follows the blended colors; it is saved with the preset. Any blend but Picker turns off the comb and Auto comb
+- Blend: Color space the gradient is interpolated in: Picker (the square's coordinates and hue, default), sRGB, Linear RGB, Oklab, or OkLCh (hue takes the short way around; a gray takes its neighbour's hue). The points keep their colors and the ribbon on the square follows the blended colors; a blended color outside sRGB loses chroma but keeps its lightness and hue; it is saved with the preset. Any blend but Picker turns off the comb and Auto comb
 - Flip: Reverse the control point order (T is mirrored)
 - Copy as: Text format for a copied color, including CSS `hsl()`, `oklab()` and `oklch()`; previewer strips are copied as images
 - Log (right end): Expand or collapse the log drawer (highlighted while expanded); collapsed by default
