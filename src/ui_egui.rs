@@ -2,6 +2,7 @@ pub mod app;
 pub mod auto_comb;
 pub mod clipboard;
 pub mod color_picker;
+pub mod color_readout;
 pub mod content_windows;
 pub mod control_points;
 pub mod curvature;

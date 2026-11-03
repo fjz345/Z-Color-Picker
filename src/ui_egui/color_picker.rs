@@ -5,6 +5,7 @@ use crate::{
     ui_egui::{
         app::ZColorPickerOptions,
         auto_comb::apply_auto_comb,
+        color_readout::{color_readout, color_readout_height},
         control_points::{
             control_point_outline, control_point_pos, drag_grab_offset_x, drag_t,
             gradient_color_at, insert_point, normalize_t, remove_point, t_at_pointer,
@@ -42,7 +43,7 @@ pub struct MainColorPickerCtx<'a> {
     pub dragging_index: &'a mut Option<usize>,
     pub dragging_tangent: &'a mut Option<(usize, usize)>,
     pub control_point_right_clicked: &'a mut Option<usize>,
-    pub copy_request: &'a mut Option<Pos2>,
+    pub copy_request: &'a mut Option<(Pos2, ColorStringCopy)>,
     pub is_hue_middle_interpolated: bool,
     pub is_curve_locked: bool,
     pub is_window_lock: bool,
@@ -69,11 +70,13 @@ impl<'a> ZColorPicker<'a> {
         let spacing = ui.spacing();
         let strip_ratio = spacing.interact_size.y / spacing.slider_width;
         let readout_and_inspector_height = 2.0 * spacing.interact_size.y;
-        // Must match main_color_picker's stack inside the margins: swatch, readout, inspector, hue, T, square, and the overlays' add_space(8.0).
-        let gap_count = 5.0;
+        // Must match main_color_picker's stack inside the margins: swatch, readout, inspector, color readout, hue, T, square, and the overlays' add_space(8.0).
+        let gap_count = 6.0;
         let overlay_space = 2.0 * 8.0;
-        let fixed_height =
-            readout_and_inspector_height + gap_count * spacing.item_spacing.y + overlay_space;
+        let fixed_height = readout_and_inspector_height
+            + color_readout_height(spacing)
+            + gap_count * spacing.item_spacing.y
+            + overlay_space;
         let (side, margin) = picker_layout(ui.available_size(), strip_ratio, fixed_height);
         let desired_size = vec2(side, side);
         if let Some(last_modified_index) = *self.ctx.last_modifying_point_index {
@@ -130,7 +133,7 @@ pub struct ZColorPickerWrapper {
     pub right_clicked_on_index: Option<usize>,
     pub options: ZColorPickerOptions,
     #[serde(skip)]
-    pub copy_request: Option<Pos2>,
+    pub copy_request: Option<(Pos2, ColorStringCopy)>,
     #[serde(skip)]
     pub dragging_tangent: Option<(usize, usize)>,
     #[serde(skip)]
@@ -494,7 +497,7 @@ pub fn main_color_picker(
         if let Some(anchor) =
             selected_color_readout(ui, selected_color.map(Color32::from), ctx.color_copy_format)
         {
-            *ctx.copy_request = Some(anchor);
+            *ctx.copy_request = Some((anchor, ctx.color_copy_format));
         }
         point_inspector(
             ui,
@@ -506,6 +509,9 @@ pub fn main_color_picker(
                 is_window_lock: ctx.is_window_lock,
             },
         );
+        if let Some(request) = color_readout(ui, selected_color.map(Color32::from)) {
+            *ctx.copy_request = Some(request);
+        }
 
         let mut color_to_show = selected_color.unwrap_or(HsvaGamma {
             h: 0.0,

@@ -554,7 +554,7 @@ impl ZApp {
     }
 
     fn handle_selected_color_copy(&mut self, ctx: &egui::Context, input_blocked: bool) {
-        let clicked_anchor = self
+        let clicked_request = self
             .app_ctx
             .borrow()
             .z_color_picker
@@ -563,13 +563,16 @@ impl ZApp {
             .take();
         let shortcut_blocked =
             input_blocked || egui::text_selection::LabelSelectionState::load(ctx).has_selection();
-        let shortcut_anchor = ctx
+        let copy_format = self.app_ctx.borrow().color_copy_format;
+        let shortcut_request = ctx
             .input(|i| is_copy_shortcut(&i.events, shortcut_blocked))
             .then(|| {
-                ctx.input(|i| i.pointer.hover_pos())
-                    .unwrap_or(ctx.screen_rect().center())
+                let anchor = ctx
+                    .input(|i| i.pointer.hover_pos())
+                    .unwrap_or(ctx.screen_rect().center());
+                (anchor, copy_format)
             });
-        let Some(anchor) = clicked_anchor.or(shortcut_anchor) else {
+        let Some((anchor, format)) = clicked_request.or(shortcut_request) else {
             return;
         };
 
@@ -579,7 +582,7 @@ impl ZApp {
             selected_color_payload(
                 &app_ctx.control_points,
                 picker.dragging_index.or(picker.last_modifying_point_index),
-                app_ctx.color_copy_format,
+                format,
             )
         };
         let Some(payload) = payload else {
