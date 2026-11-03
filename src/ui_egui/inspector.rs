@@ -4,7 +4,7 @@ use eframe::egui::{DragValue, Ui};
 use eframe::epaint::Vec2;
 
 use crate::{
-    color_space::PickerSpace,
+    color_space::{ab_to_square, square_to_ab, PickerSpace, OK_SQUARE_CHROMA},
     datatypes::control_point::ControlPoint,
     ui_egui::{
         color_picker::{
@@ -40,42 +40,45 @@ impl InspectorField {
         }
     }
 
-    fn suffix(self, picker_space: PickerSpace) -> &'static str {
+    fn unit(self, picker_space: PickerSpace) -> FieldUnit {
+        let is_oklab = !picker_space.is_z_hue();
+        let is_oklch = matches!(picker_space, PickerSpace::Oklch { .. });
         match self {
-            Self::H if picker_space.is_z_hue() => "°",
-            Self::H | Self::S | Self::V => "%",
-            Self::T => "",
+            Self::H if is_oklab => FieldUnit::Lightness,
+            Self::H => FieldUnit::Degrees,
+            Self::S | Self::V if is_oklab => FieldUnit::OklabAxis,
+            Self::S if is_oklch => FieldUnit::Chroma,
+            Self::V if is_oklch => FieldUnit::Lightness,
+            Self::S | Self::V => FieldUnit::Percent,
+            Self::T => FieldUnit::Position,
         }
     }
 
-    fn speed(self) -> f32 {
-        match self {
-            Self::H => 1.0,
-            Self::S | Self::V => 0.5,
-            Self::T => 0.005,
-        }
-    }
-
-    fn max_decimals(self) -> usize {
-        match self {
-            Self::H | Self::S | Self::V => 1,
-            Self::T => 3,
-        }
+    fn speed(self, picker_space: PickerSpace) -> f32 {
+        let stored_per_point = match self {
+            Self::H if picker_space.is_z_hue() => 1.0 / 360.0,
+            Self::H => 0.01,
+            Self::S | Self::V | Self::T => 0.005,
+        };
+        let full_range = self.unit(picker_space).full_range();
+        stored_per_point * (full_range.end() - full_range.start())
     }
 
     fn hint(self, picker_space: PickerSpace) -> &'static str {
         let is_oklab = !picker_space.is_z_hue();
         match self {
-            Self::H if is_oklab => "Oklab lightness: the point's place on the bar",
+            Self::H if is_oklab => {
+                "Oklab lightness, 0 (black) to 1 (white): the point's place on the bar"
+            }
             Self::H => "Hue in degrees",
             Self::S if is_oklab => {
-                "a: the point's x in the square, green at 0% to red at 100%; 50% is gray"
+                "a: the point's x in the square, green below 0 to red above 0; 0 is gray"
             }
             Self::V if is_oklab => {
-                "b: the point's y in the square, blue at 0% to yellow at 100%; 50% is gray"
+                "b: the point's y in the square, blue below 0 to yellow above 0; 0 is gray"
             }
             Self::S if matches!(picker_space, PickerSpace::Oklch { .. }) => {
-                "Chroma: the point's x in the square; 100% is chroma 0.33"
+                "Chroma: the point's x in the square, 0 (gray) at its left edge"
             }
             Self::S => {
                 "Saturation: the point's x in the square. The HSV readout derives S from the \
@@ -84,6 +87,58 @@ impl InspectorField {
             Self::V if picker_space.is_y_lightness() => "Lightness: the point's y in the square",
             Self::V => "Value: the point's y in the square",
             Self::T => "T: the point's position along the gradient, between its neighbours",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FieldUnit {
+    Degrees,
+    Percent,
+    Position,
+    Lightness,
+    Chroma,
+    OklabAxis,
+}
+
+impl FieldUnit {
+    fn shown(self, stored: f32) -> f32 {
+        match self {
+            Self::Degrees => stored * 360.0,
+            Self::Percent => stored * 100.0,
+            Self::Position | Self::Lightness => stored,
+            Self::Chroma => stored * OK_SQUARE_CHROMA,
+            Self::OklabAxis => square_to_ab(stored),
+        }
+    }
+
+    fn stored(self, shown: f32) -> f32 {
+        match self {
+            Self::Degrees => shown / 360.0,
+            Self::Percent => shown / 100.0,
+            Self::Position | Self::Lightness => shown,
+            Self::Chroma => shown / OK_SQUARE_CHROMA,
+            Self::OklabAxis => ab_to_square(shown),
+        }
+    }
+
+    fn full_range(self) -> RangeInclusive<f32> {
+        self.shown(0.0)..=self.shown(1.0)
+    }
+
+    fn suffix(self) -> &'static str {
+        match self {
+            Self::Degrees => "°",
+            Self::Percent => "%",
+            Self::Position | Self::Lightness | Self::Chroma | Self::OklabAxis => "",
+        }
+    }
+
+    fn decimals(self) -> RangeInclusive<usize> {
+        match self {
+            Self::Degrees | Self::Percent => 0..=1,
+            Self::Position => 0..=3,
+            Self::Lightness | Self::Chroma | Self::OklabAxis => 3..=3,
         }
     }
 }
@@ -123,10 +178,14 @@ pub fn inspector_fields(
     let val = cp.val();
     let t = *cp.t();
     let is_middle = index != 0 && index + 1 != points.len();
-    let sv_range = if opts.is_window_lock {
-        0.0..=100.0
-    } else {
-        f32::NEG_INFINITY..=f32::INFINITY
+    let [h_unit, s_unit, v_unit] = [InspectorField::H, InspectorField::S, InspectorField::V]
+        .map(|f| f.unit(opts.picker_space));
+    let sv_range = |unit: FieldUnit| {
+        if opts.is_window_lock {
+            unit.full_range()
+        } else {
+            f32::NEG_INFINITY..=f32::INFINITY
+        }
     };
     let t_state = match t_drag_bounds(points, index) {
         Some((lo, hi)) => FieldState {
@@ -144,22 +203,21 @@ pub fn inspector_fields(
             }),
         },
     };
-    let z_full_scale = z_full_scale(opts.picker_space);
     [
         FieldState {
-            value: Some(opts.picker_space.z_on_bar(val[2]) * z_full_scale),
-            range: 0.0..=z_full_scale,
+            value: Some(h_unit.shown(opts.picker_space.z_on_bar(val[2]))),
+            range: h_unit.full_range(),
             disabled_reason: (opts.is_hue_middle_interpolated && is_middle)
                 .then_some(AUTO_HUE_HINT),
         },
         FieldState {
-            value: Some(val[0] * 100.0),
-            range: sv_range.clone(),
+            value: Some(s_unit.shown(val[0])),
+            range: sv_range(s_unit),
             disabled_reason: None,
         },
         FieldState {
-            value: Some(val[1] * 100.0),
-            range: sv_range,
+            value: Some(v_unit.shown(val[1])),
+            range: sv_range(v_unit),
             disabled_reason: None,
         },
         t_state,
@@ -176,14 +234,15 @@ pub fn apply_inspector_edit(
     if !value.is_finite() {
         return;
     }
+    let stored = field.unit(opts.picker_space).stored(value);
     let z = &mut points[index].val_mut().val[2];
     match field {
         InspectorField::H if opts.picker_space.is_z_hue() => {
-            *z = z.floor() + (value / 360.0).clamp(0.0, HUE_DRAG_MAX_FRACTION);
+            *z = z.floor() + stored.clamp(0.0, HUE_DRAG_MAX_FRACTION);
         }
-        InspectorField::H => *z = (value / 100.0).clamp(0.0, 1.0),
-        InspectorField::S => set_sv(points, index, 0, value / 100.0, opts),
-        InspectorField::V => set_sv(points, index, 1, value / 100.0, opts),
+        InspectorField::H => *z = stored.clamp(0.0, 1.0),
+        InspectorField::S => set_sv(points, index, 0, stored, opts),
+        InspectorField::V => set_sv(points, index, 1, stored, opts),
         InspectorField::T => {
             drag_t(points, index, value);
             return;
@@ -196,14 +255,6 @@ pub fn apply_inspector_edit(
         &mut points[index..=index]
     };
     clip_points_to_srgb(moved, opts.picker_space);
-}
-
-fn z_full_scale(picker_space: PickerSpace) -> f32 {
-    if picker_space.is_z_hue() {
-        360.0
-    } else {
-        100.0
-    }
 }
 
 fn set_sv(
@@ -241,15 +292,18 @@ pub fn point_inspector(
         ui.horizontal(|ui| {
             for (field, state) in InspectorField::ALL.into_iter().zip(states) {
                 ui.label(field.label(opts.picker_space));
+                let unit = field.unit(opts.picker_space);
+                let max_decimals = *unit.decimals().end();
                 let mut value = state.value.unwrap_or_default();
                 let drag = DragValue::new(&mut value)
                     .range(state.range)
-                    .speed(field.speed())
-                    .max_decimals(field.max_decimals())
+                    .speed(field.speed(opts.picker_space))
+                    .min_decimals(*unit.decimals().start())
+                    .max_decimals(max_decimals)
                     .clamp_existing_to_range(false)
                     .update_while_editing(false);
                 let drag = match state.value {
-                    Some(_) => drag.suffix(field.suffix(opts.picker_space)),
+                    Some(_) => drag.suffix(unit.suffix()),
                     None => drag.custom_formatter(|_, _| "-".to_owned()),
                 };
                 let mut response = ui
@@ -261,7 +315,7 @@ pub fn point_inspector(
                 let is_edited = response.dragged()
                     || state
                         .value
-                        .is_some_and(|shown| !is_shown_value(value, shown, field.max_decimals()));
+                        .is_some_and(|shown| !is_shown_value(value, shown, max_decimals));
                 if let (true, true, Some(index)) = (response.changed(), is_edited, selected) {
                     apply_inspector_edit(points, index, field, value, opts);
                 }
@@ -460,6 +514,16 @@ mod tests {
         selected: Option<usize>,
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
+        inspector_frame_in(ctx, points, selected, FREE, events)
+    }
+
+    fn inspector_frame_in(
+        ctx: &egui::Context,
+        points: &mut [ControlPoint],
+        selected: Option<usize>,
+        opts: InspectorOptions,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
         let input = egui::RawInput {
             screen_rect: Some(SCREEN),
             events,
@@ -467,7 +531,7 @@ mod tests {
         };
         ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                point_inspector(ui, points, selected, FREE);
+                point_inspector(ui, points, selected, opts);
             });
         })
     }
@@ -480,29 +544,159 @@ mod tests {
     };
 
     #[test]
-    fn oklab_bar_field_is_lightness_in_percent() {
+    fn oklab_bar_field_is_lightness_from_0_to_1() {
         let opts = InspectorOptions {
             picker_space: OKLAB,
             ..FREE
         };
         let mut points = points_at(&[(0.5, 0.5, 0.25, 0.0), (0.5, 0.5, 1.4, 1.0)]);
-        assert_eq!(state(&points, 0, opts, H).value, Some(25.0));
-        assert_eq!(state(&points, 0, opts, H).range, 0.0..=100.0);
-        assert_eq!(state(&points, 1, opts, H).value, Some(100.0));
+        assert_eq!(state(&points, 0, opts, H).value, Some(0.25));
+        assert_eq!(state(&points, 0, opts, H).range, 0.0..=1.0);
+        assert_eq!(state(&points, 1, opts, H).value, Some(1.0));
 
-        apply_inspector_edit(&mut points, 0, H, 42.0, opts);
+        apply_inspector_edit(&mut points, 0, H, 0.42, opts);
         assert_eq!(points[0].val()[2], 0.42);
-        apply_inspector_edit(&mut points, 0, H, 140.0, opts);
+        apply_inspector_edit(&mut points, 0, H, 1.4, opts);
         assert_eq!(points[0].val()[2], 1.0);
+    }
+
+    fn in_space(picker_space: PickerSpace, is_window_lock: bool) -> InspectorOptions {
+        InspectorOptions {
+            picker_space,
+            is_window_lock,
+            ..FREE
+        }
+    }
+
+    #[test]
+    fn oklch_and_oklab_fields_are_absolute_chroma_a_b_and_lightness() {
+        let points = points_at(&[(0.3, 0.6, 0.4, 0.0), (0.5, 0.5, 0.5, 1.0)]);
+        let ab = -OK_SQUARE_CHROMA..=OK_SQUARE_CHROMA;
+        let cases = [
+            (OKLCH, S, 0.3 * OK_SQUARE_CHROMA, 0.0..=OK_SQUARE_CHROMA),
+            (OKLCH, V, 0.6, 0.0..=1.0),
+            (OKLAB, H, 0.4, 0.0..=1.0),
+            (OKLAB, S, -0.4 * OK_SQUARE_CHROMA, ab.clone()),
+            (OKLAB, V, 0.2 * OK_SQUARE_CHROMA, ab),
+        ];
+        for (space, field, value, clamped_range) in cases {
+            let shown = state(&points, 0, in_space(space, true), field);
+            assert!(
+                (shown.value.unwrap() - value).abs() < 1e-6,
+                "{space:?} {field:?}: {shown:?}"
+            );
+            assert_eq!(shown.range, clamped_range, "{space:?} {field:?}");
+            if field != H {
+                let free_range = state(&points, 0, in_space(space, false), field).range;
+                assert_eq!(free_range, f32::NEG_INFINITY..=f32::INFINITY);
+            }
+        }
+        let hue = state(&points, 0, in_space(OKLCH, true), H);
+        assert_eq!(hue.value, Some(144.0));
+    }
+
+    fn painted_texts(output: &egui::FullOutput) -> Vec<&str> {
+        (output.shapes.iter())
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn oklch_and_oklab_fields_show_three_decimals() {
+        let oklch = ["H", "144°", "C", "0.099", "L", "0.600", "T", "0.000"];
+        let oklab = ["L", "0.400", "a", "-0.132", "b", "0.066", "T", "0.000"];
+        for (space, expected) in [(OKLCH, oklch), (OKLAB, oklab)] {
+            let mut points = points_at(&[(0.3, 0.6, 0.4, 0.0), (0.5, 0.5, 0.5, 1.0)]);
+            let output = inspector_frame_in(
+                &egui::Context::default(),
+                &mut points,
+                Some(0),
+                in_space(space, false),
+                Vec::new(),
+            );
+            assert_eq!(painted_texts(&output), expected, "{space:?}");
+        }
+    }
+
+    fn label_pos(output: &egui::FullOutput, label: &str) -> Pos2 {
+        let rect = output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{label:?} label not painted"));
+        rect.right_center() + vec2(12.0, 0.0)
+    }
+
+    fn commit_text(
+        points: &mut [ControlPoint],
+        opts: InspectorOptions,
+        label: &str,
+        text: Option<&str>,
+    ) -> egui::FullOutput {
+        let ctx = egui::Context::default();
+        let output = inspector_frame_in(&ctx, points, Some(0), opts, Vec::new());
+        for events in primary_click(label_pos(&output, label)) {
+            inspector_frame_in(&ctx, points, Some(0), opts, events);
+        }
+        let typed = text.map(|text| egui::Event::Text(text.into()));
+        let enter = key_press(egui::Key::Enter);
+        inspector_frame_in(&ctx, points, Some(0), opts, typed.into_iter().collect());
+        inspector_frame_in(&ctx, points, Some(0), opts, vec![enter]);
+        inspector_frame_in(&ctx, points, Some(0), opts, Vec::new())
+    }
+
+    #[test]
+    fn typed_absolute_values_land_in_the_square_and_show_as_typed() {
+        let cases = [
+            (OKLCH, "C", "0.2", 0, 0.2 / OK_SQUARE_CHROMA),
+            (OKLCH, "L", "0.7", 1, 0.7),
+            (OKLAB, "a", "-0.1", 0, ab_to_square(-0.1)),
+            (OKLAB, "b", "0.25", 1, ab_to_square(0.25)),
+            (OKLAB, "L", "0.25", 2, 0.25),
+        ];
+        for (space, label, text, axis, stored) in cases {
+            let opts = in_space(space, true);
+            let mut points = points_at(&[(0.3, 0.6, 0.4, 0.0), (0.5, 0.5, 0.5, 1.0)]);
+
+            let output = commit_text(&mut points, opts, label, Some(text));
+            let committed = points.clone();
+            assert!(
+                (committed[0].val()[axis] - stored).abs() < 1e-6,
+                "{space:?} {label}: {:?}",
+                committed[0].val()
+            );
+            let shown = format!("{:.3}", text.parse::<f32>().unwrap());
+            assert!(
+                painted_texts(&output).contains(&shown.as_str()),
+                "{space:?} {label}: {shown} not in {:?}",
+                painted_texts(&output)
+            );
+
+            commit_text(&mut points, opts, label, None);
+            assert_eq!(points, committed, "{space:?} {label}: recommitted");
+        }
     }
 
     #[test]
     fn clip_pulls_inspector_edits_into_srgb() {
         let oklch_points = [(0.35, 0.5, 0.75, 0.0), (0.15, 0.55, 0.6, 1.0)];
         let oklab_points = [(0.5, 0.25, 0.5, 0.0), (0.45, 0.55, 0.6, 1.0)];
-        for (space, fixture) in [(OKLCH, oklch_points), (OKLAB, oklab_points)] {
+        let oklch_edits = [(S, OK_SQUARE_CHROMA), (V, 0.0), (H, 95.0)];
+        let oklab_edits = [(S, OK_SQUARE_CHROMA), (V, -OK_SQUARE_CHROMA), (H, 0.95)];
+        for (space, fixture, edits) in [
+            (OKLCH, oklch_points, oklch_edits),
+            (OKLAB, oklab_points, oklab_edits),
+        ] {
             for is_curve_locked in [false, true] {
-                for (field, value) in [(S, 100.0), (V, 0.0), (H, 95.0)] {
+                for (field, value) in edits {
                     let unclipped = InspectorOptions {
                         picker_space: space,
                         is_curve_locked,
@@ -565,17 +759,7 @@ mod tests {
     }
 
     fn field_pos(output: &egui::FullOutput, field: InspectorField) -> Pos2 {
-        let label = output
-            .shapes
-            .iter()
-            .find_map(|clipped| match &clipped.shape {
-                egui::Shape::Text(text) if text.galley.text() == field.label(FREE.picker_space) => {
-                    Some(text.galley.rect.translate(text.pos.to_vec2()))
-                }
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("{field:?} label not painted"));
-        label.right_center() + vec2(12.0, 0.0)
+        label_pos(output, field.label(FREE.picker_space))
     }
 
     fn primary_click(pos: Pos2) -> [Vec<egui::Event>; 2] {

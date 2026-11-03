@@ -1,5 +1,5 @@
 use arboard::ImageData;
-use eframe::egui::{self, Layout, PointerButton, Rect, Ui};
+use eframe::egui::{self, containers::panel::PanelState, Layout, PointerButton, Rect, Ui};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -518,15 +518,22 @@ impl ZApp {
 
     fn draw_log_drawer(&mut self, ctx: &egui::Context) {
         let is_expanded = self.is_log_expanded;
+        let expanded_id = egui::Id::new("log_drawer");
+        let picker_min_height = picker_tile_min_size(&self.app_ctx.borrow()).y;
+        let max_height = log_drawer_max_height(ctx, picker_min_height);
+        let height_limit = max_height.min(ctx.available_rect().height());
+        let dragged_height = PanelState::load(ctx, expanded_id)
+            .map_or(LOG_DRAWER_DEFAULT_HEIGHT, |state| state.rect.height());
         let panel = if is_expanded {
-            egui::TopBottomPanel::bottom("log_drawer")
+            egui::TopBottomPanel::bottom(expanded_id)
                 .resizable(true)
                 .default_height(LOG_DRAWER_DEFAULT_HEIGHT)
                 .min_height(LOG_DRAWER_MIN_HEIGHT)
+                .max_height(max_height)
         } else {
             egui::TopBottomPanel::bottom("log_drawer_collapsed")
         };
-        panel.frame(theme::drawer_frame()).show(ctx, |ui| {
+        let shown = panel.frame(theme::drawer_frame()).show(ctx, |ui| {
             if ui_log_header(ui, is_expanded, &self.log_buffer).clicked() {
                 self.is_log_expanded = !is_expanded;
             }
@@ -534,6 +541,13 @@ impl ZApp {
                 ui_log_window(ui, self.log_buffer.clone());
             }
         });
+        let shown = shown.response.rect;
+        let is_capped = shown.height() >= height_limit - 0.5;
+        if is_expanded && is_capped && dragged_height > shown.height() {
+            // The panel stores the height it shows; the cap is the window's, so a taller one gives the drag back.
+            let rect = shown.with_min_y(shown.bottom() - dragged_height);
+            ctx.data_mut(|data| data.insert_persisted(expanded_id, PanelState { rect }));
+        }
     }
 
     fn draw_ui_tree(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -736,6 +750,14 @@ impl ZApp {
 
 fn picker_tile_min_size(app_ctx: &ZColorPickerAppContext) -> Vec2 {
     theme::pane_card_size(app_ctx.z_color_picker.borrow().min_size)
+}
+
+fn log_drawer_max_height(ctx: &egui::Context, tile_area_min_height: f32) -> f32 {
+    let tile_area_frame = egui::Frame::central_panel(&ctx.style());
+    let tile_area_margin = tile_area_frame.total_margin().sum().y;
+    let header_only =
+        ctx.style().spacing.interact_size.y + theme::drawer_frame().total_margin().sum().y;
+    (ctx.available_rect().height() - tile_area_margin - tile_area_min_height).max(header_only)
 }
 
 struct ShareFloor {
@@ -1458,6 +1480,116 @@ mod tests {
             expanded_gap < 0.25 * DEFAULT_SCREEN.height(),
             "{expanded_gap}"
         );
+    }
+
+    fn screen_of_height(height: f32) -> Rect {
+        Rect::from_min_size(Pos2::ZERO, Vec2::new(DEFAULT_SCREEN.width(), height))
+    }
+
+    fn drawer_height(app: &ZApp, ctx: &egui::Context, screen: Rect) -> f32 {
+        let tile_area = app.tree.tiles.rect(app.tree.root().unwrap()).unwrap();
+        let central_margin = egui::Frame::central_panel(&ctx.style()).total_margin();
+        screen.bottom() - tile_area.bottom() - central_margin.bottom
+    }
+
+    fn drag_drawer_top(app: &mut ZApp, ctx: &egui::Context, screen: Rect, to_y: f32) {
+        let top_y = screen.bottom() - drawer_height(app, ctx, screen);
+        let top = Pos2::new(0.5 * screen.width(), top_y);
+        let target = Pos2::new(top.x, to_y);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for events in [
+            vec![egui::Event::PointerMoved(top)],
+            vec![button(top, true)],
+            vec![egui::Event::PointerMoved(target)],
+            vec![egui::Event::PointerMoved(target)],
+            vec![button(target, false)],
+        ] {
+            draw_on_screen(app, ctx, screen, events);
+        }
+    }
+
+    fn expanded_app_laid_out(ctx: &egui::Context) -> ZApp {
+        let mut app = test_app();
+        app.is_log_expanded = true;
+        laid_out_picker_tile(&mut app, ctx, DEFAULT_SCREEN);
+        app
+    }
+
+    #[test]
+    fn the_log_drawer_leaves_the_tiles_the_picker_min_height() {
+        let ctx = egui::Context::default();
+        let mut app = expanded_app_laid_out(&ctx);
+        drag_drawer_top(&mut app, &ctx, DEFAULT_SCREEN, 0.0);
+
+        for height in [1040.0, 900.0, 760.0, 1040.0] {
+            let screen = screen_of_height(height);
+            let picker = laid_out_picker_tile(&mut app, &ctx, screen);
+            let min_height = picker_tile_min_size(&app.app_ctx.borrow()).y;
+            assert!(
+                (picker.height() - min_height).abs() < 0.5,
+                "{height}: {picker:?} vs {min_height}"
+            );
+            assert!(drawer_height(&app, &ctx, screen) > LOG_DRAWER_MIN_HEIGHT);
+        }
+    }
+
+    #[test]
+    fn in_a_window_too_small_for_both_the_drawer_shrinks_to_its_header_first() {
+        let ctx = egui::Context::default();
+        let mut app = expanded_app_laid_out(&ctx);
+        let min_height = picker_tile_min_size(&app.app_ctx.borrow()).y;
+        let header =
+            ctx.style().spacing.interact_size.y + theme::drawer_frame().total_margin().sum().y;
+        let mut tile_area_at = |screen_height: f32| {
+            let screen = screen_of_height(screen_height);
+            let picker = laid_out_picker_tile(&mut app, &ctx, screen);
+            (picker.height(), drawer_height(&app, &ctx, screen))
+        };
+
+        let (picker, drawer) = tile_area_at(DEFAULT_SCREEN.height());
+        let height_leaving = |room: f32| DEFAULT_SCREEN.height() - picker - drawer + room;
+        let (squeezed_picker, squeezed_drawer) = tile_area_at(height_leaving(min_height + 50.0));
+        let (tiny_picker, tiny_drawer) = tile_area_at(height_leaving(min_height - 50.0));
+
+        assert!(50.0 < LOG_DRAWER_MIN_HEIGHT && 50.0 > header);
+        assert!((squeezed_drawer - 50.0).abs() < 0.5, "{squeezed_drawer}");
+        assert!(
+            (squeezed_picker - min_height).abs() < 0.5,
+            "{squeezed_picker} vs {min_height}"
+        );
+        assert!(
+            (tiny_drawer - header).abs() < 0.5,
+            "{tiny_drawer} vs {header}"
+        );
+        assert!(
+            (tiny_picker - (min_height - 50.0 - header)).abs() < 0.5,
+            "{tiny_picker} vs {min_height}"
+        );
+    }
+
+    #[test]
+    fn a_taller_window_gives_the_drawer_its_dragged_height_back() {
+        let ctx = egui::Context::default();
+        let mut app = expanded_app_laid_out(&ctx);
+        let dragged_top = DEFAULT_SCREEN.bottom() - 300.0;
+        drag_drawer_top(&mut app, &ctx, DEFAULT_SCREEN, dragged_top);
+        laid_out_picker_tile(&mut app, &ctx, DEFAULT_SCREEN);
+        let dragged = drawer_height(&app, &ctx, DEFAULT_SCREEN);
+
+        let short = screen_of_height(760.0);
+        laid_out_picker_tile(&mut app, &ctx, short);
+        let capped = drawer_height(&app, &ctx, short);
+        laid_out_picker_tile(&mut app, &ctx, DEFAULT_SCREEN);
+
+        assert!((dragged - 300.0).abs() < 1.0, "{dragged}");
+        assert!(capped < dragged - 10.0, "{capped} vs {dragged}");
+        let restored = drawer_height(&app, &ctx, DEFAULT_SCREEN);
+        assert!((restored - dragged).abs() < 0.5, "{restored} vs {dragged}");
     }
 
     #[test]

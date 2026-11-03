@@ -207,13 +207,13 @@ pub fn oklab_to_linear(lab: [f32; 3]) -> [f32; 3] {
 }
 
 // Just past sRGB's largest Oklab chroma, 0.3225 (magenta).
-const OK_SQUARE_CHROMA: f32 = 0.33;
+pub const OK_SQUARE_CHROMA: f32 = 0.33;
 
-fn square_to_ab(x: f32) -> f32 {
+pub fn square_to_ab(x: f32) -> f32 {
     (2.0 * x - 1.0) * OK_SQUARE_CHROMA
 }
 
-fn ab_to_square(c: f32) -> f32 {
+pub fn ab_to_square(c: f32) -> f32 {
     0.5 + c / (2.0 * OK_SQUARE_CHROMA)
 }
 

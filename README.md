@@ -23,7 +23,7 @@ T, the strip under the hue bar, is each point's position along the gradient: the
 The selected control point's color is shown in the top left, with its readout beside it; the H, S, V (L) and T fields under them show its values and take exact ones. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
 The rows under the fields show the selected color as Hex, sRGB (0-255), HSL, Oklab and OkLCh.
 Between the points, the gradient is blended in the Blend space (Curve row): the picker space itself, sRGB, Linear RGB, Oklab or OkLCh.
-The picker column keeps the size it needs: the other panes give way, and in a window too small for it, it scrolls.
+The picker column keeps the size it needs: the other panes give way, the log drawer can't be dragged taller than the room left above it (in a window too small for both it shrinks to its header first, and gets its height back when the window grows), and in a window too small for the picker, it scrolls.
 The 3D view above the previewer draws the gradient curve, blended as the previewer shows it, and its control points inside a color space, where the points and the selected point's Bezier handles can be dragged too.
 To create a new preset, click the preset combo box and select `<NEW>`
 
@@ -36,7 +36,7 @@ To create a new preset, click the preset combo box and select `<NEW>`
 - Click the color readout or Ctrl+C: copy the selected point's color in the Copy-as format
 - Click a Hex/sRGB/HSL/Oklab/OkLCh row: copy the selected point's color in that row's Copy-as format (`hsl()`, `oklab()`, ...), with more decimals than the row shows
 - Middle-click: Copy screen color as the selected format, on previewer, copies image to clipboard
-- H/S/V/T fields (H/C/L/T in OkLCh, L/a/b/T in Oklab): drag, or click and type a value; Enter or Tab commits, Esc cancels. H is read-only for middle points under Auto hue, T for the first and last points; with Lock, S and V move every point
+- H/S/V/T fields (H/C/L/T in OkLCh, L/a/b/T in Oklab): drag, or click and type a value; Enter or Tab commits, Esc cancels. S, V and the HSL / OKHSL L are in % of the square; OkLCh and Oklab show absolute values with 3 decimals, typed in the same units: L from 0 to 1, chroma from 0 to the square's 0.33, a and b signed, 0 at gray. H is read-only for middle points under Auto hue, T for the first and last points; with Lock, S and V move every point
 - Click the log header (bottom of the window): expand or collapse the log; collapsed, it shows the last line; expanded, drag its top edge to resize it
 - 3D view: Drag-M1 on a point (or, in Bezier mode, on a handle of the selected point) moves it across the view, keeping its T and staying inside sRGB; Drag-M1 elsewhere orbits; click a point to select it; scroll zooms, double-click resets the camera; hover a point, handle or the curve for its hex color
 - F12: debug window with the control point values
