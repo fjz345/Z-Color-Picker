@@ -23,7 +23,7 @@ T, the strip under the hue bar, is each point's position along the gradient: the
 The selected control point's color is shown in the top left, with its readout beside it; the H, S, V (L) and T fields under them show its values and take exact ones. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
 The rows under the fields show the selected color as Hex, sRGB (0-255), HSL, Oklab and OkLCh.
 Between the points, the gradient is blended in the Blend space (Curve row): the picker space itself, sRGB, Linear RGB, Oklab or OkLCh.
-The picker column keeps the size it needs: the other panes give way, and in a window too small for it, it scrolls.
+The picker column keeps the size it needs: the other panes give way, the log drawer can't be dragged taller than the room left above it (in a window too small for both it shrinks to its header first, and gets its height back when the window grows), and in a window too small for the picker, it scrolls.
 The 3D view above the previewer draws the gradient curve, blended as the previewer shows it, and its control points inside a color space, where the points and the selected point's Bezier handles can be dragged too.
 To create a new preset, click the preset combo box and select `<NEW>`
 
