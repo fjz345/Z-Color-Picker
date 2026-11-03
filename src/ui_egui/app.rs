@@ -31,7 +31,7 @@ use crate::{
         debug_windows::DebugWindowControlPoints,
         panes::{
             copy_format_bar_ui, curve_bar_ui, preset_bar_ui, ColorPickerPane, Pane, PreviewerPane,
-            TreeBehavior, View3dPane, ZAppPane,
+            TileUi, View3dPane, ZAppPane,
         },
         previewer::{PreviewerUiResponses, ZPreviewer},
         theme,
@@ -341,8 +341,6 @@ impl ZApp {
     fn create_tree(ctx: Rc<RefCell<ZColorPickerAppContext>>) -> egui_tiles::Tree<Pane> {
         let mut tiles = egui_tiles::Tiles::default();
 
-        let mut tabs = vec![];
-
         let pane_color_picker = ColorPickerPane {
             title: None,
             ctx: ctx.clone(),
@@ -368,16 +366,12 @@ impl ZApp {
             [tile_view_3d, tile_previewer],
             VIEW_3D_FRACTION,
         ));
-        let master_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
+        let root = tiles.insert_container(egui_tiles::Linear::new_binary(
             egui_tiles::LinearDir::Horizontal,
             [tile_color_picker, right_column_tile],
             PICKER_COLUMN_FRACTION,
         ));
-        tabs.push(master_tile);
-
-        let root = tiles.insert_tab_tile(tabs);
-
-        egui_tiles::Tree::new("my_tree", root, tiles)
+        egui_tiles::Tree::new("z_color_picker_panes", root, tiles)
     }
 
     fn show_create_preset_window(&mut self, ctx: &egui::Context) {
@@ -536,8 +530,7 @@ impl ZApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.with_layout(Layout::left_to_right(egui::Align::Min), |mut ui| {
-                let mut behavior = TreeBehavior {};
-                self.tree.ui(&mut behavior, ui);
+                self.tree.ui(&mut TileUi, ui);
 
                 // Copy to clipboard
                 let middle_mouse_pressed =
@@ -1041,7 +1034,7 @@ mod tests {
             theme::apply(ctx);
             app.draw_toolbar(ctx);
             app.draw_log_drawer(ctx);
-            egui::CentralPanel::default().show(ctx, |ui| app.tree.ui(&mut TreeBehavior {}, ui));
+            egui::CentralPanel::default().show(ctx, |ui| app.tree.ui(&mut TileUi, ui));
         })
     }
 

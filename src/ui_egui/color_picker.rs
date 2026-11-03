@@ -20,7 +20,7 @@ use crate::{
         curvature::draw_curvature_comb,
         gradient::color_function_gradient,
         inspector::{point_inspector, InspectorOptions},
-        ui_common::contrast_color,
+        ui_common::black_or_white_against,
     },
 };
 use eframe::{
@@ -37,7 +37,7 @@ use std::cmp::Ordering;
 use crate::{
     math::hue_lerp,
     ui_egui::curves::ui_ordered_spline_gradient,
-    ui_egui::ui_common::{color_slider_1d, color_slider_2d},
+    ui_egui::ui_common::{color_field, color_strip},
 };
 
 pub struct MainColorPickerCtx<'a> {
@@ -61,7 +61,13 @@ pub struct ZColorPicker<'a> {
 
 impl<'a> Widget for ZColorPicker<'a> {
     fn ui(mut self, ui: &mut Ui) -> Response {
-        self.add_contents(ui)
+        let points_before_draw = self.ctx.control_points.clone();
+        let mut response = self.picker_ui(ui);
+        if *self.ctx.control_points != points_before_draw {
+            response.mark_changed();
+        }
+        response.widget_info(|| WidgetInfo::new(egui::WidgetType::Other));
+        response
     }
 }
 
@@ -133,37 +139,6 @@ impl<'a> ZColorPicker<'a> {
             ui.ctx()
                 .request_discard("picker option rows changed height");
         }
-        response
-    }
-
-    fn add_contents(&mut self, ui: &mut Ui) -> Response {
-        let old_value = self.ctx.control_points.to_vec();
-
-        let mut response = self.picker_ui(ui);
-
-        let value = self.ctx.control_points.to_vec();
-
-        if value != old_value {
-            response.mark_changed();
-        }
-        response.widget_info(|| WidgetInfo::new(egui::WidgetType::Other));
-
-        #[cfg(feature = "accesskit")]
-        if let Some(mut node) = ui.ctx().accesskit_node(response.id) {
-            use accesskit::Action;
-            node.min_numeric_value = Some(*self.range.start());
-            node.max_numeric_value = Some(*self.range.end());
-            node.numeric_value_step = self.step;
-            node.actions |= Action::SetValue;
-            let clamp_range = self.clamp_range();
-            if value < *clamp_range.end() {
-                node.actions |= Action::Increment;
-            }
-            if value > *clamp_range.start() {
-                node.actions |= Action::Decrement;
-            }
-        }
-
         response
     }
 }
@@ -581,12 +556,9 @@ pub fn main_color_picker(
 
         handle_t_strip(ui, slider_2d_rect_size, ctx, &mut is_modifying_index);
 
-        let [mut picked_x, mut picked_y, _] = selected_value.unwrap_or_default().val;
-        let slider_2d_response = color_slider_2d(
+        let slider_2d_response = color_field(
             ui,
             desired_size_slider_2d,
-            &mut picked_x,
-            &mut picked_y,
             main_color_picker_color_at_function(*ctx.picker_space, hue_to_show),
         );
         if ctx.control_points.is_empty() {
@@ -772,23 +744,19 @@ fn handle_hue_slider(
     ctx: &mut MainColorPickerCtx,
     is_modifying_index: &mut Option<usize>,
 ) -> Option<f32> {
-    let mut delta_hue = None;
-    let mut pick_hue_unused = 0.0;
-    let pick_hue = Some(&mut pick_hue_unused);
-
-    let hue_response = color_slider_1d(
+    let (hue_response, picked_hue) = color_strip(
         ui,
         slider_size,
-        pick_hue,
         hue_strip_color_at_function(*ctx.picker_space),
-    )
-    .on_hover_text(strip_hint(Strip::Hue, is_modifying_index.is_some()));
+    );
+    let hue_response =
+        hue_response.on_hover_text(strip_hint(Strip::Hue, is_modifying_index.is_some()));
 
-    if hue_response.clicked_by(PointerButton::Primary)
-        || hue_response.dragged_by(PointerButton::Primary)
-    {
-        delta_hue = Some(shown_hue - pick_hue_unused);
-    }
+    let picking = hue_response.clicked_by(PointerButton::Primary)
+        || hue_response.dragged_by(PointerButton::Primary);
+    let delta_hue = picked_hue
+        .filter(|_| picking)
+        .map(|picked| shown_hue - picked);
 
     let (_hue_response_cp, hue_selected_index) = ui_hue_control_points_overlay(
         ui,
@@ -1096,7 +1064,10 @@ pub fn ui_hue_control_points_overlay(
         ui.painter().add(Shape::convex_polygon(
             gizmo_rect,
             picked_color,
-            Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
+            Stroke::new(
+                visuals.fg_stroke.width,
+                black_or_white_against(picked_color),
+            ),
         ));
     }
 

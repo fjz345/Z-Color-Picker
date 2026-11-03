@@ -1,14 +1,12 @@
-//https://github.com/emilk/egui/blob/master/crates/egui_demo_lib/src/demo/paint_bezier.rs
-
 use crate::color_space::{BlendSpace, PickerSpace};
 use crate::common::SplineMode;
 use crate::datatypes::control_point::{ControlPoint, ControlPointValue};
 use crate::ui_egui::blend::Gradient;
-use crate::ui_egui::control_points::{bezier_handle, flatten_control_points};
-use crate::ui_egui::ui_common::contrast_color;
+use crate::ui_egui::control_points::{bezier_handle, flatten_control_points, unit_to_screen};
+use crate::ui_egui::ui_common::black_or_white_against;
 use eframe::egui::{self, Sense, Ui};
 use eframe::emath;
-use eframe::epaint::{Color32, Pos2, Rect, Shape, Stroke, Vec2};
+use eframe::epaint::{Color32, Pos2, Rect, Shape, Stroke};
 
 const RIBBON_PX_PER_SAMPLE: f32 = 2.0;
 const RIBBON_MIN_SAMPLES_PER_SEGMENT: usize = 8;
@@ -24,18 +22,18 @@ fn ribbon_samples_per_segment(length_bound_px: f32) -> usize {
     )
 }
 
-fn ribbon_screen_pos(to_screen: &emath::RectTransform, value: ControlPointValue) -> Pos2 {
+fn ribbon_screen_pos(square: Rect, value: ControlPointValue) -> Pos2 {
     let pos = value.pos2();
-    to_screen * Pos2::new(pos.x, 1.0 - pos.y)
+    unit_to_screen(square, Pos2::new(pos.x, 1.0 - pos.y))
 }
 
 fn ribbon_segment_length_bound_px(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
-    to_screen: &emath::RectTransform,
+    square: Rect,
 ) -> f32 {
     let edge = |a: ControlPointValue, b: ControlPointValue| {
-        ribbon_screen_pos(to_screen, a).distance(ribbon_screen_pos(to_screen, b))
+        ribbon_screen_pos(square, a).distance(ribbon_screen_pos(square, b))
     };
     let longest = control_points
         .windows(2)
@@ -99,20 +97,14 @@ pub fn ui_ordered_spline_gradient(
         Sense::focusable_noninteractive(),
     );
 
-    let to_screen = emath::RectTransform::from_to(
-        Rect::from_min_size(Pos2::ZERO, Vec2::new(1.0, 1.0)),
-        response.rect,
-    );
-
+    let square = response.rect;
     let flattened_points = flatten_control_points(control_points);
-    let length_bound_px =
-        ribbon_segment_length_bound_px(&flattened_points, spline_mode, &to_screen);
+    let length_bound_px = ribbon_segment_length_bound_px(&flattened_points, spline_mode, square);
     let spline_points = generate_spline_points(
         &Gradient::new(control_points, spline_mode, picker_space, blend_space),
         ribbon_samples_per_segment(length_bound_px),
     );
 
-    let control_point_radius = 8.0;
     let mut halos = Vec::with_capacity(spline_points.len());
     let mut fills = Vec::with_capacity(spline_points.len());
     for pair in spline_points.windows(2) {
@@ -120,10 +112,10 @@ pub fn ui_ordered_spline_gradient(
         let next = pair[1];
 
         let segment = [
-            ribbon_screen_pos(&to_screen, first),
-            ribbon_screen_pos(&to_screen, next),
+            ribbon_screen_pos(square, first),
+            ribbon_screen_pos(square, next),
         ];
-        let fill = Stroke::new(control_point_radius * 1.6, first.color(picker_space));
+        let fill = Stroke::new(RIBBON_WIDTH, first.color(picker_space));
         halos.push(Shape::line_segment(
             segment,
             ribbon_halo_stroke(fill.color, fill.width),
@@ -138,19 +130,21 @@ pub fn ui_ordered_spline_gradient(
     Some(response)
 }
 
+const RIBBON_WIDTH: f32 = 12.8;
 const RIBBON_HALO_EDGE: f32 = 1.25;
 const RIBBON_HALO_OPACITY: f32 = 0.6;
 
 pub(crate) fn ribbon_halo_stroke(fill: Color32, fill_width: f32) -> Stroke {
     Stroke::new(
         fill_width + 2.0 * RIBBON_HALO_EDGE,
-        contrast_color(fill).gamma_multiply(RIBBON_HALO_OPACITY),
+        black_or_white_against(fill).gamma_multiply(RIBBON_HALO_OPACITY),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::epaint::Vec2;
 
     const DARK_FILL: Color32 = Color32::from_rgb(20, 20, 60);
     const BRIGHT_FILL: Color32 = Color32::from_rgb(240, 240, 200);
@@ -206,11 +200,8 @@ mod tests {
         cp
     }
 
-    fn unit_to_square(size: f32) -> emath::RectTransform {
-        emath::RectTransform::from_to(
-            Rect::from_min_size(Pos2::ZERO, Vec2::splat(1.0)),
-            Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::splat(size)),
-        )
+    fn square(size: f32) -> Rect {
+        Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::splat(size))
     }
 
     #[test]
@@ -322,8 +313,7 @@ mod tests {
             point_with_tangents(0.0, 0.0, [None, None]),
             point_with_tangents(1.0, 1.0, [None, None]),
         ];
-        let bound =
-            ribbon_segment_length_bound_px(&points, SplineMode::Linear, &unit_to_square(100.0));
+        let bound = ribbon_segment_length_bound_px(&points, SplineMode::Linear, square(100.0));
         assert!((bound - 141.42136).abs() < 1e-3, "{bound}");
     }
 
@@ -334,8 +324,7 @@ mod tests {
             point_with_tangents(0.0, 0.5, [None, up]),
             point_with_tangents(1.0, 0.5, [up, None]),
         ];
-        let bound =
-            ribbon_segment_length_bound_px(&points, SplineMode::Bezier, &unit_to_square(100.0));
+        let bound = ribbon_segment_length_bound_px(&points, SplineMode::Bezier, square(100.0));
         assert!((bound - 200.0).abs() < 1e-3, "{bound}");
     }
 
@@ -346,11 +335,8 @@ mod tests {
             point_with_tangents(0.3, 0.5, [None, None]),
             point_with_tangents(1.0, 0.5, [None, None]),
         ];
-        let bound = ribbon_segment_length_bound_px(
-            &points,
-            SplineMode::HermiteBezier,
-            &unit_to_square(100.0),
-        );
+        let bound =
+            ribbon_segment_length_bound_px(&points, SplineMode::HermiteBezier, square(100.0));
         assert!((bound - 70.0 * 7.0 / 3.0).abs() < 1e-3, "{bound}");
     }
 }
