@@ -147,17 +147,6 @@ fn catmull_rom_cubics(spline: &Spline<f32, ControlPointValue>) -> Vec<Cubic> {
         .collect()
 }
 
-pub fn catmull_rom_handles(control_points: &[ControlPoint], index: usize) -> [Option<Pos2>; 2] {
-    let spline = control_points_to_spline(control_points, SplineMode::HermiteBezier);
-    let cubics = catmull_rom_cubics(&spline);
-    let incoming = index
-        .checked_sub(1)
-        .and_then(|i| cubics.get(i))
-        .map(|c| c.p2);
-    let outgoing = cubics.get(index).map(|c| c.p1);
-    [incoming, outgoing]
-}
-
 fn comb_cubics(
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
@@ -422,24 +411,6 @@ mod tests {
     fn linear_mode_has_no_comb() {
         let points = points_sv(&[(0.1, 0.2), (0.4, 0.9), (0.7, 0.3)]);
         assert!(comb_cubics(&points, SplineMode::Linear, RECT).is_empty());
-    }
-
-    #[test]
-    fn hermite_handles_of_a_middle_point_span_a_sixth_of_the_neighbour_chord() {
-        let points = points_sv(&[(0.1, 0.2), (0.4, 0.9), (0.7, 0.3)]);
-        let [incoming, outgoing] = catmull_rom_handles(&points, 1);
-        let point = Pos2::new(0.4, 0.1);
-        let chord = Vec2::new(0.6, -0.1);
-        assert!((incoming.unwrap() - (point - chord / 6.0)).length() < 1e-5);
-        assert!((outgoing.unwrap() - (point + chord / 6.0)).length() < 1e-5);
-    }
-
-    #[test]
-    fn hermite_end_points_have_only_their_inner_handle() {
-        let points = points_sv(&[(0.1, 0.2), (0.4, 0.9), (0.7, 0.3)]);
-        assert!(matches!(catmull_rom_handles(&points, 0), [None, Some(_)]));
-        assert!(matches!(catmull_rom_handles(&points, 2), [Some(_), None]));
-        assert!(matches!(catmull_rom_handles(&points[..1], 0), [None, None]));
     }
 
     #[test]
