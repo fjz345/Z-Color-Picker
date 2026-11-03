@@ -62,34 +62,61 @@ impl Default for PresetDrawResult {
 
 pub fn picker_space_combo(ui: &mut Ui, picker_space: &mut PickerSpace) {
     ui.label("Space");
+    let clip_to_srgb = picker_space.clips_to_srgb();
     egui::ComboBox::from_id_salt("picker_space")
         .selected_text(picker_space_label(*picker_space))
         .show_ui(ui, |ui| {
             ui.set_min_width(60.0);
             for space in PickerSpace::ALL {
+                let space = space.with_clip_to_srgb(clip_to_srgb);
                 ui.selectable_value(picker_space, space, picker_space_label(space))
                     .on_hover_text(picker_space_hover_text(space));
             }
         })
         .response
         .on_hover_text(
-            "Color space of the square and the hue bar; switching converts every point \
+            "Color space of the square and the bar; switching converts every point \
              and keeps its color, except middle points under Auto hue: their hues are \
-             re-interpolated in the new space",
+             re-interpolated in the new space. Points outside sRGB keep their color only \
+             between OkLCh and Oklab",
         );
 }
 
-pub fn points_row(ui: &mut Ui, options: &mut ZColorPickerOptions) {
+pub fn clip_to_srgb_checkbox(ui: &mut Ui, picker_space: &mut PickerSpace) {
+    let mut clip_to_srgb = picker_space.clips_to_srgb();
+    ui.add_enabled(
+        picker_space.can_leave_srgb(),
+        egui::Checkbox::new(&mut clip_to_srgb, "Clip"),
+    )
+    .on_hover_text(
+        "Clip to sRGB: blank the colors outside sRGB, and pull every point you edit into \
+         sRGB by reducing its chroma. Turning it on pulls in every point once",
+    )
+    .on_disabled_hover_text("Only OkLCh and Oklab reach outside sRGB");
+    *picker_space = picker_space.with_clip_to_srgb(clip_to_srgb);
+}
+
+pub fn points_row(ui: &mut Ui, options: &mut ZColorPickerOptions, picker_space: PickerSpace) {
     ui.horizontal_wrapped(|ui| {
         row_header(ui, "Points");
         ui.checkbox(&mut options.is_curve_locked, "Lock")
             .on_hover_text("Move all control points together, also for S/V edits in the inspector");
         ui.checkbox(&mut options.is_window_lock, "Clamp")
-            .on_hover_text("Keep points inside the S/V square and wrap hue into 0..1");
-        ui.checkbox(&mut options.is_hue_middle_interpolated, "Auto hue")
             .on_hover_text(
-                "Only the first and last hue are editable; middle hues are interpolated",
+                "Keep points inside the square and wrap hue into 0..1 (Oklab: clamp L into 0..1)",
             );
+        let mut auto_hue = options.is_auto_hue(picker_space);
+        let changed = ui
+            .add_enabled(
+                picker_space.is_z_hue(),
+                egui::Checkbox::new(&mut auto_hue, "Auto hue"),
+            )
+            .on_hover_text("Only the first and last hue are editable; middle hues are interpolated")
+            .on_disabled_hover_text("Oklab has no hue: its bar is lightness")
+            .changed();
+        if changed {
+            options.is_hue_middle_interpolated = auto_hue;
+        }
         ui.horizontal(|ui| {
             ui.label("Insert");
             ui.radio_value(&mut options.is_insert_right, false, "left")
@@ -326,6 +353,8 @@ fn picker_space_label(space: PickerSpace) -> &'static str {
         PickerSpace::Hsl => "HSL",
         PickerSpace::Okhsv => "OKHSV",
         PickerSpace::Okhsl => "OKHSL",
+        PickerSpace::Oklch { .. } => "OkLCh",
+        PickerSpace::Oklab { .. } => "Oklab",
     }
 }
 
@@ -336,6 +365,14 @@ fn picker_space_hover_text(space: PickerSpace) -> &'static str {
         PickerSpace::Okhsv => "Perceptual HSV built on Oklab: even hue steps",
         PickerSpace::Okhsl => {
             "Perceptual HSL built on Oklab: equal L looks equally light across hues"
+        }
+        PickerSpace::Oklch { .. } => {
+            "Oklab's lightness, chroma and hue: chroma across the square, lightness up, \
+             hue on the bar. Reaches outside sRGB"
+        }
+        PickerSpace::Oklab { .. } => {
+            "Oklab: a (green to red) across the square, b (blue to yellow) up, lightness \
+             on the bar. Reaches outside sRGB"
         }
     }
 }
@@ -1210,7 +1247,7 @@ mod tests {
         };
         ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                points_row(ui, options);
+                points_row(ui, options, PickerSpace::Hsv);
                 comb_row(
                     ui,
                     options,

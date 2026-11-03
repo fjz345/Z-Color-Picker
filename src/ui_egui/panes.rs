@@ -305,10 +305,10 @@ fn normalize_applied_preset(
     picker_space: PickerSpace,
     blend_space: BlendSpace,
 ) {
-    color_picker.pre_draw_update(control_points, spline_mode, blend_space);
+    color_picker.pre_draw_update(control_points, spline_mode, picker_space, blend_space);
     // Twice: the hue lerp runs before the clamp, so one pass lerps from unclamped endpoint hues.
-    color_picker.apply_control_point_constraints(control_points);
-    color_picker.apply_control_point_constraints(control_points);
+    color_picker.apply_control_point_constraints(control_points, picker_space);
+    color_picker.apply_control_point_constraints(control_points, picker_space);
     preset_handler.set_selected_data_in_memory(
         control_points,
         spline_mode,
@@ -340,8 +340,8 @@ mod tests {
     }
 
     fn next_picker_frame(color_picker: &mut ZColorPickerWrapper, points: &mut Vec<ControlPoint>) {
-        color_picker.pre_draw_update(points, MODE, BLEND);
-        color_picker.apply_control_point_constraints(points);
+        color_picker.pre_draw_update(points, MODE, SPACE, BLEND);
+        color_picker.apply_control_point_constraints(points, SPACE);
     }
 
     struct SelectedPreset {

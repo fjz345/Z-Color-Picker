@@ -56,6 +56,7 @@ splines::impl_Interpolate!(f32, BlendValue, std::f32::consts::PI);
 
 enum BlendedSpline {
     Picker(Spline<f32, ControlPointValue>),
+    PickerComponentwise(Spline<f32, BlendValue>),
     Mixed(BlendSpace, Spline<f32, BlendValue>),
 }
 
@@ -75,10 +76,13 @@ impl Gradient {
     ) -> Self {
         let key_ts = key_ts(control_points);
         let spline = match blend_space {
-            BlendSpace::Picker => BlendedSpline::Picker(control_points_to_spline(
-                &flatten_control_points(control_points),
-                spline_mode,
-            )),
+            BlendSpace::Picker if picker_space.is_z_hue() => BlendedSpline::Picker(
+                control_points_to_spline(&flatten_control_points(control_points), spline_mode),
+            ),
+            BlendSpace::Picker => {
+                let keys = picker_keys(control_points);
+                BlendedSpline::PickerComponentwise(spline_through_keys(&key_ts, &keys, spline_mode))
+            }
             mixed => {
                 let keys = blend_keys(control_points, picker_space, mixed);
                 BlendedSpline::Mixed(mixed, spline_through_keys(&key_ts, &keys, spline_mode))
@@ -101,6 +105,10 @@ impl Gradient {
             BlendedSpline::Picker(spline) => {
                 sample_spline_normalized(spline, self.spline_mode, x)?.linear(self.picker_space)
             }
+            BlendedSpline::PickerComponentwise(spline) => {
+                ControlPointValue::from(sample_spline_normalized(spline, self.spline_mode, x)?.0)
+                    .linear(self.picker_space)
+            }
             BlendedSpline::Mixed(space, spline) => blend_to_linear(
                 *space,
                 sample_spline_normalized(spline, self.spline_mode, x)?.0,
@@ -116,6 +124,10 @@ impl Gradient {
     pub fn picker_value_at(&self, x: f32) -> Option<ControlPointValue> {
         match &self.spline {
             BlendedSpline::Picker(spline) => sample_spline_normalized(spline, self.spline_mode, x),
+            BlendedSpline::PickerComponentwise(spline) => {
+                sample_spline_normalized(spline, self.spline_mode, x)
+                    .map(|sample| ControlPointValue::from(sample.0))
+            }
             BlendedSpline::Mixed(..) => {
                 let [hue, s, y] = linear_to_picker(self.picker_space, self.linear_at(x)?);
                 Some(ControlPointValue::new(
@@ -126,6 +138,15 @@ impl Gradient {
             }
         }
     }
+}
+
+fn picker_keys(control_points: &[ControlPoint]) -> Vec<[BlendValue; 3]> {
+    control_points
+        .iter()
+        .map(|cp| {
+            [*cp.val(), bezier_handle(cp, 0), bezier_handle(cp, 1)].map(|v| BlendValue(v.val))
+        })
+        .collect()
 }
 
 fn blend_keys(
@@ -221,7 +242,7 @@ mod tests {
         for points in [curved_points(), wrapped] {
             for mode in SplineMode::ALL {
                 let spline = control_points_to_spline(&flatten_control_points(&points), mode);
-                for space in PickerSpace::ALL {
+                for space in PickerSpace::ALL.into_iter().filter(|s| s.is_z_hue()) {
                     let gradient = Gradient::new(&points, mode, space, BlendSpace::Picker);
                     for x in xs() {
                         let sample = sample_spline_normalized(&spline, mode, x);
@@ -237,6 +258,52 @@ mod tests {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    const OKLAB_PICKER: PickerSpace = PickerSpace::Oklab {
+        clip_to_srgb: false,
+    };
+
+    #[test]
+    fn oklab_picker_blend_moves_lightness_straight_without_wrapping() {
+        let points = [point(0.4, 0.6, 0.9, 0.0), point(0.6, 0.45, 0.1, 1.0)];
+        for mode in SplineMode::ALL {
+            let gradient = Gradient::new(&points, mode, OKLAB_PICKER, BlendSpace::Picker);
+            let mut previous = 0.9;
+            for x in xs() {
+                let l = gradient.picker_value_at(x).unwrap().h();
+                assert!(
+                    l <= previous + 1e-6 && (0.1 - 1e-6..=0.9 + 1e-6).contains(&l),
+                    "{mode:?} at {x}: L {l} after {previous}"
+                );
+                previous = l;
+            }
+            let mid = gradient.picker_value_at(0.5).unwrap();
+            assert!((mid.h() - 0.5).abs() < 1e-5, "{mode:?}: {mid:?}");
+            assert_eq!(gradient.color_at(0.5), Some(mid.color(OKLAB_PICKER)));
+        }
+    }
+
+    #[test]
+    fn oklab_picker_blend_lerps_every_coordinate_in_linear_mode() {
+        let points = curved_points();
+        let gradient = Gradient::new(
+            &points,
+            SplineMode::Linear,
+            OKLAB_PICKER,
+            BlendSpace::Picker,
+        );
+        for pair in points.windows(2) {
+            let (a, b) = (*pair[0].val(), *pair[1].val());
+            let x = 0.5 * (pair[0].t() + pair[1].t());
+            let mid = gradient.picker_value_at(x).unwrap();
+            for i in 0..3 {
+                assert!(
+                    (mid[i] - 0.5 * (a[i] + b[i])).abs() < 1e-5,
+                    "{mid:?} {a:?} {b:?}"
+                );
             }
         }
     }

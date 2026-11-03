@@ -9,13 +9,67 @@ pub enum PickerSpace {
     Hsl,
     Okhsv,
     Okhsl,
+    Oklch {
+        #[serde(default)]
+        clip_to_srgb: bool,
+    },
+    Oklab {
+        #[serde(default)]
+        clip_to_srgb: bool,
+    },
 }
 
 impl PickerSpace {
-    pub const ALL: [Self; 4] = [Self::Hsv, Self::Hsl, Self::Okhsv, Self::Okhsl];
+    pub const ALL: [Self; 6] = [
+        Self::Hsv,
+        Self::Hsl,
+        Self::Okhsv,
+        Self::Okhsl,
+        Self::Oklch {
+            clip_to_srgb: false,
+        },
+        Self::Oklab {
+            clip_to_srgb: false,
+        },
+    ];
 
     pub fn is_y_lightness(self) -> bool {
-        matches!(self, Self::Hsl | Self::Okhsl)
+        matches!(self, Self::Hsl | Self::Okhsl | Self::Oklch { .. })
+    }
+
+    pub fn is_z_hue(self) -> bool {
+        !matches!(self, Self::Oklab { .. })
+    }
+
+    pub fn can_leave_srgb(self) -> bool {
+        matches!(self, Self::Oklch { .. } | Self::Oklab { .. })
+    }
+
+    pub fn clips_to_srgb(self) -> bool {
+        matches!(
+            self,
+            Self::Oklch { clip_to_srgb: true } | Self::Oklab { clip_to_srgb: true }
+        )
+    }
+
+    pub fn with_clip_to_srgb(self, clip_to_srgb: bool) -> Self {
+        match self {
+            Self::Oklch { .. } => Self::Oklch { clip_to_srgb },
+            Self::Oklab { .. } => Self::Oklab { clip_to_srgb },
+            other => other,
+        }
+    }
+
+    pub fn is_same_space(self, other: Self) -> bool {
+        self.with_clip_to_srgb(false) == other.with_clip_to_srgb(false)
+    }
+
+    pub fn z_on_bar(self, z: f32) -> f32 {
+        if self.is_z_hue() {
+            z.rem_euclid(1.0)
+        } else {
+            z.clamp(0.0, 1.0)
+        }
     }
 }
 
@@ -152,12 +206,31 @@ pub fn oklab_to_linear(lab: [f32; 3]) -> [f32; 3] {
     mul(&LMS_TO_LINEAR, lms)
 }
 
+// Just past sRGB's largest Oklab chroma, 0.3225 (magenta).
+const OK_SQUARE_CHROMA: f32 = 0.33;
+
+fn square_to_ab(x: f32) -> f32 {
+    (2.0 * x - 1.0) * OK_SQUARE_CHROMA
+}
+
+fn ab_to_square(c: f32) -> f32 {
+    0.5 + c / (2.0 * OK_SQUARE_CHROMA)
+}
+
 pub fn picker_to_linear(space: PickerSpace, hsy: [f32; 3]) -> [f32; 3] {
     match space {
         PickerSpace::Hsv => hsv_to_linear(hsy),
         PickerSpace::Hsl => srgb_to_linear(hsl_to_srgb(hsy)),
         PickerSpace::Okhsv => okhsv_to_linear(hsy),
         PickerSpace::Okhsl => okhsl_to_linear(hsy),
+        PickerSpace::Oklch { .. } => {
+            let [hue, x, l] = hsy;
+            oklab_to_linear(oklch_to_oklab([l, x * OK_SQUARE_CHROMA, hue]))
+        }
+        PickerSpace::Oklab { .. } => {
+            let [l, x, y] = hsy;
+            oklab_to_linear([l, square_to_ab(x), square_to_ab(y)])
+        }
     }
 }
 
@@ -167,6 +240,17 @@ pub fn linear_to_picker(space: PickerSpace, linear: [f32; 3]) -> [f32; 3] {
         PickerSpace::Hsl => srgb_to_hsl(linear_to_srgb(linear)),
         PickerSpace::Okhsv => linear_to_okhsv(linear),
         PickerSpace::Okhsl => linear_to_okhsl(linear),
+        PickerSpace::Oklch { .. } => {
+            let [l, chroma, hue] = oklab_to_oklch(linear_to_oklab(linear));
+            if chroma < ACHROMATIC_CHROMA {
+                return [0.0, 0.0, l];
+            }
+            [hue, chroma / OK_SQUARE_CHROMA, l]
+        }
+        PickerSpace::Oklab { .. } => {
+            let [l, a, b] = linear_to_oklab(linear);
+            [l, ab_to_square(a), ab_to_square(b)]
+        }
     }
 }
 
@@ -203,8 +287,21 @@ pub fn blend_to_linear(space: BlendSpace, blended: [f32; 3]) -> [f32; 3] {
 
 const GAMUT_BISECTION_STEPS: usize = 24;
 
-fn is_in_srgb_gamut(linear: [f32; 3]) -> bool {
+pub fn is_in_srgb_gamut(linear: [f32; 3]) -> bool {
     linear.iter().all(|c| (0.0..=1.0).contains(c))
+}
+
+pub fn largest_scale_in_srgb(linear_at_scale: impl Fn(f32) -> [f32; 3]) -> f32 {
+    let (mut inside, mut outside) = (0.0, 1.0);
+    for _ in 0..GAMUT_BISECTION_STEPS {
+        let mid = 0.5 * (inside + outside);
+        if is_in_srgb_gamut(linear_at_scale(mid)) {
+            inside = mid;
+        } else {
+            outside = mid;
+        }
+    }
+    inside
 }
 
 pub fn map_into_srgb_gamut(linear: [f32; 3]) -> [f32; 3] {
@@ -214,16 +311,7 @@ pub fn map_into_srgb_gamut(linear: [f32; 3]) -> [f32; 3] {
     let [l, a, b] = linear_to_oklab(linear);
     let l = l.clamp(0.0, 1.0);
     let with_chroma_scaled = |scale: f32| oklab_to_linear([l, scale * a, scale * b]);
-    let (mut inside, mut outside) = (0.0, 1.0);
-    for _ in 0..GAMUT_BISECTION_STEPS {
-        let mid = 0.5 * (inside + outside);
-        if is_in_srgb_gamut(with_chroma_scaled(mid)) {
-            inside = mid;
-        } else {
-            outside = mid;
-        }
-    }
-    with_chroma_scaled(inside)
+    with_chroma_scaled(largest_scale_in_srgb(with_chroma_scaled))
 }
 
 // ecolor's HsvaGamma: HSV over linear RGB, with only V gamma-encoded.
@@ -959,6 +1047,46 @@ mod tests {
     }
 
     #[test]
+    fn picker_space_clip_toggle_exists_only_where_the_space_leaves_srgb() {
+        for space in PickerSpace::ALL {
+            let clipped = space.with_clip_to_srgb(true);
+            assert_eq!(clipped.clips_to_srgb(), space.can_leave_srgb(), "{space:?}");
+            assert!(clipped.is_same_space(space), "{space:?}");
+            assert_eq!(clipped.with_clip_to_srgb(false), space, "{space:?}");
+        }
+        assert!(!OKLCH.is_same_space(OKLAB));
+    }
+
+    #[test]
+    fn picker_space_serializes_old_names_unchanged_and_the_clip_toggle_with_its_space() {
+        assert_eq!(
+            serde_json::to_string(&PickerSpace::Okhsl).unwrap(),
+            "\"Okhsl\""
+        );
+        let clipped = OKLCH.with_clip_to_srgb(true);
+        let json = serde_json::to_string(&clipped).unwrap();
+        assert_eq!(json, r#"{"Oklch":{"clip_to_srgb":true}}"#);
+        assert_eq!(serde_json::from_str::<PickerSpace>(&json).unwrap(), clipped);
+        assert_eq!(
+            serde_json::from_str::<PickerSpace>(r#"{"Oklab":{}}"#).unwrap(),
+            OKLAB
+        );
+    }
+
+    #[test]
+    fn z_on_bar_wraps_hues_and_clamps_oklab_lightness() {
+        for space in hue_spaces() {
+            assert_eq!(space.z_on_bar(-0.25), 0.75);
+            assert_eq!(space.z_on_bar(1.25), 0.25);
+            assert_eq!(space.z_on_bar(1.0), 0.0);
+        }
+        assert_eq!(OKLAB.z_on_bar(-0.25), 0.0);
+        assert_eq!(OKLAB.z_on_bar(1.25), 1.0);
+        assert_eq!(OKLAB.z_on_bar(1.0), 1.0);
+        assert_eq!(OKLAB.z_on_bar(0.4), 0.4);
+    }
+
+    #[test]
     fn gamut_map_of_a_mapped_color_is_itself() {
         for lch in out_of_gamut_oklch() {
             let mapped = map_into_srgb_gamut(oklab_to_linear(oklch_to_oklab(lch)));
@@ -992,8 +1120,10 @@ mod tests {
         for space in PickerSpace::ALL {
             for linear in linear_grid() {
                 let [h, s, y] = linear_to_picker(space, linear);
-                assert!((0.0..1.0).contains(&h), "{space:?} {linear:?}: h {h}");
-                for c in [s, y] {
+                if space.is_z_hue() {
+                    assert!((0.0..1.0).contains(&h), "{space:?} {linear:?}: h {h}");
+                }
+                for c in [h, s, y] {
                     assert!(
                         (-1e-4..=1.0 + 1e-4).contains(&c),
                         "{space:?} {linear:?}: {s}, {y}"
@@ -1003,14 +1133,83 @@ mod tests {
         }
     }
 
+    fn hue_spaces() -> impl Iterator<Item = PickerSpace> {
+        PickerSpace::ALL
+            .into_iter()
+            .filter(|space| space.is_z_hue())
+    }
+
+    const OKLAB: PickerSpace = PickerSpace::Oklab {
+        clip_to_srgb: false,
+    };
+    const OKLCH: PickerSpace = PickerSpace::Oklch {
+        clip_to_srgb: false,
+    };
+
     #[test]
     fn grays_have_zero_hue_and_saturation_whichever_space_made_them() {
-        for from in PickerSpace::ALL {
+        for from in hue_spaces() {
             for y in [0.0, 0.01, 0.37, 0.8, 1.0] {
                 let gray = picker_to_linear(from, [0.37, 0.0, y]);
-                for to in PickerSpace::ALL {
+                for to in hue_spaces() {
                     let [h, s, _] = linear_to_picker(to, gray);
                     assert_eq!([h, s], [0.0, 0.0], "{from:?} y {y} -> {to:?}");
+                }
+                let [_, a, b] = linear_to_picker(OKLAB, gray);
+                assert_close([a, b, 0.0], [0.5, 0.5, 0.0], 1e-4);
+            }
+        }
+    }
+
+    #[test]
+    fn oklch_square_is_chroma_by_lightness_with_hue_on_the_bar() {
+        let red = linear_to_picker(OKLCH, PRIMARIES[0]);
+        assert_close(
+            red,
+            [29.2339 / 360.0, 0.257_683 / OK_SQUARE_CHROMA, 0.627_955],
+            1e-4,
+        );
+        assert_close(picker_to_linear(OKLCH, red), PRIMARIES[0], 1e-4);
+        assert_close(
+            linear_to_oklab(picker_to_linear(OKLCH, [0.3, 0.0, 0.6])),
+            [0.6, 0.0, 0.0],
+            1e-5,
+        );
+    }
+
+    #[test]
+    fn oklab_square_is_a_by_b_with_lightness_on_the_bar() {
+        let blue = linear_to_picker(OKLAB, PRIMARIES[2]);
+        let to_square = |c: f32| 0.5 + c / (2.0 * OK_SQUARE_CHROMA);
+        assert_close(
+            blue,
+            [0.452_014, to_square(-0.032_457), to_square(-0.311_528)],
+            1e-4,
+        );
+        assert_close(picker_to_linear(OKLAB, blue), PRIMARIES[2], 1e-4);
+        assert_close(
+            linear_to_oklab(picker_to_linear(OKLAB, [0.6, 0.5, 0.5])),
+            [0.6, 0.0, 0.0],
+            1e-5,
+        );
+        assert_close(
+            linear_to_oklab(picker_to_linear(OKLAB, [0.6, 1.0, 0.0])),
+            [0.6, OK_SQUARE_CHROMA, -OK_SQUARE_CHROMA],
+            1e-5,
+        );
+    }
+
+    #[test]
+    fn oklch_and_oklab_round_trip_picker_values_inside_and_outside_srgb() {
+        for space in [OKLCH, OKLAB] {
+            for z in [0.05, 0.3, 0.55, 0.8, 0.95] {
+                for x in [0.1, 0.3, 0.5, 0.7, 1.0] {
+                    for y in [0.05, 0.2, 0.5, 0.8, 1.0] {
+                        let linear = picker_to_linear(space, [z, x, y]);
+                        let tolerance = if is_in_srgb_gamut(linear) { 1e-4 } else { 1e-3 };
+                        let back = linear_to_picker(space, linear);
+                        assert_close(back, [z, x, y], tolerance);
+                    }
                 }
             }
         }
@@ -1052,7 +1251,10 @@ mod tests {
             1e-8,
             1e-7,
         ];
-        for from in PickerSpace::ALL {
+        let black_at_y_zero = PickerSpace::ALL
+            .into_iter()
+            .filter(|space| !space.can_leave_srgb());
+        for from in black_at_y_zero {
             for y in tiny_ys {
                 for h in (0..=36).map(|i| i as f32 / 36.0) {
                     for s in [0.0, 0.3, 0.79, 0.8, 0.95, 1.0] {

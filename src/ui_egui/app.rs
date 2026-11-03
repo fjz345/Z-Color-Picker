@@ -77,6 +77,12 @@ fn default_curvature_comb_scale() -> f32 {
     1.0
 }
 
+impl ZColorPickerOptions {
+    pub fn is_auto_hue(&self, picker_space: PickerSpace) -> bool {
+        self.is_hue_middle_interpolated && picker_space.is_z_hue()
+    }
+}
+
 impl Default for ZColorPickerOptions {
     fn default() -> Self {
         Self {

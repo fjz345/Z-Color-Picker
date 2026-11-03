@@ -2,7 +2,10 @@ use ecolor::Color32;
 use eframe::egui::{Pos2, Vec2};
 use serde::{Deserialize, Serialize};
 
-use crate::color_space::{linear_to_color32, picker_to_linear, PickerSpace};
+use crate::color_space::{
+    is_in_srgb_gamut, largest_scale_in_srgb, linear_to_color32, map_into_srgb_gamut,
+    picker_to_linear, PickerSpace,
+};
 use crate::math::hue_lerp;
 
 type HsvKeyValueInnerType = [f32; 3];
@@ -49,14 +52,50 @@ impl HsvKeyValue {
     }
 
     pub fn linear(&self, space: PickerSpace) -> [f32; 3] {
+        map_into_srgb_gamut(self.unmapped_linear(space))
+    }
+
+    pub fn unmapped_linear(&self, space: PickerSpace) -> [f32; 3] {
         picker_to_linear(
             space,
             [
-                self[2].rem_euclid(1.0),
+                space.z_on_bar(self[2]),
                 self[0].clamp(0.0, 1.0),
                 self[1].clamp(0.0, 1.0),
             ],
         )
+    }
+
+    pub fn is_in_srgb(&self, space: PickerSpace) -> bool {
+        is_in_srgb_gamut(self.unmapped_linear(space))
+    }
+
+    pub fn clipped_to_srgb(&self, space: PickerSpace) -> Self {
+        let [x, y] = [self[0], self[1]].map(|c| c.clamp(0.0, 1.0));
+        let z = if space.is_z_hue() {
+            self[2]
+        } else {
+            space.z_on_bar(self[2])
+        };
+        let in_square = Self::new(x, y, z);
+        if in_square.is_in_srgb(space) {
+            return in_square;
+        }
+        let gray = match space {
+            PickerSpace::Oklch { .. } => [0.0, y],
+            PickerSpace::Oklab { .. } => [0.5, 0.5],
+            _ => unreachable!("{space:?} never leaves sRGB"),
+        };
+        let toward_gray = |scale: f32| {
+            Self::new(
+                gray[0] + scale * (x - gray[0]),
+                gray[1] + scale * (y - gray[1]),
+                z,
+            )
+        };
+        toward_gray(largest_scale_in_srgb(|scale| {
+            toward_gray(scale).unmapped_linear(space)
+        }))
     }
 }
 
@@ -316,6 +355,7 @@ pub mod test_support {
 mod tests {
     use super::test_support::assert_close;
     use super::*;
+    use crate::color_space::{is_in_srgb_gamut, map_into_srgb_gamut};
     use ecolor::HsvaGamma;
     use splines::interpolate::Interpolate;
 
@@ -383,9 +423,22 @@ mod tests {
         );
     }
 
+    fn hue_spaces() -> impl Iterator<Item = PickerSpace> {
+        PickerSpace::ALL
+            .into_iter()
+            .filter(|space| space.is_z_hue())
+    }
+
+    const OKLCH: PickerSpace = PickerSpace::Oklch {
+        clip_to_srgb: false,
+    };
+    const OKLAB: PickerSpace = PickerSpace::Oklab {
+        clip_to_srgb: false,
+    };
+
     #[test]
     fn color_wraps_hue() {
-        for space in PickerSpace::ALL {
+        for space in hue_spaces() {
             let expected = HsvKeyValue::new(0.3, 0.7, 0.9).color(space);
             for hue in [-0.1, 1.9] {
                 assert_eq!(
@@ -398,9 +451,109 @@ mod tests {
     }
 
     #[test]
+    fn oklab_color_clamps_lightness() {
+        let at = |l| HsvKeyValue::new(0.45, 0.55, l).color(OKLAB);
+        assert_eq!(at(-0.1), at(0.0));
+        assert_eq!(at(1.9), at(1.0));
+        assert_ne!(at(0.0), at(1.0));
+    }
+
+    #[test]
+    fn color_outside_srgb_is_the_gamut_mapped_color() {
+        let vivid = HsvKeyValue::new(1.0, 0.6, 0.4);
+        let unmapped = picker_to_linear(OKLCH, [0.4, 1.0, 0.6]);
+        assert!(!is_in_srgb_gamut(unmapped));
+        assert_eq!(vivid.unmapped_linear(OKLCH), unmapped);
+        assert_eq!(vivid.linear(OKLCH), map_into_srgb_gamut(unmapped));
+        assert_ne!(
+            vivid.color(OKLCH),
+            linear_to_color32(unmapped.map(|c| c.clamp(0.0, 1.0)))
+        );
+    }
+
+    fn sample_values() -> Vec<HsvKeyValue> {
+        let mut values = Vec::new();
+        for z in [0.0, 0.1, 0.35, 0.6, 0.85, 1.0] {
+            for x in [0.0, 0.2, 0.5, 0.8, 1.0] {
+                for y in [0.0, 0.15, 0.5, 0.75, 1.0] {
+                    values.push(HsvKeyValue::new(x, y, z));
+                }
+            }
+        }
+        values
+    }
+
+    #[test]
+    fn clip_keeps_values_inside_srgb_bit_for_bit() {
+        for space in [OKLCH, OKLAB] {
+            for value in sample_values().into_iter().filter(|v| v.is_in_srgb(space)) {
+                assert_eq!(value.clipped_to_srgb(space), value, "{space:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn clip_reduces_chroma_onto_srgb_keeping_lightness_and_hue() {
+        for space in [OKLCH, OKLAB] {
+            let outside = sample_values().into_iter().filter(|v| !v.is_in_srgb(space));
+            for value in outside {
+                let clipped = value.clipped_to_srgb(space);
+                assert!(
+                    clipped.is_in_srgb(space),
+                    "{space:?} {value:?}: {clipped:?}"
+                );
+                assert_eq!(
+                    clipped.clipped_to_srgb(space),
+                    clipped,
+                    "{space:?} {value:?}"
+                );
+                assert_eq!(clipped.h(), value.h(), "{space:?} {value:?}");
+                let gray = if space == OKLCH {
+                    assert_eq!(clipped.v(), value.v(), "{value:?}");
+                    Vec2::new(0.0, value.v())
+                } else {
+                    Vec2::splat(0.5)
+                };
+                let [from_gray, clipped_from_gray] = [value, clipped].map(|v| v.vec2() - gray);
+                let scale = clipped_from_gray.length() / from_gray.length();
+                assert!((0.0..1.0).contains(&scale), "{space:?} {value:?}: {scale}");
+                assert!(
+                    (clipped_from_gray - scale * from_gray).length() < 1e-6,
+                    "{space:?} {value:?}: {clipped:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn clip_lands_on_the_srgb_surface() {
+        let value = HsvKeyValue::new(1.0, 0.5, 0.7);
+        for space in [OKLCH, OKLAB] {
+            let clipped = value.clipped_to_srgb(space);
+            let linear = clipped.unmapped_linear(space);
+            assert!(
+                linear.iter().any(|c| !(1e-4..=1.0 - 1e-4).contains(c)),
+                "{space:?}: {linear:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn clip_pulls_values_off_the_square_back_in() {
+        let clipped = HsvKeyValue::new(-0.4, 1.3, 1.7).clipped_to_srgb(OKLAB);
+        assert_eq!(
+            clipped,
+            HsvKeyValue::new(0.0, 1.0, 1.0).clipped_to_srgb(OKLAB)
+        );
+        let clipped = HsvKeyValue::new(1.6, -0.2, 2.25).clipped_to_srgb(OKLCH);
+        assert_eq!(clipped.h(), 2.25);
+        assert_eq!(clipped.v(), 0.0);
+    }
+
+    #[test]
     fn y_is_lightness_in_hsl_spaces() {
         let top_left = HsvKeyValue::new(0.0, 1.0, 0.3);
-        for space in PickerSpace::ALL {
+        for space in hue_spaces() {
             assert_eq!(top_left.color(space), Color32::WHITE, "{space:?}");
         }
         let full_saturation_mid_y = HsvKeyValue::new(1.0, 0.5, 0.0);

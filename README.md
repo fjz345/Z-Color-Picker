@@ -17,8 +17,8 @@
 ## Usage
 
 The window is the picker column on the left, the 3D view over the previewer on the right, the toolbar on top and the log drawer at the bottom.
-Each control point is a value in the picker space: HSV, HSL, OKHSV or OKHSL (Space, under the selected color's readout).
-Hue of each individual control point can be changed in the hue bar, and saturation & value (lightness in HSL and OKHSL) in the 2d slider.
+Each control point is a value in the picker space: HSV, HSL, OKHSV, OKHSL, OkLCh or Oklab (Space, under the selected color's readout).
+Hue of each individual control point can be changed in the hue bar, and saturation & value (lightness in HSL and OKHSL) in the 2d slider. In OkLCh the square is chroma by lightness; in Oklab it is a by b and the bar is lightness, drawn through the selected point.
 T, the strip under the hue bar, is each point's position along the gradient: the first and last points stay at 0 and 1, the middle points can be dragged between their neighbours.
 The selected control point's color is shown in the top left, with its readout beside it; the H, S, V (L) and T fields under them show its values and take exact ones. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
 The rows under the fields show the selected color as Hex, sRGB (0-255), HSL, Oklab and OkLCh.
@@ -35,7 +35,7 @@ To create a new preset, click the preset combo box and select `<NEW>`
 - Click the color readout or Ctrl+C: copy the selected point's color in the Copy-as format
 - Click a Hex/sRGB/HSL/Oklab/OkLCh row: copy the selected point's color in that row's Copy-as format (`hsl()`, `oklab()`, ...), with more decimals than the row shows
 - Middle-click: Copy screen color as the selected format, on previewer, copies image to clipboard
-- H/S/V/T fields: drag, or click and type a value; Enter or Tab commits, Esc cancels. H is read-only for middle points under Auto hue, T for the first and last points; with Lock, S and V move every point
+- H/S/V/T fields (H/C/L/T in OkLCh, L/a/b/T in Oklab): drag, or click and type a value; Enter or Tab commits, Esc cancels. H is read-only for middle points under Auto hue, T for the first and last points; with Lock, S and V move every point
 - Click the log header (bottom of the window): expand or collapse the log; collapsed, it shows the last line; expanded, drag its top edge to resize it
 - 3D view: Drag-M1 orbits, scroll zooms, double-click resets the camera; hover a point or the curve for its hex color
 - F12: debug window with the control point values
@@ -55,12 +55,13 @@ Groups, left to right: Preset, Curve (Spline, Blend, Flip) and Copy as; Log at t
 ## Options
 
 Picker (under the selected color's readout):
-- Space: Color space of the square and the hue bar: HSV, HSL, or the perceptual OKHSV and OKHSL (built on Oklab). Switching converts every point and keeps its color, except middle points under Auto hue: their hues are re-interpolated in the new space; it is saved with the preset
+- Space: Color space of the square and the hue bar: HSV, HSL, the perceptual OKHSV and OKHSL (built on Oklab), or OkLCh and Oklab themselves, which reach outside sRGB (shown with chroma reduced to fit). Switching converts every point and keeps its color, except middle points under Auto hue: their hues are re-interpolated in the new space; it is saved with the preset
+- Clip (OkLCh and Oklab): Clip to sRGB: colors outside sRGB are left blank on the square and bar, and every point you move, type in or convert is pulled into sRGB by reducing its chroma; turning it on pulls in every point once. Saved with the space
 
 Points row (under the square):
 - Lock: Apply any control point coordinate translation to all control points
-- Clamp: Keep control points inside the S/V square and wrap hue into 0..1
-- Auto hue: Select hue for start/end control points, middle control point's hue is interpolated by T (shown as markers on the hue bar)
+- Clamp: Keep control points inside the S/V square and wrap hue into 0..1 (Oklab: clamp lightness into 0..1)
+- Auto hue: Select hue for start/end control points, middle control point's hue is interpolated by T (shown as markers on the hue bar); off in Oklab, which has no hue
 - Insert left/right: Side of the selected point where a new control point goes (start/end when none is selected)
 
 Comb row (under the Points row):

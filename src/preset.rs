@@ -1724,6 +1724,44 @@ mod tests {
         assert_eq!(picker_space, PickerSpace::Okhsl);
     }
 
+    #[test]
+    fn preset_json_with_a_space_saved_before_oklch_loads_unchanged() {
+        let json = SAMPLE_PRESET_JSON.replacen('{', r#"{"picker_space": "Okhsl","#, 1);
+        let data: AppDataCtx = serde_json::from_str(&json).unwrap();
+        assert_eq!(data.picker_space, PickerSpace::Okhsl);
+        assert_eq!(
+            data,
+            serde_json::from_str(&serde_json::to_string(&data).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn clip_toggle_dirties_the_preset_and_auto_save_writes_it() {
+        let (_tmp, mut handler) = temp_handler();
+        create_sample(&mut handler);
+        handler.auto_save_presets = true;
+        let points = sample_points();
+        let mode = SplineMode::Bezier;
+        let oklch = PickerSpace::Oklch {
+            clip_to_srgb: false,
+        };
+        let clipped = oklch.with_clip_to_srgb(true);
+        assert!(handler
+            .auto_save(&points, mode, oklch, BlendSpace::Picker)
+            .unwrap());
+        assert!(handler.is_selected_dirty(&points, mode, clipped, BlendSpace::Picker));
+
+        assert!(handler
+            .auto_save(&points, mode, clipped, BlendSpace::Picker)
+            .unwrap());
+        let on_disk: AppDataCtx = serde_json::from_str(&read_preset_file(&handler)).unwrap();
+        assert_eq!(on_disk.picker_space, clipped);
+        let (mut points, mut mode, mut picker_space, mut blend_space) =
+            (Vec::new(), SplineMode::Linear, oklch, BlendSpace::Picker);
+        handler.apply_selected_preset(&mut points, &mut mode, &mut picker_space, &mut blend_space);
+        assert_eq!(picker_space, clipped);
+    }
+
     fn handler_with_a_and_b_selected() -> (TempDir, PresetHandler) {
         let (tmp, mut handler) = temp_handler();
         create(&mut handler, "A", SplineMode::Linear).unwrap();
