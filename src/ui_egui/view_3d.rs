@@ -145,16 +145,6 @@ struct OrbitCamera {
     distance: f32,
 }
 
-impl Default for OrbitCamera {
-    fn default() -> Self {
-        Self {
-            yaw: 0.6,
-            pitch: 0.45,
-            distance: 2.6,
-        }
-    }
-}
-
 const MAX_PITCH: f32 = 1.48;
 const MIN_DISTANCE: f32 = 1.2;
 const MAX_DISTANCE: f32 = 8.0;
@@ -165,6 +155,16 @@ const NEAR_DEPTH: f32 = 0.05;
 // Half the unit cube's diagonal: every reference shape fits inside.
 const SCENE_RADIUS: f32 = 0.866_025_4;
 const FAR_FADE: f32 = 0.45;
+const FIT_FILL: f32 = 0.9;
+
+fn gamut_radius(space: View3dSpace) -> f32 {
+    gamut_quads(space)
+        .iter()
+        .flatten()
+        .map(|vertex| dot(vertex.position, vertex.position))
+        .fold(0.0, f32::max)
+        .sqrt()
+}
 
 #[derive(Clone, Copy, Debug)]
 struct Projected {
@@ -177,6 +177,17 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
 }
 
 impl OrbitCamera {
+    fn fitted(space: View3dSpace) -> Self {
+        // A sphere of radius r at distance d projects to a circle of radius focal * r / sqrt(d^2 - r^2).
+        let focal_per_filled_radius = 2.0 * FOCAL_LENGTH_PER_SIZE / FIT_FILL;
+        let radius = gamut_radius(space);
+        Self {
+            yaw: 0.6,
+            pitch: 0.45,
+            distance: radius * (1.0 + focal_per_filled_radius.powi(2)).sqrt(),
+        }
+    }
+
     fn orbited(self, drag: Vec2) -> Self {
         Self {
             yaw: self.yaw - drag.x * ORBIT_RADIANS_PER_POINT,
@@ -404,7 +415,7 @@ const HANDLE_LINE_WIDTH: f32 = 1.5;
 const HANDLE_MIN_SCREEN_LENGTH: f32 = 2.0 * SELECTED_POINT_RADIUS;
 const MIN_DRAG_PIXELS: f32 = 1e-3;
 const VIEW_3D_HINT: &str =
-    "Drag a point or handle: move it. Drag elsewhere: orbit. Scroll: zoom. Double-click: reset";
+    "Drag a point or handle: move it. Drag elsewhere: orbit. Scroll: zoom. Double-click elsewhere: reset";
 
 fn segment_shape(camera: OrbitCamera, rect: Rect, segment: &WorldSegment) -> Option<(f32, Shape)> {
     let [Some(a), Some(b)] = segment.ends.map(|p| camera.project(p, rect)) else {
@@ -667,9 +678,19 @@ pub fn move_point_by_linear(
     shown_and_target: [[f32; 3]; 2],
     curve: CurveSettings,
 ) {
+    let value = *control_points[index].val();
+    let moved = picker_value_after_drag(value, shown_and_target, curve.picker_space);
+    move_point_to(control_points, index, moved, curve);
+}
+
+fn move_point_to(
+    control_points: &mut [ControlPoint],
+    index: usize,
+    moved: ControlPointValue,
+    curve: CurveSettings,
+) {
     let picker_space = curve.picker_space;
     let value = *control_points[index].val();
-    let moved = picker_value_after_drag(value, shown_and_target, picker_space);
     if !curve.is_curve_locked {
         *control_points[index].val_mut() = moved;
         clip_points_to_srgb(&mut control_points[index..=index], picker_space);
@@ -685,6 +706,129 @@ pub fn move_point_by_linear(
     apply_group_delta_sv(control_points, delta_sv);
     control_points[index].val_mut()[2] = moved.h();
     clip_points_to_srgb(control_points, picker_space);
+}
+
+const SCREEN_FIT_MOVES: usize = 48;
+const SCREEN_FIT_PIXELS: f32 = 0.01;
+const SCREEN_FIT_HALVINGS: i32 = 6;
+const SCREEN_FIT_DIFFERENCE: f32 = 1e-3;
+const SCREEN_FIT_DAMPING: f32 = 1e-3;
+const SCREEN_FIT_FIRST_PATTERN_SIZE: f32 = 1.0 / 16.0;
+const SCREEN_FIT_LAST_PATTERN_SIZE: f32 = 1.0 / 4096.0;
+const SCREEN_FIT_PATTERN: [[f32; 2]; 8] = [
+    [1.0, 0.0],
+    [-1.0, 0.0],
+    [0.0, 1.0],
+    [0.0, -1.0],
+    [1.0, 1.0],
+    [1.0, -1.0],
+    [-1.0, 1.0],
+    [-1.0, -1.0],
+];
+
+fn gauss_newton_step(
+    at: [f32; 2],
+    target: Pos2,
+    screen_of: &impl Fn([f32; 2]) -> Option<Pos2>,
+) -> Option<[f32; 2]> {
+    let column = |axis: usize| {
+        let (mut low, mut high) = (at, at);
+        low[axis] = (at[axis] - SCREEN_FIT_DIFFERENCE).max(0.0);
+        high[axis] = (at[axis] + SCREEN_FIT_DIFFERENCE).min(1.0);
+        Some((screen_of(high)? - screen_of(low)?) / (high[axis] - low[axis]))
+    };
+    let [dx, dy] = [column(0)?, column(1)?];
+    let damping = SCREEN_FIT_DAMPING * (dx.length_sq() + dy.length_sq());
+    let [xx, xy, yy] = [
+        dx.length_sq() + damping,
+        dx.dot(dy),
+        dy.length_sq() + damping,
+    ];
+    let determinant = xx * yy - xy * xy;
+    if determinant <= 0.0 {
+        return None;
+    }
+    let miss = screen_of(at)? - target;
+    let [gx, gy] = [dx.dot(miss), dy.dot(miss)];
+    Some([
+        (xy * gy - yy * gx) / determinant,
+        (xy * gx - xx * gy) / determinant,
+    ])
+}
+
+fn first_nearer(
+    target: Pos2,
+    best: f32,
+    candidates: impl IntoIterator<Item = [f32; 2]>,
+    screen_of: &impl Fn([f32; 2]) -> Option<Pos2>,
+) -> Option<([f32; 2], f32)> {
+    candidates.into_iter().find_map(|candidate| {
+        let candidate = candidate.map(|c| c.clamp(0.0, 1.0));
+        let distance_sq = screen_of(candidate)?.distance_sq(target);
+        (distance_sq < best).then_some((candidate, distance_sq))
+    })
+}
+
+// The pattern gets past what stalls Gauss-Newton: kinks (HSL at l = 0.5), the square's edges
+// and the flat run of chroma that gamut mapping puts on the sRGB edge.
+fn square_xy_nearest_on_screen(
+    start: [f32; 2],
+    target: Pos2,
+    screen_of: impl Fn([f32; 2]) -> Option<Pos2>,
+) -> [f32; 2] {
+    let mut xy = start.map(|c| c.clamp(0.0, 1.0));
+    let Some(screen) = screen_of(xy) else {
+        return start;
+    };
+    let mut best = screen.distance_sq(target);
+    let mut pattern_size = SCREEN_FIT_FIRST_PATTERN_SIZE;
+    for _ in 0..SCREEN_FIT_MOVES {
+        if best <= SCREEN_FIT_PIXELS * SCREEN_FIT_PIXELS {
+            break;
+        }
+        let gauss_newton = gauss_newton_step(xy, target, &screen_of)
+            .into_iter()
+            .flat_map(move |step| {
+                (0..SCREEN_FIT_HALVINGS).map(move |halving| {
+                    let scale = 0.5_f32.powi(halving);
+                    [xy[0] + scale * step[0], xy[1] + scale * step[1]]
+                })
+            });
+        let pattern = SCREEN_FIT_PATTERN
+            .map(|[dx, dy]| [xy[0] + pattern_size * dx, xy[1] + pattern_size * dy]);
+        match first_nearer(target, best, gauss_newton.chain(pattern), &screen_of) {
+            Some(nearer) => (xy, best) = nearer,
+            None if pattern_size > SCREEN_FIT_LAST_PATTERN_SIZE => pattern_size *= 0.5,
+            None => break,
+        }
+    }
+    xy
+}
+
+// Outside sRGB it moves by the shown color's offset, like picker_value_after_drag;
+// clipping the solution keeps chroma past the sRGB edge from piling onto that offset.
+fn auto_hue_drag_value(
+    value: ControlPointValue,
+    target: Pos2,
+    picker_space: PickerSpace,
+    screen_of: impl Fn(ControlPointValue) -> Option<Pos2>,
+) -> ControlPointValue {
+    let z = value.h();
+    let with_z = |[x, y]: [f32; 2]| ControlPointValue::new(x, y, z);
+    let in_srgb = |xy: [f32; 2]| {
+        if picker_space.can_leave_srgb() {
+            with_z(xy).clipped_to_srgb(picker_space)
+        } else {
+            with_z(xy)
+        }
+    };
+    let shown = in_srgb([value.s(), value.v()]);
+    let solved = in_srgb(square_xy_nearest_on_screen(
+        [shown.s(), shown.v()],
+        target,
+        |xy| screen_of(with_z(xy)),
+    ));
+    with_z([0, 1].map(|i| (value[i] + (solved[i] - shown[i])).clamp(0.0, 1.0)))
 }
 
 pub fn move_handle_to_linear(
@@ -833,14 +977,28 @@ fn faces_mesh(mut faces: Vec<FaceQuad>) -> Option<Shape> {
     Some(Shape::mesh(mesh))
 }
 
+fn item_at(items: &[SceneItem], pointer: Pos2) -> Option<(Pos2, View3dItem)> {
+    let targets: Vec<(Pos2, View3dItem)> = items
+        .iter()
+        .map(|scene_item| (scene_item.screen, scene_item.item))
+        .collect();
+    nearest(pointer, &targets)
+}
+
 fn camera_after_input(
     camera: OrbitCamera,
+    space: View3dSpace,
     ui: &Ui,
     response: &egui::Response,
+    items: &[SceneItem],
     is_editing: bool,
 ) -> OrbitCamera {
-    if response.double_clicked() {
-        return OrbitCamera::default();
+    let is_on_item = response
+        .interact_pointer_pos()
+        .and_then(|pointer| item_at(items, pointer))
+        .is_some();
+    if response.double_clicked() && !is_on_item {
+        return OrbitCamera::fitted(space);
     }
     let mut camera = camera;
     if response.dragged_by(PointerButton::Primary) && !is_editing {
@@ -871,7 +1029,7 @@ pub struct View3d {
     #[serde(default = "default_gamut_opacity")]
     gamut_opacity: f32,
     #[serde(skip)]
-    camera: OrbitCamera,
+    camera: Option<OrbitCamera>,
     #[serde(skip)]
     drag: Option<ItemDrag>,
 }
@@ -881,7 +1039,7 @@ impl Default for View3d {
         Self {
             space: View3dSpace::default(),
             gamut_opacity: DEFAULT_GAMUT_OPACITY,
-            camera: OrbitCamera::default(),
+            camera: None,
             drag: None,
         }
     }
@@ -895,9 +1053,15 @@ pub struct CurveSettings {
     pub is_auto_comb_running: bool,
     pub is_curve_locked: bool,
     pub is_window_lock: bool,
+    pub is_auto_hue: bool,
 }
 
 impl View3d {
+    fn camera(&mut self) -> OrbitCamera {
+        let space = self.space;
+        *self.camera.get_or_insert_with(|| OrbitCamera::fitted(space))
+    }
+
     pub fn draw_ui(
         &mut self,
         ui: &mut Ui,
@@ -926,17 +1090,25 @@ impl View3d {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let handles_of =
             |selected: Option<usize>| selected.filter(|_| spline_mode == SplineMode::Bezier);
+        let space = self.space;
         let items = scene_items(
-            self.camera,
+            self.camera(),
             rect,
-            self.space,
+            space,
             control_points,
             picker_space,
             handles_of(*selected_index),
         );
         let dragged = self.edit_items(ui, &response, &items, control_points, curve, selected_index);
-        self.camera = camera_after_input(self.camera, ui, &response, self.drag.is_some());
-        let (camera, space) = (self.camera, self.space);
+        let camera = camera_after_input(
+            self.camera(),
+            space,
+            ui,
+            &response,
+            &items,
+            self.drag.is_some(),
+        );
+        self.camera = Some(camera);
         let items = scene_items(
             camera,
             rect,
@@ -1009,13 +1181,9 @@ impl View3d {
         curve: CurveSettings,
         selected_index: &mut Option<usize>,
     ) -> Option<View3dItem> {
-        let targets: Vec<(Pos2, View3dItem)> = items
-            .iter()
-            .map(|scene_item| (scene_item.screen, scene_item.item))
-            .collect();
         if response.drag_started_by(PointerButton::Primary) {
             self.drag = ui.input(|i| i.pointer.press_origin()).and_then(|press| {
-                let (screen, item) = nearest(press, &targets)?;
+                let (screen, item) = item_at(items, press)?;
                 Some(ItemDrag {
                     item,
                     grab_offset: press - screen,
@@ -1028,7 +1196,7 @@ impl View3d {
         if response.clicked() {
             let clicked = response
                 .interact_pointer_pos()
-                .and_then(|pointer| nearest(pointer, &targets));
+                .and_then(|pointer| item_at(items, pointer));
             if let Some((_, item)) = clicked {
                 *selected_index = Some(item.point_index());
             }
@@ -1043,11 +1211,23 @@ impl View3d {
         if target.distance(dragged.screen) < MIN_DRAG_PIXELS {
             return Some(drag.item);
         }
-        let moved = self
-            .camera
-            .unproject(target, dragged.projected.depth, response.rect);
-        let shown_and_target = [dragged.linear, self.space.linear_at(moved)];
+        let (camera, space, rect) = (self.camera(), self.space, response.rect);
+        let moved = camera.unproject(target, dragged.projected.depth, rect);
+        let shown_and_target = [dragged.linear, space.linear_at(moved)];
+        let is_middle = |index: usize| 0 < index && index + 1 < control_points.len();
         match drag.item {
+            View3dItem::Point(index) if curve.is_auto_hue && is_middle(index) => {
+                let value = auto_hue_drag_value(
+                    *control_points[index].val(),
+                    target,
+                    curve.picker_space,
+                    |value| {
+                        let linear = value.linear(curve.picker_space);
+                        Some(camera.project(space.position(linear), rect)?.pos)
+                    },
+                );
+                move_point_to(control_points, index, value, curve)
+            }
             View3dItem::Point(index) => {
                 move_point_by_linear(control_points, index, shown_and_target, curve)
             }
@@ -1110,7 +1290,7 @@ mod tests {
 
     #[test]
     fn scene_center_projects_to_the_rect_center_at_the_camera_distance() {
-        let camera = OrbitCamera::default();
+        let camera = OrbitCamera::fitted(View3dSpace::Srgb);
         let projected = camera.project([0.0; 3], RECT).unwrap();
         assert_pos_close(projected.pos, RECT.center());
         assert!((projected.depth - camera.distance).abs() < 1e-6);
@@ -1144,14 +1324,14 @@ mod tests {
 
     #[test]
     fn orbit_clamps_pitch() {
-        let camera = OrbitCamera::default();
+        let camera = OrbitCamera::fitted(View3dSpace::Srgb);
         assert_eq!(camera.orbited(Vec2::new(0.0, 1e6)).pitch, MAX_PITCH);
         assert_eq!(camera.orbited(Vec2::new(0.0, -1e6)).pitch, -MAX_PITCH);
     }
 
     #[test]
     fn zoom_clamps_distance() {
-        let camera = OrbitCamera::default();
+        let camera = OrbitCamera::fitted(View3dSpace::Srgb);
         assert!(camera.zoomed(50.0).distance < camera.distance);
         assert_eq!(camera.zoomed(1e6).distance, MIN_DISTANCE);
         assert_eq!(camera.zoomed(-1e6).distance, MAX_DISTANCE);
@@ -1239,7 +1419,7 @@ mod tests {
 
     #[test]
     fn unproject_puts_the_point_under_the_target_at_the_same_depth() {
-        let camera = OrbitCamera::default();
+        let camera = OrbitCamera::fitted(View3dSpace::Srgb);
         let original = [0.2, -0.1, 0.3];
         let projected = camera.project(original, RECT).unwrap();
         let target = projected.pos + Vec2::new(13.0, -7.0);
@@ -1278,6 +1458,7 @@ mod tests {
             is_auto_comb_running: false,
             is_curve_locked: false,
             is_window_lock: false,
+            is_auto_hue: false,
         }
     }
 
@@ -1493,7 +1674,7 @@ mod tests {
     fn screen_pos(pane: &View3dPane, rect: Rect, value: ControlPointValue) -> Pos2 {
         let linear = value.linear(pane.ctx.borrow().picker_space);
         let position = pane.view.space.position(linear);
-        pane.view.camera.project(position, rect).unwrap().pos
+        pane.view.camera.unwrap().project(position, rect).unwrap().pos
     }
 
     fn primary(pos: Pos2, pressed: bool) -> egui::Event {
@@ -1556,8 +1737,8 @@ mod tests {
             pane_frame(&egui_ctx, &mut pane, vec![egui::Event::PointerMoved(pos)]);
         }
         pane_frame(&egui_ctx, &mut pane, vec![primary(end, false)]);
-        let orbited = pane.view.camera;
-        let start = OrbitCamera::default();
+        let orbited = pane.view.camera.unwrap();
+        let start = OrbitCamera::fitted(View3dSpace::Srgb);
         assert!(
             orbited.yaw < start.yaw && orbited.pitch > start.pitch,
             "{orbited:?}"
@@ -1573,7 +1754,7 @@ mod tests {
             pane_frame(&egui_ctx, &mut pane, Vec::new());
         }
         assert!(
-            pane.view.camera.distance < orbited.distance,
+            pane.view.camera.unwrap().distance < orbited.distance,
             "{:?}",
             pane.view.camera
         );
@@ -1581,7 +1762,7 @@ mod tests {
         for pressed in [true, false, true, false] {
             pane_frame(&egui_ctx, &mut pane, vec![primary(end, pressed)]);
         }
-        assert_eq!(pane.view.camera, OrbitCamera::default());
+        assert_eq!(pane.view.camera, Some(OrbitCamera::fitted(View3dSpace::Srgb)));
         assert_eq!(ctx.borrow().control_points, points);
         assert_eq!(ctx.borrow().spline_mode, SplineMode::Bezier);
     }
@@ -1661,7 +1842,7 @@ mod tests {
         assert_eq!(color_picker.last_modifying_point_index, Some(0));
         assert_eq!(color_picker.dragging_index, Some(0));
         assert_eq!(color_picker.dragging_tangent, None);
-        assert_eq!(pane.view.camera, OrbitCamera::default());
+        assert_eq!(pane.view.camera, Some(OrbitCamera::fitted(View3dSpace::Srgb)));
     }
 
     #[test]
@@ -1811,5 +1992,128 @@ mod tests {
         let view: View3d = serde_json::from_str(r#"{"space":"Hsv"}"#).unwrap();
         assert_eq!(view.space, View3dSpace::Hsv);
         assert_eq!(view.gamut_opacity, DEFAULT_GAMUT_OPACITY);
+    }
+
+    fn double_click(pane: &mut View3dPane, pos: Pos2) {
+        let egui_ctx = egui::Context::default();
+        pane_frame(&egui_ctx, pane, Vec::new());
+        pane_frame(&egui_ctx, pane, vec![egui::Event::PointerMoved(pos)]);
+        for pressed in [true, false, true, false] {
+            pane_frame(&egui_ctx, pane, vec![primary(pos, pressed)]);
+        }
+    }
+
+    #[test]
+    fn double_clicking_a_point_or_handle_keeps_the_camera_and_empty_space_resets_it() {
+        let points: Vec<ControlPoint> = [(0.3, 0.6, 0.0), (0.5, 0.5, 0.5), (0.7, 0.4, 1.0)]
+            .map(|(s, v, t)| point_with_tangents([s, v, 0.3], t))
+            .to_vec();
+        let mut pane = pane_with(&points, SplineMode::Bezier, Some(1));
+        let rect = view_rect(&pane_frame(&egui::Context::default(), &mut pane, Vec::new()));
+        let orbited = pane.view.camera.unwrap().orbited(Vec2::new(40.0, -25.0));
+        pane.view.camera = Some(orbited);
+        let point = screen_pos(&pane, rect, *points[1].val());
+        let handle = screen_pos(&pane, rect, bezier_handle(&points[1], 1));
+        for pos in [point, handle_marker_pos(point, handle, 1)] {
+            double_click(&mut pane, pos);
+            assert_eq!(pane.view.camera, Some(orbited), "{pos:?}");
+        }
+        double_click(&mut pane, rect.left_top() + Vec2::splat(20.0));
+        assert_eq!(
+            pane.view.camera,
+            Some(OrbitCamera::fitted(View3dSpace::Srgb))
+        );
+        assert_eq!(pane.ctx.borrow().control_points, points);
+    }
+
+    #[test]
+    fn a_new_pane_starts_at_the_camera_fitted_to_its_space() {
+        let mut pane = pane_with(&three_points(), SplineMode::Linear, None);
+        pane.view.space = View3dSpace::Oklab;
+        pane_frame(&egui::Context::default(), &mut pane, Vec::new());
+        assert_eq!(
+            pane.view.camera,
+            Some(OrbitCamera::fitted(View3dSpace::Oklab))
+        );
+    }
+
+    #[test]
+    fn fitted_camera_fills_most_of_the_shorter_side_with_the_gamut() {
+        let wide = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0));
+        let tall = Rect::from_min_size(Pos2::ZERO, Vec2::new(200.0, 400.0));
+        for space in View3dSpace::ALL {
+            let camera = OrbitCamera::fitted(space);
+            assert!(
+                (MIN_DISTANCE..=MAX_DISTANCE).contains(&camera.distance),
+                "{space:?}: {camera:?}"
+            );
+            for rect in [wide, tall] {
+                let corners: Vec<Pos2> = gamut_quads(space)
+                    .iter()
+                    .flatten()
+                    .map(|vertex| camera.project(vertex.position, rect).unwrap().pos)
+                    .collect();
+                let gamut = Rect::from_points(&corners);
+                assert!(rect.contains_rect(gamut), "{space:?}: {gamut:?}");
+                let fill = gamut.size().max_elem() / rect.size().min_elem();
+                assert!(fill > 0.7, "{space:?} in {rect:?}: {fill}");
+            }
+        }
+    }
+
+    fn dragged_then_snapped(
+        pane: &View3dPane,
+        rect: Rect,
+        points: &[ControlPoint],
+        index: usize,
+        end: Pos2,
+    ) -> ControlPointValue {
+        let picker_space = pane.ctx.borrow().picker_space;
+        let (camera, space) = (pane.view.camera.unwrap(), pane.view.space);
+        let shown = points[index].val().linear(picker_space);
+        let depth = camera.project(space.position(shown), rect).unwrap().depth;
+        let target = space.linear_at(camera.unproject(end, depth, rect));
+        let mut snapped = points.to_vec();
+        move_point_by_linear(&mut snapped, index, [shown, target], unlocked(picker_space));
+        snapped[index].val_mut()[2] = points[index].val().h();
+        *snapped[index].val()
+    }
+
+    #[test]
+    fn auto_hue_drag_keeps_a_middle_hue_and_lands_nearer_the_pointer_than_drag_then_snap() {
+        let [first_hue, last_hue] = [0.1, 0.5];
+        let middle_hue = crate::math::hue_lerp(first_hue, last_hue, 0.5);
+        let points: Vec<ControlPoint> = [
+            (0.5, 0.6, first_hue, 0.0),
+            (0.4, 0.5, middle_hue, 0.5),
+            (0.6, 0.4, last_hue, 1.0),
+        ]
+        .map(|(s, v, h, t)| ControlPoint::new_simple(ControlPointValue::new(s, v, h), t))
+        .to_vec();
+        let hue_spaces = PickerSpace::ALL.into_iter().filter(|space| space.is_z_hue());
+        for picker_space in hue_spaces {
+            for space in View3dSpace::ALL {
+                let mut pane = pane_with(&points, SplineMode::Linear, None);
+                pane.ctx.borrow_mut().picker_space = picker_space;
+                pane.view.space = space;
+                let egui_ctx = egui::Context::default();
+                let rect = view_rect(&pane_frame(&egui_ctx, &mut pane, Vec::new()));
+                let start = screen_pos(&pane, rect, *points[1].val());
+                let end = start + Vec2::new(14.0, -10.0);
+                drag(&egui_ctx, &mut pane, start, end);
+
+                let moved = *pane.ctx.borrow().control_points[1].val();
+                let label = format!("{picker_space:?} in {space:?}: {moved:?}");
+                assert_ne!(moved, *points[1].val(), "{label}");
+                assert_eq!(moved.h().to_bits(), middle_hue.to_bits(), "{label}");
+                let snapped = dragged_then_snapped(&pane, rect, &points, 1, end);
+                let [moved_miss, snapped_miss] =
+                    [moved, snapped].map(|value| screen_pos(&pane, rect, value).distance(end));
+                assert!(
+                    moved_miss < snapped_miss,
+                    "{label}: {moved_miss} >= {snapped_miss}"
+                );
+            }
+        }
     }
 }
