@@ -5,10 +5,11 @@ use eframe::epaint::Vec2;
 
 use crate::{
     color_space::{ab_to_square, square_to_ab, PickerSpace, OK_SQUARE_CHROMA},
-    datatypes::control_point::ControlPoint,
+    datatypes::control_point::{ControlPoint, ControlPointValue},
     ui_egui::{
         color_picker::{
-            apply_group_delta_sv, limit_group_delta, HUE_DRAG_MAX_FRACTION, NO_SELECTION_HINT,
+            apply_group_delta_sv, limit_group_delta, limit_group_delta_to_srgb,
+            HUE_DRAG_MAX_FRACTION, NO_SELECTION_HINT,
         },
         control_points::{clip_points_to_srgb, drag_t, t_drag_bounds},
     },
@@ -273,6 +274,7 @@ fn set_sv(
     if opts.is_window_lock {
         delta_sv = limit_group_delta(points, delta_sv);
     }
+    delta_sv = limit_group_delta_to_srgb(points, delta_sv, opts.picker_space);
     apply_group_delta_sv(points, delta_sv);
 }
 
@@ -312,11 +314,26 @@ pub fn point_inspector(
                 if let Some(reason) = state.disabled_reason {
                     response = response.on_disabled_hover_text(reason);
                 }
+                let drag_start_id = response.id.with("drag_start");
+                if let (true, Some(index)) = (response.drag_started(), selected) {
+                    ui.data_mut(|d| d.insert_temp(drag_start_id, *points[index].val()));
+                }
                 let is_edited = response.dragged()
                     || state
                         .value
                         .is_some_and(|shown| !is_shown_value(value, shown, max_decimals));
                 if let (true, true, Some(index)) = (response.changed(), is_edited, selected) {
+                    let edits_one_value = match field {
+                        InspectorField::H => true,
+                        InspectorField::S | InspectorField::V => !opts.is_curve_locked,
+                        InspectorField::T => false,
+                    };
+                    let drag_start = (response.dragged() && edits_one_value)
+                        .then(|| ui.data(|d| d.get_temp::<ControlPointValue>(drag_start_id)))
+                        .flatten();
+                    if let Some(start) = drag_start {
+                        *points[index].val_mut() = start;
+                    }
                     apply_inspector_edit(points, index, field, value, opts);
                 }
             }
@@ -723,6 +740,69 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn clipped_sv_edit_under_lock_stops_the_group_at_the_srgb_edge_keeping_its_shape() {
+        let oklch_points = [(0.35, 0.5, 0.75, 0.0), (0.15, 0.55, 0.6, 1.0)];
+        let oklab_points = [(0.5, 0.25, 0.5, 0.0), (0.45, 0.55, 0.6, 1.0)];
+        for (space, fixture) in [(OKLCH, oklch_points), (OKLAB, oklab_points)] {
+            let locked = InspectorOptions {
+                picker_space: space.with_clip_to_srgb(true),
+                is_curve_locked: true,
+                ..FREE
+            };
+            let before = points_at(&fixture);
+            let mut points = before.clone();
+            apply_inspector_edit(&mut points, 0, S, 100.0, locked);
+
+            let offset = |points: &[ControlPoint]| points[1].val().vec2() - points[0].val().vec2();
+            let shape_change = (offset(&points) - offset(&before)).length();
+            assert!(shape_change < 1e-6, "{space:?}: {points:?}");
+            assert!(points[0].val().s() > before[0].val().s(), "{space:?}");
+            assert!(points.iter().all(|cp| cp.val().is_in_srgb(space)));
+            let is_at_edge = |cp: &ControlPoint| {
+                let [s, v, h] = cp.val().val;
+                !ControlPointValue::new(s + 1e-3, v, h).is_in_srgb(space)
+            };
+            assert!(points.iter().any(is_at_edge), "{space:?}: {points:?}");
+        }
+    }
+
+    #[test]
+    fn clipped_hue_drag_out_of_srgb_and_back_restores_the_chroma_bit_for_bit() {
+        let opts = InspectorOptions {
+            picker_space: OKLCH.with_clip_to_srgb(true),
+            ..FREE
+        };
+        let original = points_at(&[(0.35, 0.5, 0.75, 0.0), (0.15, 0.55, 0.6, 1.0)]);
+        assert!(original[0].val().is_in_srgb(OKLCH));
+        assert!(!ControlPointValue::new(0.35, 0.5, 0.55).is_in_srgb(OKLCH));
+        let ctx = egui::Context::default();
+        let mut points = original.clone();
+        let start = field_pos(
+            &inspector_frame_in(&ctx, &mut points, Some(0), opts, Vec::new()),
+            H,
+        );
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let [halfway, out] = [36.0, 72.0].map(|dx| start - vec2(dx, 0.0));
+        for events in [
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+            vec![egui::Event::PointerMoved(halfway)],
+            vec![egui::Event::PointerMoved(out)],
+            vec![egui::Event::PointerMoved(halfway)],
+            vec![egui::Event::PointerMoved(start)],
+            vec![button(start, false)],
+        ] {
+            inspector_frame_in(&ctx, &mut points, Some(0), opts, events);
+        }
+
+        assert_eq!(points, original);
     }
 
     #[test]

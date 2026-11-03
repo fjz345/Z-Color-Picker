@@ -1,6 +1,7 @@
 use crate::{
     color_space::{
-        linear_to_oklab, oklab_to_oklch, srgb_to_hsl, srgb_to_linear, BlendSpace, PickerSpace,
+        largest_fraction_where, linear_to_oklab, oklab_to_oklch, srgb_to_hsl, srgb_to_linear,
+        BlendSpace, PickerSpace,
     },
     common::{ColorStringCopy, SplineMode},
     datatypes::{
@@ -16,10 +17,10 @@ use crate::{
             points_row,
         },
         control_points::{
-            clip_points_to_srgb, control_point_outline, control_point_pos, convert_picker_space,
-            drag_grab_offset_x, drag_t, gradient_color_at, insert_point, normalize_t, remove_point,
-            t_at_pointer, ui_ordered_control_points, ControlPointUiResult,
-            CONTROL_POINT_FILL_RADIUS,
+            clip_points_to_srgb, clip_value_to_srgb, control_point_outline, control_point_pos,
+            convert_picker_space, drag_grab_offset_x, drag_t, gradient_color_at, insert_point,
+            normalize_t, remove_point, t_at_pointer, ui_ordered_control_points,
+            ControlPointUiResult, CONTROL_POINT_FILL_RADIUS,
         },
         curvature::draw_curvature_comb,
         gradient::color_function_gradient,
@@ -968,6 +969,19 @@ fn handle_hue_slider(
 
     let picking = hue_response.clicked_by(PointerButton::Primary)
         || hue_response.dragged_by(PointerButton::Primary);
+    let drag_start_id = hue_response.id.with("drag_start");
+    if hue_response.drag_started_by(PointerButton::Primary) {
+        let values: Vec<HsvKeyValue> = ctx.control_points.iter().map(|cp| *cp.val()).collect();
+        ui.data_mut(|d| d.insert_temp(drag_start_id, (shown_hue, values)));
+    }
+    let drag_start = hue_response
+        .dragged_by(PointerButton::Primary)
+        .then(|| ui.data(|d| d.get_temp::<(f32, Vec<HsvKeyValue>)>(drag_start_id)))
+        .flatten()
+        .filter(|(_, values)| values.len() == ctx.control_points.len());
+    let shown_hue = drag_start
+        .as_ref()
+        .map_or(shown_hue, |(start_hue, _)| *start_hue);
     let delta_hue = picked_hue
         .filter(|_| picking)
         .map(|picked| shown_hue - picked);
@@ -983,6 +997,11 @@ fn handle_hue_slider(
 
     if let Some(new_index) = hue_selected_index {
         *is_modifying_index = Some(new_index);
+    }
+    if let Some((_, values)) = drag_start {
+        for (cp, value) in ctx.control_points.iter_mut().zip(values) {
+            *cp.val_mut() = value;
+        }
     }
 
     delta_hue
@@ -1006,6 +1025,39 @@ pub fn apply_group_delta_sv(points: &mut [ControlPoint], delta_sv: Vec2) {
         let val = &mut cp.val_mut().val;
         val[0] += delta_sv.x;
         val[1] += delta_sv.y;
+    }
+}
+
+pub fn limit_group_delta_to_srgb(
+    points: &[ControlPoint],
+    delta_sv: Vec2,
+    picker_space: PickerSpace,
+) -> Vec2 {
+    let fraction = srgb_move_fraction(points, picker_space, |points, fraction| {
+        apply_group_delta_sv(points, fraction * delta_sv)
+    });
+    fraction * delta_sv
+}
+
+pub fn srgb_move_fraction(
+    points: &[ControlPoint],
+    picker_space: PickerSpace,
+    move_by: impl Fn(&mut [ControlPoint], f32),
+) -> f32 {
+    if !picker_space.clips_to_srgb() {
+        return 1.0;
+    }
+    let is_kept = |cp: &ControlPoint| cp.val().clipped_to_srgb(picker_space) == *cp.val();
+    let was_kept: Vec<bool> = points.iter().map(is_kept).collect();
+    let stays_kept = |fraction: f32| {
+        let mut moved = points.to_vec();
+        move_by(&mut moved, fraction);
+        (moved.iter().zip(&was_kept)).all(|(cp, &was_kept)| !was_kept || is_kept(cp))
+    };
+    if stays_kept(1.0) {
+        1.0
+    } else {
+        largest_fraction_where(stays_kept)
     }
 }
 
@@ -1085,6 +1137,8 @@ fn handle_control_points_ui(
                     } else {
                         delta_sv
                     };
+                    let delta_sv =
+                        limit_group_delta_to_srgb(ctx.control_points, delta_sv, *ctx.picker_space);
                     apply_group_delta_sv(ctx.control_points, delta_sv);
                     clip_points_to_srgb(ctx.control_points, *ctx.picker_space);
                 } else {
@@ -1106,6 +1160,7 @@ fn handle_control_points_ui(
                     let cp = &ctx.control_points[index];
                     if let Some(tangent) = cp.tangents()[tang_idx] {
                         let target = *cp.val() + HsvKeyValue::new(offset.x, offset.y, tangent.h());
+                        let target = clip_value_to_srgb(target, *ctx.picker_space);
                         drag_handle_to(
                             ctx.control_points,
                             index,
@@ -1282,6 +1337,7 @@ pub fn ui_hue_control_points_overlay(
         }
         if response.dragged_by(PointerButton::Primary) {
             let grab_offset_id = response.id.with("grab_offset");
+            let drag_start_id = response.id.with("drag_start");
             if response.drag_started_by(PointerButton::Primary) {
                 let press_origin = ui
                     .input(|i| i.pointer.press_origin())
@@ -1289,19 +1345,29 @@ pub fn ui_hue_control_points_overlay(
                 if let Some(press_origin) = press_origin {
                     ui.data_mut(|d| d.insert_temp(grab_offset_id, press_origin.x - x));
                 }
+                ui.data_mut(|d| d.insert_temp(drag_start_id, *control_points[i].val()));
             }
             let grab_offset_x = ui
                 .data(|d| d.get_temp::<f32>(grab_offset_id))
                 .unwrap_or_default();
             if let Some(pointer) = response.interact_pointer_pos() {
                 let strip = container_response.rect;
-                let z = &mut control_points[i].val_mut()[2];
-                *z = if picker_space.is_z_hue() {
-                    hue_after_drag(*z, pointer.x, grab_offset_x, strip.left(), strip.width())
+                let mut value = ui
+                    .data(|d| d.get_temp::<HsvKeyValue>(drag_start_id))
+                    .unwrap_or(*control_points[i].val());
+                value[2] = if picker_space.is_z_hue() {
+                    hue_after_drag(
+                        value.h(),
+                        pointer.x,
+                        grab_offset_x,
+                        strip.left(),
+                        strip.width(),
+                    )
                 } else {
                     t_at_pointer(pointer.x, grab_offset_x, strip.left(), strip.width())
                         .clamp(0.0, 1.0)
                 };
+                *control_points[i].val_mut() = value;
                 clip_points_to_srgb(&mut control_points[i..=i], picker_space);
             }
         }
@@ -1448,7 +1514,7 @@ pub fn ui_t_control_points_overlay(
 mod tests {
     use super::*;
     use crate::datatypes::control_point::ControlPointValue;
-    use crate::ui_egui::control_points::MIN_T_GAP;
+    use crate::ui_egui::control_points::{bezier_handle, MIN_T_GAP};
 
     fn orange() -> Color32 {
         Color32::from_rgba_unmultiplied(255, 128, 0, 204)
@@ -2099,6 +2165,106 @@ mod tests {
         assert_eq!(clipped.h(), unclipped.h());
         assert_eq!(clipped.v(), 0.5);
         assert!(clipped.s() < unclipped.s(), "{clipped:?}");
+    }
+
+    #[test]
+    fn clipped_bar_drag_out_of_srgb_and_back_restores_the_chroma_bit_for_bit() {
+        let space = OKLCH.with_clip_to_srgb(true);
+        let original = ControlPointValue::new(0.35, 0.5, 0.75);
+        assert!(original.is_in_srgb(space));
+        assert!(!ControlPointValue::new(0.35, 0.5, 0.55).is_in_srgb(space));
+        let mut points = vec![
+            ControlPoint::new_simple(original, 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 0.5), 1.0),
+        ];
+        let r = STRIP_RECT.height() / 4.0;
+        let start = pos2(
+            STRIP_RECT.left() + 0.75 * STRIP_RECT.width(),
+            STRIP_RECT.top() + 3.0 * r + 5.0,
+        );
+        let out = start - vec2(0.2 * STRIP_RECT.width(), 0.0);
+        let mut frames = primary_drag_frames(start, out);
+        frames.pop();
+        for step in 1..=3 {
+            let pos = out.lerp(start, step as f32 / 3.0);
+            frames.push(vec![egui::Event::PointerMoved(pos)]);
+        }
+        frames.push(vec![egui::Event::PointerButton {
+            pos: start,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        }]);
+        run_strip_overlay(&mut points, frames, |ui, strip, points| {
+            ui_hue_control_points_overlay(ui, strip, points, Some(1), false, space).1
+        });
+
+        let back = *points[0].val();
+        assert_eq!([back.s(), back.v()], [original.s(), original.v()]);
+        assert!((back.h() - original.h()).abs() < 1e-4, "{back:?}");
+    }
+
+    #[test]
+    fn clipped_bar_background_drag_out_of_srgb_and_back_restores_every_chroma_bit_for_bit() {
+        let mut space = OKLCH.with_clip_to_srgb(true);
+        let original = vec![
+            ControlPoint::new_simple(ControlPointValue::new(0.35, 0.5, 0.75), 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(0.15, 0.55, 0.6), 1.0),
+        ];
+        assert!(!ControlPointValue::new(0.35, 0.5, 0.55).is_in_srgb(space));
+        let ctx = egui::Context::default();
+        let mut picker = ZColorPickerWrapper::default();
+        picker.last_modifying_point_index = Some(0);
+        let mut points = original.clone();
+        let mut run = |points: &mut Vec<ControlPoint>, event: Option<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 700.0))),
+                events: event.into_iter().collect(),
+                ..Default::default()
+            };
+            let mut square = Rect::NOTHING;
+            let output = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    square = picker
+                        .draw_ui(
+                            ui,
+                            points,
+                            &mut SplineMode::Linear,
+                            &mut space,
+                            &mut BlendSpace::Picker,
+                            &ColorStringCopy::HEXNOA,
+                        )
+                        .rect;
+                });
+            });
+            (square, output)
+        };
+        let (square, output) = run(&mut points, None);
+        let bar = painted_meshes(&output)
+            .into_iter()
+            .map(|mesh| mesh.calc_bounds())
+            .filter(|rect| (rect.x_range() == square.x_range()) && rect.bottom() <= square.top())
+            .min_by(|a, b| a.top().total_cmp(&b.top()))
+            .expect("hue bar painted");
+        let at_hue = |hue: f32| pos2(bar.lerp_inside(vec2(hue, 0.0)).x, bar.top() + 2.0);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        run(&mut points, Some(egui::Event::PointerMoved(at_hue(0.95))));
+        run(&mut points, Some(button(at_hue(0.95), true)));
+        for hue in [0.85, 0.55, 0.65, 0.75] {
+            run(&mut points, Some(egui::Event::PointerMoved(at_hue(hue))));
+        }
+        run(&mut points, Some(button(at_hue(0.75), false)));
+
+        for (point, before) in points.iter().zip(&original) {
+            let [s, v, h] = point.val().val;
+            assert_eq!([s, v], [before.val().s(), before.val().v()]);
+            assert!((h - before.val().h()).abs() < 1e-4, "{point:?}");
+        }
     }
 
     #[test]
@@ -2871,6 +3037,81 @@ mod tests {
             BlendSpace::Picker,
         );
         assert_eq!(points, kinked_bezier_points());
+    }
+
+    #[test]
+    fn pre_draw_update_with_clip_leaves_points_and_handles_outside_srgb_alone() {
+        let space = OKLCH.with_clip_to_srgb(true);
+        let mut original = with_handles(
+            points_sv(&[(0.2, 0.5), (0.95, 0.5), (0.3, 0.8)]),
+            &[[[-0.1, 0.0], [0.6, 0.0]]; 3],
+        );
+        crate::ui_egui::control_points::space_t_evenly(&mut original);
+        assert!(!original[1].val().is_in_srgb(space));
+        assert!(!bezier_handle(&original[0], 1).is_in_srgb(space));
+        let mut points = original.clone();
+        let mut picker = ZColorPickerWrapper::default();
+        for _ in 0..2 {
+            picker.pre_draw_update(&mut points, SplineMode::Bezier, space, BlendSpace::Picker);
+            assert_eq!(points, original);
+        }
+    }
+
+    #[test]
+    fn clip_pulls_a_handle_dragged_on_the_square_into_srgb() {
+        let mut space = OKLCH.with_clip_to_srgb(true);
+        let ctx = egui::Context::default();
+        let mut picker = ZColorPickerWrapper::default();
+        picker.last_modifying_point_index = Some(1);
+        let mut points = with_handles(
+            points_sv(&[(0.1, 0.3), (0.3, 0.5), (0.1, 0.8)]),
+            &[[[-0.15, 0.0], [0.15, 0.0]]; 3],
+        );
+        crate::ui_egui::control_points::space_t_evenly(&mut points);
+        let mut run = |points: &mut Vec<ControlPoint>, event: Option<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 700.0))),
+                events: event.into_iter().collect(),
+                ..Default::default()
+            };
+            let mut square = Rect::NOTHING;
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    square = picker
+                        .draw_ui(
+                            ui,
+                            points,
+                            &mut SplineMode::Bezier,
+                            &mut space,
+                            &mut BlendSpace::Picker,
+                            &ColorStringCopy::HEXNOA,
+                        )
+                        .rect;
+                });
+            });
+            square
+        };
+        let square = run(&mut points, None);
+        let handle = square.lerp_inside(vec2(0.45, 0.5));
+        let end = pos2(square.right() - 2.0, handle.y);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        run(&mut points, Some(egui::Event::PointerMoved(handle)));
+        run(&mut points, Some(button(handle, true)));
+        for step in 1..=4 {
+            let pos = handle.lerp(end, step as f32 / 4.0);
+            run(&mut points, Some(egui::Event::PointerMoved(pos)));
+        }
+        run(&mut points, Some(button(end, false)));
+
+        let dragged = bezier_handle(&points[1], 1);
+        assert!(dragged.s() > 0.45, "{dragged:?}");
+        assert!(dragged.is_in_srgb(space), "{dragged:?}");
+        assert_eq!(points[1].val(), &ControlPointValue::new(0.3, 0.5, 0.0));
     }
 
     #[test]

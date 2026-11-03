@@ -2,8 +2,8 @@ use std::f32::consts::TAU;
 
 use eframe::{
     egui::{
-        self, Align2, CursorIcon, FontId, Painter, PointerButton, Pos2, Rect, Sense, Shape, Stroke,
-        Ui, Vec2,
+        self, lerp, Align2, CursorIcon, FontId, Painter, PointerButton, Pos2, Rect, Sense, Shape,
+        Stroke, Ui, Vec2,
     },
     epaint::{CircleShape, Color32, Mesh},
 };
@@ -21,8 +21,12 @@ use crate::{
     ui_egui::{
         auto_comb::drag_handle_to,
         blend::Gradient,
-        color_picker::{apply_group_delta_sv, format_color_as, limit_group_delta},
-        control_points::{bezier_handle, clip_points_to_srgb, control_point_outline},
+        color_picker::{
+            apply_group_delta_sv, format_color_as, limit_group_delta, srgb_move_fraction,
+        },
+        control_points::{
+            bezier_handle, clip_points_to_srgb, clip_value_to_srgb, control_point_outline,
+        },
     },
 };
 
@@ -682,8 +686,12 @@ pub fn move_point_by_linear(
     } else {
         delta_sv
     };
-    apply_group_delta_sv(control_points, delta_sv);
-    control_points[index].val_mut()[2] = moved.h();
+    let move_group = |points: &mut [ControlPoint], fraction: f32| {
+        apply_group_delta_sv(points, fraction * delta_sv);
+        points[index].val_mut()[2] = lerp(value.h()..=moved.h(), fraction);
+    };
+    let fraction = srgb_move_fraction(control_points, picker_space, move_group);
+    move_group(control_points, fraction);
     clip_points_to_srgb(control_points, picker_space);
 }
 
@@ -697,6 +705,7 @@ pub fn move_handle_to_linear(
 ) {
     let previous = bezier_handle(&control_points[index], side);
     let handle = picker_value_after_drag(previous, shown_and_target, picker_space);
+    let handle = clip_value_to_srgb(handle, picker_space);
     drag_handle_to(control_points, index, side, handle, is_auto_comb_running);
 }
 
@@ -1425,6 +1434,52 @@ mod tests {
             move_point_to_linear(&mut clipped, 0, outside, unlocked(clipping));
             assert!(clipped[0].val().is_in_srgb(clipping), "{space:?}");
             assert_eq!(*clipped[0].val(), kept[0].val().clipped_to_srgb(clipping));
+        }
+    }
+
+    #[test]
+    fn dragging_a_point_under_lock_with_clip_stops_the_group_at_the_srgb_edge_keeping_its_shape() {
+        let clipping = PickerSpace::Oklch { clip_to_srgb: true };
+        let original = vec![
+            point_with_tangents([0.2, 0.5, 0.3], 0.0),
+            point_with_tangents([0.05, 0.6, 0.08], 1.0),
+        ];
+        let target_value = ControlPointValue::new(0.55, 0.6, 0.08);
+        assert!(original[0].val().is_in_srgb(clipping));
+        assert!(target_value.is_in_srgb(clipping));
+        assert!(!ControlPointValue::new(0.7, 0.5, 0.3).is_in_srgb(clipping));
+        let mut points = original.clone();
+        let locked = CurveSettings {
+            is_curve_locked: true,
+            ..unlocked(clipping)
+        };
+        move_point_to_linear(&mut points, 1, target_value.linear(clipping), locked);
+
+        let offset = |points: &[ControlPoint]| points[1].val().vec2() - points[0].val().vec2();
+        let shape_change = (offset(&points) - offset(&original)).length();
+        assert!(shape_change < 1e-5, "{points:?}");
+        assert!(points.iter().all(|cp| cp.val().is_in_srgb(clipping)));
+        let [s, v, h] = points[0].val().val;
+        assert!(s > 0.2, "{points:?}");
+        assert!(!ControlPointValue::new(s + 1e-3, v, h).is_in_srgb(clipping));
+    }
+
+    #[test]
+    fn moving_a_handle_with_clip_on_pulls_it_into_srgb() {
+        let oklch = PickerSpace::Oklch {
+            clip_to_srgb: false,
+        };
+        for space in [oklch, OKLAB] {
+            let clipping = space.with_clip_to_srgb(true);
+            let mut points = vec![point_with_tangents([0.4, 0.5, 0.75], 0.0)];
+            points[0].tangents_mut()[1] = Some([0.55, 0.0, 0.0].into());
+            assert!(!bezier_handle(&points[0], 1).is_in_srgb(space), "{space:?}");
+            let shown = bezier_handle(&points[0], 1).linear(space);
+            let [l, a, b] = linear_to_oklab(shown);
+            let lighter = oklab_to_linear([l + 0.02, a, b]);
+            move_handle_to_linear(&mut points, 0, 1, [shown, lighter], clipping, false);
+            let handle = bezier_handle(&points[0], 1);
+            assert!(handle.is_in_srgb(clipping), "{space:?}: {handle:?}");
         }
     }
 

@@ -433,6 +433,7 @@ pub fn convert_picker_space(points: &mut [ControlPoint], from: PickerSpace, to: 
         }
     }
     clip_points_to_srgb(points, to);
+    clip_handles_to_srgb(points, to);
 }
 
 pub fn clip_points_to_srgb(points: &mut [ControlPoint], space: PickerSpace) {
@@ -441,6 +442,29 @@ pub fn clip_points_to_srgb(points: &mut [ControlPoint], space: PickerSpace) {
     }
     for cp in points {
         *cp.val_mut() = cp.val().clipped_to_srgb(space);
+    }
+}
+
+pub fn clip_value_to_srgb(value: ControlPointValue, space: PickerSpace) -> ControlPointValue {
+    if space.clips_to_srgb() {
+        value.clipped_to_srgb(space)
+    } else {
+        value
+    }
+}
+
+fn clip_handles_to_srgb(points: &mut [ControlPoint], space: PickerSpace) {
+    if !space.clips_to_srgb() {
+        return;
+    }
+    for cp in points {
+        for slot in 0..2 {
+            let handle = bezier_handle(cp, slot);
+            let clipped = handle.clipped_to_srgb(space);
+            if cp.tangents()[slot].is_some() && clipped != handle {
+                cp.tangents_mut()[slot] = Some(clipped - *cp.val());
+            }
+        }
     }
 }
 
@@ -1251,6 +1275,10 @@ mod tests {
                 convert_picker_space(&mut points, from, to);
                 for cp in &points {
                     assert!(cp.val().is_in_srgb(to), "{from:?} -> {to:?}: {cp:?}");
+                    for slot in 0..2 {
+                        let handle = bezier_handle(cp, slot);
+                        assert!(handle.is_in_srgb(to), "{from:?} -> {to:?}: {cp:?}");
+                    }
                 }
             }
         }
@@ -1266,12 +1294,45 @@ mod tests {
                 .into_iter()
                 .map(|mut cp| {
                     *cp.val_mut() = cp.val().clipped_to_srgb(clipped);
+                    for slot in 0..2 {
+                        let handle = bezier_handle(&cp, slot);
+                        let clipped_handle = handle.clipped_to_srgb(clipped);
+                        if clipped_handle != handle {
+                            cp.tangents_mut()[slot] = Some(clipped_handle - *cp.val());
+                        }
+                    }
                     cp
                 })
                 .collect();
             assert_eq!(points, expected, "{space:?}");
             convert_picker_space(&mut points, clipped, space);
             assert_eq!(points, expected, "{space:?}");
+        }
+    }
+
+    #[test]
+    fn turning_clip_on_pulls_handles_into_srgb_and_leaves_the_others_bit_for_bit() {
+        for space in [OKLCH, OKLAB] {
+            let clipped = space.with_clip_to_srgb(true);
+            let before = space_switch_points();
+            let mut points = before.clone();
+            convert_picker_space(&mut points, space, clipped);
+            let mut clipped_handles = 0;
+            for (cp, old) in points.iter().zip(&before) {
+                for slot in 0..2 {
+                    assert!(
+                        bezier_handle(cp, slot).is_in_srgb(clipped),
+                        "{space:?}: {cp:?}"
+                    );
+                    let was_inside =
+                        old.val().is_in_srgb(space) && bezier_handle(old, slot).is_in_srgb(space);
+                    if was_inside {
+                        assert_eq!(cp.tangents()[slot], old.tangents()[slot], "{space:?}");
+                    }
+                    clipped_handles += usize::from(cp.tangents()[slot] != old.tangents()[slot]);
+                }
+            }
+            assert!(clipped_handles > 0, "{space:?}");
         }
     }
 
