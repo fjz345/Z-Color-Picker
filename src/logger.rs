@@ -1,4 +1,6 @@
-use eframe::egui::{self, Color32, Label, RichText, ScrollArea};
+use eframe::egui::{
+    self, Color32, Label, Rect, RichText, ScrollArea, Sense, TextWrapMode, Vec2, WidgetText,
+};
 use log::{Metadata, Record, SetLoggerError};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -96,6 +98,64 @@ pub fn ui_log_window(ui: &mut egui::Ui, log_buffer: Arc<Mutex<Vec<String>>>) {
         });
 }
 
+pub fn ui_log_header(
+    ui: &mut egui::Ui,
+    is_expanded: bool,
+    log_buffer: &Mutex<Vec<String>>,
+) -> egui::Response {
+    let height = ui.spacing().interact_size.y;
+    let gap = ui.spacing().item_spacing.x;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
+    let color = ui.style().interact(&response).text_color();
+
+    let chevron_rect = Rect::from_min_size(rect.min, Vec2::splat(height)).shrink(0.3 * height);
+    ui.painter().add(chevron(chevron_rect, is_expanded, color));
+
+    let title = WidgetText::from(RichText::new("Log").strong().color(color)).into_galley(
+        ui,
+        Some(TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Body,
+    );
+    let title_pos = egui::pos2(
+        chevron_rect.right() + gap,
+        rect.center().y - 0.5 * title.size().y,
+    );
+    let last_line_left = title_pos.x + title.size().x + 2.0 * gap;
+    ui.painter().galley(title_pos, title, color);
+
+    let last_line = if is_expanded {
+        None
+    } else {
+        log_buffer.lock().unwrap().last().cloned()
+    };
+    if let Some(line) = last_line {
+        let mut text = RichText::new(&line);
+        if let Some(line_color) = log_line_color(&line, ui.visuals()) {
+            text = text.color(line_color);
+        }
+        let galley = WidgetText::from(text).into_galley(
+            ui,
+            Some(TextWrapMode::Truncate),
+            (rect.right() - last_line_left).max(0.0),
+            egui::TextStyle::Body,
+        );
+        let pos = egui::pos2(last_line_left, rect.center().y - 0.5 * galley.size().y);
+        ui.painter().galley(pos, galley, ui.visuals().text_color());
+    }
+    response
+}
+
+fn chevron(rect: Rect, is_expanded: bool, color: Color32) -> egui::Shape {
+    let points = if is_expanded {
+        vec![rect.left_top(), rect.right_top(), rect.center_bottom()]
+    } else {
+        vec![rect.left_bottom(), rect.center_top(), rect.right_bottom()]
+    };
+    egui::Shape::convex_polygon(points, color, egui::Stroke::NONE)
+}
+
 fn normalize_log_line(level: log::Level, message: impl std::fmt::Display) -> String {
     format!("[{level}] {message}").replace(['\r', '\n'], " ")
 }
@@ -189,6 +249,42 @@ mod tests {
             Some(visuals.weak_text_color())
         );
         assert_eq!(log_line_color("[INFO] x", &visuals), None);
+    }
+
+    fn header_texts(is_expanded: bool, log_buffer: &Mutex<Vec<String>>) -> Vec<(String, Color32)> {
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default()
+                .show(ctx, |ui| ui_log_header(ui, is_expanded, log_buffer));
+        });
+        output
+            .shapes
+            .into_iter()
+            .filter_map(|clipped| match clipped.shape {
+                egui::Shape::Text(text) => Some((
+                    text.galley.text().to_owned(),
+                    text.galley.job.sections[0].format.color,
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn collapsed_log_header_shows_only_the_last_line_in_its_level_color() {
+        let log_buffer = Mutex::new(vec!["[INFO] first".to_owned(), "[WARN] last".to_owned()]);
+        let warn = egui::Context::default().style().visuals.warn_fg_color;
+
+        let collapsed = header_texts(false, &log_buffer);
+        let expanded = header_texts(true, &log_buffer);
+
+        let texts = |shown: &[(String, Color32)]| -> Vec<String> {
+            shown.iter().map(|(text, _)| text.clone()).collect()
+        };
+        assert_eq!(texts(&collapsed), ["Log", "[WARN] last"]);
+        assert_eq!(collapsed[1].1, warn);
+        assert_eq!(texts(&expanded), ["Log"]);
+        assert_eq!(texts(&header_texts(false, &Mutex::default())), ["Log"]);
     }
 
     #[test]

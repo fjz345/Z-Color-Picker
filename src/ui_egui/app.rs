@@ -15,7 +15,7 @@ use crate::{
     datatypes::control_point::{
         ControlPoint, ControlPointStorage, ControlPointTangent, ControlPointValue,
     },
-    logger::LogCollector,
+    logger::{ui_log_header, ui_log_window, LogCollector},
     preset::{PresetHandler, PresetNameError},
     ui_egui::{
         clipboard::{
@@ -29,8 +29,8 @@ use crate::{
         control_points::normalize_t,
         debug_windows::DebugWindowControlPoints,
         panes::{
-            copy_format_bar_ui, preset_bar_ui, ColorPickerOptionsPane, ColorPickerPane, LogPane,
-            Pane, PreviewerPane, TreeBehavior, ZAppPane,
+            copy_format_bar_ui, preset_bar_ui, ColorPickerOptionsPane, ColorPickerPane, Pane,
+            PreviewerPane, TreeBehavior, ZAppPane,
         },
         previewer::{PreviewerUiResponses, ZPreviewer},
         ui_common::ContentWindow,
@@ -208,6 +208,8 @@ pub struct ZApp {
     state: AppState,
     app_ctx: Rc<RefCell<ZColorPickerAppContext>>,
     tree: egui_tiles::Tree<Pane>,
+    #[serde(default)]
+    is_log_expanded: bool,
     #[serde(skip)]
     log_buffer: Arc<Mutex<Vec<String>>>,
     #[serde(skip)]
@@ -216,6 +218,8 @@ pub struct ZApp {
 
 const HARDCODED_MONITOR_SIZE: Vec2 = Vec2::new(2560.0, 1440.0);
 const UI_SCALE_REFERENCE_HEIGHT: f32 = 1080.0;
+const LOG_DRAWER_DEFAULT_HEIGHT: f32 = 200.0;
+const LOG_DRAWER_MIN_HEIGHT: f32 = 80.0;
 
 fn usable_monitor_size(monitor_size_px: Option<Vec2>) -> Option<Vec2> {
     monitor_size_px.filter(|size| size.is_finite() && size.min_elem() > 0.0)
@@ -238,8 +242,9 @@ impl ZApp {
 
         Self {
             state: AppState::Startup,
-            tree: Self::create_tree(app_ctx.clone(), log_buffer.clone()),
+            tree: Self::create_tree(app_ctx.clone()),
             app_ctx: app_ctx,
+            is_log_expanded: false,
             log_buffer: log_buffer,
             had_keyboard_focus: false,
         }
@@ -262,14 +267,11 @@ impl ZApp {
         // Fix startup not having correct references
         {
             self.log_buffer = LogCollector::init().expect("Failed to init logger");
+            remove_log_tiles(&mut self.tree);
 
             for tile in &mut self.tree.tiles.iter_mut() {
-                match tile.1 {
-                    Tile::Pane(p) => match p {
-                        Pane::Log(log_pane) => log_pane.log_buffer = self.log_buffer.clone(),
-                        _ => p.update_ctx(self.app_ctx.clone()),
-                    },
-                    _ => {}
+                if let Tile::Pane(p) = tile.1 {
+                    p.update_ctx(self.app_ctx.clone());
                 }
             }
         }
@@ -307,10 +309,7 @@ impl ZApp {
         copy_window.draw(ctx);
     }
 
-    fn create_tree(
-        ctx: Rc<RefCell<ZColorPickerAppContext>>,
-        log_buffer: Arc<Mutex<Vec<String>>>,
-    ) -> egui_tiles::Tree<Pane> {
+    fn create_tree(ctx: Rc<RefCell<ZColorPickerAppContext>>) -> egui_tiles::Tree<Pane> {
         let mut tiles = egui_tiles::Tiles::default();
 
         let mut tabs = vec![];
@@ -327,19 +326,12 @@ impl ZApp {
             title: None,
             ctx: ctx.clone(),
         };
-        let pane_log = LogPane {
-            title: Some("Log".to_string()),
-            log_buffer: log_buffer.clone(),
-        };
 
         let tile_color_picker = tiles.insert_pane(Pane::ColorPicker(pane_color_picker));
         let tile_options = tiles.insert_pane(Pane::ColorPickerOptionsPane(pane_options));
         let tile_previewer = tiles.insert_pane(Pane::Previewer(pane_previewer));
-        let tile_console = tiles.insert_pane(Pane::Log(pane_log));
-        tiles.set_visible(tile_console, false);
 
         const PICKER_FRACTION: f32 = 0.85;
-        const MASTER_FRACTION: f32 = 0.8;
         const PICKER_COLUMN_FRACTION: f32 = 0.3;
         let vertical_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
             egui_tiles::LinearDir::Vertical,
@@ -351,11 +343,7 @@ impl ZApp {
             [vertical_tile, tile_previewer],
             PICKER_COLUMN_FRACTION,
         ));
-        tabs.push(tiles.insert_container(egui_tiles::Linear::new_binary(
-            egui_tiles::LinearDir::Vertical,
-            [master_tile, tile_console],
-            MASTER_FRACTION,
-        )));
+        tabs.push(master_tile);
 
         let root = tiles.insert_tab_tile(tabs);
 
@@ -453,34 +441,49 @@ impl ZApp {
     }
 
     fn draw_toolbar(&mut self, ctx: &egui::Context) {
-        let log_id = log_tile_id(&self.tree);
-        let mut is_log_visible = log_id.map(|id| self.tree.is_visible(id));
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 preset_bar_ui(&self.app_ctx, ui);
                 ui.separator();
                 copy_format_bar_ui(&self.app_ctx, ui);
-                if let Some(is_visible) = &mut is_log_visible {
-                    ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-                        let hint = if *is_visible {
-                            "Hide the log"
-                        } else {
-                            "Show the log"
-                        };
-                        ui.toggle_value(is_visible, "Log").on_hover_text(hint);
-                    });
-                }
+                ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                    let hint = if self.is_log_expanded {
+                        "Collapse the log"
+                    } else {
+                        "Expand the log"
+                    };
+                    ui.toggle_value(&mut self.is_log_expanded, "Log")
+                        .on_hover_text(hint);
+                });
             });
         });
-        if let (Some(id), Some(is_visible)) = (log_id, is_log_visible) {
-            self.tree.set_visible(id, is_visible);
-        }
+    }
+
+    fn draw_log_drawer(&mut self, ctx: &egui::Context) {
+        let is_expanded = self.is_log_expanded;
+        let panel = if is_expanded {
+            egui::TopBottomPanel::bottom("log_drawer")
+                .resizable(true)
+                .default_height(LOG_DRAWER_DEFAULT_HEIGHT)
+                .min_height(LOG_DRAWER_MIN_HEIGHT)
+        } else {
+            egui::TopBottomPanel::bottom("log_drawer_collapsed")
+        };
+        panel.show(ctx, |ui| {
+            if ui_log_header(ui, is_expanded, &self.log_buffer).clicked() {
+                self.is_log_expanded = !is_expanded;
+            }
+            if is_expanded {
+                ui_log_window(ui, self.log_buffer.clone());
+            }
+        });
     }
 
     fn draw_ui_tree(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Windows needs to be drawn before the tree
         self.show_create_preset_window(ctx);
         self.draw_toolbar(ctx);
+        self.draw_log_drawer(ctx);
         self.app_ctx.borrow_mut().stored_ui_responses = PreviewerUiResponses::default();
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -647,11 +650,16 @@ impl ZApp {
     }
 }
 
-fn log_tile_id(tree: &egui_tiles::Tree<Pane>) -> Option<TileId> {
-    tree.tiles
+fn remove_log_tiles(tree: &mut egui_tiles::Tree<Pane>) {
+    let log_ids: Vec<TileId> = tree
+        .tiles
         .iter()
-        .find(|(_, tile)| matches!(tile, Tile::Pane(Pane::Log(_))))
+        .filter(|(_, tile)| matches!(tile, Tile::Pane(Pane::Log(_))))
         .map(|(id, _)| *id)
+        .collect();
+    for id in log_ids {
+        tree.remove_recursively(id);
+    }
 }
 
 fn should_quit_on_escape(events: &[egui::Event], esc_blocked: bool) -> bool {
@@ -793,6 +801,7 @@ impl eframe::App for ZApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui_egui::panes::LogPane;
     use ecolor::Color32;
 
     fn key_event(key: egui::Key, pressed: bool, repeat: bool) -> egui::Event {
@@ -968,8 +977,9 @@ mod tests {
         let app_ctx = Rc::new(RefCell::new(<ZColorPickerAppContext as Default>::default()));
         ZApp {
             state: AppState::Idle,
-            tree: ZApp::create_tree(app_ctx.clone(), log_buffer.clone()),
+            tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
+            is_log_expanded: false,
             log_buffer,
             had_keyboard_focus: false,
         }
@@ -987,6 +997,7 @@ mod tests {
         };
         ctx.run(input, |ctx| {
             app.draw_toolbar(ctx);
+            app.draw_log_drawer(ctx);
             egui::CentralPanel::default().show(ctx, |ui| app.tree.ui(&mut TreeBehavior {}, ui));
         })
     }
@@ -1009,10 +1020,6 @@ mod tests {
 
     fn is_picker_pane(pane: &Pane) -> bool {
         matches!(pane, Pane::ColorPicker(_))
-    }
-
-    fn is_log_pane(pane: &Pane) -> bool {
-        matches!(pane, Pane::Log(_))
     }
 
     #[test]
@@ -1047,77 +1054,194 @@ mod tests {
         assert!(options >= MIN_OPTIONS_PANE_HEIGHT, "options pane {options}");
     }
 
-    #[test]
-    fn default_tree_hides_the_log_and_gives_its_height_to_the_panes() {
-        let mut app = test_app();
-        let log_id = log_tile_id(&app.tree).unwrap();
-        assert!(!app.tree.is_visible(log_id));
-        lay_out(&mut app);
-        let hidden_log_picker = pane_rect(&app.tree, is_picker_pane).unwrap().height();
-        assert_eq!(pane_rect(&app.tree, is_log_pane), None);
-
-        app.tree.set_visible(log_id, true);
-        lay_out(&mut app);
-
-        let picker = pane_rect(&app.tree, is_picker_pane).unwrap().height();
-        let log = pane_rect(&app.tree, is_log_pane).unwrap().height();
-        assert!(
-            hidden_log_picker > picker,
-            "{hidden_log_picker} vs {picker}"
-        );
-        assert!(log < 0.25 * DEFAULT_SCREEN.height(), "log pane {log}");
-    }
-
     fn round_trip(app: &ZApp) -> ZApp {
         serde_json::from_str(&serde_json::to_string(app).unwrap()).unwrap()
     }
 
-    fn is_log_visible(app: &ZApp) -> bool {
-        app.tree.is_visible(log_tile_id(&app.tree).unwrap())
-    }
-
-    #[test]
-    fn log_toggle_shows_the_log_and_survives_a_save_round_trip() {
-        let mut app = test_app();
-        let ctx = egui::Context::default();
-        assert!(!is_log_visible(&round_trip(&app)));
-
-        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
-        let log_toggle = output
+    fn text_centers(output: &egui::FullOutput, text: &str) -> Vec<Pos2> {
+        let mut centers: Vec<Pos2> = output
             .shapes
             .iter()
-            .find_map(|clipped| match &clipped.shape {
-                egui::Shape::Text(text) if text.galley.text() == "Log" => {
-                    Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(shape) if shape.galley.text() == text => {
+                    Some(shape.galley.rect.translate(shape.pos.to_vec2()).center())
                 }
                 _ => None,
             })
-            .unwrap();
+            .collect();
+        centers.sort_by(|a, b| a.y.total_cmp(&b.y));
+        centers
+    }
+
+    fn click(app: &mut ZApp, ctx: &egui::Context, pos: Pos2) {
         let button = |pressed| egui::Event::PointerButton {
-            pos: log_toggle,
+            pos,
             button: PointerButton::Primary,
             pressed,
             modifiers: egui::Modifiers::NONE,
         };
-        let press = vec![egui::Event::PointerMoved(log_toggle), button(true)];
-        draw_toolbar_and_tree(&mut app, &ctx, press);
-        draw_toolbar_and_tree(&mut app, &ctx, vec![button(false)]);
+        draw_toolbar_and_tree(app, ctx, vec![egui::Event::PointerMoved(pos), button(true)]);
+        draw_toolbar_and_tree(app, ctx, vec![button(false)]);
+    }
 
-        assert!(is_log_visible(&app));
-        assert!(is_log_visible(&round_trip(&app)));
+    fn laid_out_picker_height(app: &mut ZApp, ctx: &egui::Context) -> f32 {
+        for _ in 0..3 {
+            draw_toolbar_and_tree(app, ctx, Vec::new());
+        }
+        pane_rect(&app.tree, is_picker_pane).unwrap().height()
+    }
+
+    fn tree_bottom_gap(app: &ZApp) -> f32 {
+        let previewer = pane_rect(&app.tree, |pane| matches!(pane, Pane::Previewer(_))).unwrap();
+        DEFAULT_SCREEN.bottom() - previewer.bottom()
     }
 
     #[test]
-    fn zapp_json_with_a_visible_log_still_loads() {
-        let app = test_app();
-        let mut json = serde_json::to_value(&app).unwrap();
-        let invisible = &mut json["tree"]["tiles"]["invisible"];
-        assert_eq!(invisible.as_array().map(Vec::len), Some(1), "{invisible}");
-        *invisible = serde_json::json!([]);
+    fn zapp_json_without_the_log_flag_starts_collapsed() {
+        let mut json = serde_json::to_value(test_app()).unwrap();
+        assert!(json
+            .as_object_mut()
+            .unwrap()
+            .remove("is_log_expanded")
+            .is_some());
 
         let restored: ZApp = serde_json::from_value(json).unwrap();
 
-        assert!(is_log_visible(&restored));
+        assert!(!restored.is_log_expanded);
+    }
+
+    #[test]
+    fn collapsed_log_drawer_is_one_row_and_expanding_it_shrinks_the_panes() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        let row = ctx.style().spacing.interact_size.y;
+
+        let collapsed_picker = laid_out_picker_height(&mut app, &ctx);
+        let collapsed_gap = tree_bottom_gap(&app);
+        app.is_log_expanded = true;
+        let expanded_picker = laid_out_picker_height(&mut app, &ctx);
+        let expanded_gap = tree_bottom_gap(&app);
+
+        assert!(collapsed_gap < 3.0 * row, "{collapsed_gap}");
+        assert!(
+            collapsed_picker > expanded_picker,
+            "{collapsed_picker} vs {expanded_picker}"
+        );
+        assert!(expanded_gap > 5.0 * row, "{expanded_gap}");
+        assert!(
+            expanded_gap < 0.25 * DEFAULT_SCREEN.height(),
+            "{expanded_gap}"
+        );
+    }
+
+    #[test]
+    fn log_header_click_toggles_the_drawer() {
+        let mut app = test_app();
+        app.log_buffer
+            .lock()
+            .unwrap()
+            .push("[WARN] last line".to_owned());
+        let ctx = egui::Context::default();
+        laid_out_picker_height(&mut app, &ctx);
+
+        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
+        click(&mut app, &ctx, text_centers(&output, "[WARN] last line")[0]);
+        assert!(app.is_log_expanded);
+
+        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
+        let header_title = *text_centers(&output, "Log").last().unwrap();
+        click(&mut app, &ctx, header_title);
+        assert!(!app.is_log_expanded);
+    }
+
+    #[test]
+    fn toolbar_log_toggle_and_drawer_header_share_the_flag() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        let collapsed_picker = laid_out_picker_height(&mut app, &ctx);
+
+        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
+        click(&mut app, &ctx, text_centers(&output, "Log")[0]);
+        assert!(app.is_log_expanded);
+        assert!(round_trip(&app).is_log_expanded);
+        assert!(laid_out_picker_height(&mut app, &ctx) < collapsed_picker);
+
+        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
+        let [_, header_title] = text_centers(&output, "Log")[..] else {
+            panic!("expected the toolbar toggle and the drawer header");
+        };
+        click(&mut app, &ctx, header_title);
+        assert!(!app.is_log_expanded);
+        assert_eq!(laid_out_picker_height(&mut app, &ctx), collapsed_picker);
+    }
+
+    fn old_tree_with_a_visible_log(
+        ctx: Rc<RefCell<ZColorPickerAppContext>>,
+    ) -> egui_tiles::Tree<Pane> {
+        let mut tiles = egui_tiles::Tiles::default();
+        let picker = tiles.insert_pane(Pane::ColorPicker(ColorPickerPane {
+            title: None,
+            ctx: ctx.clone(),
+        }));
+        let options = tiles.insert_pane(Pane::ColorPickerOptionsPane(ColorPickerOptionsPane {
+            title: None,
+            ctx: ctx.clone(),
+        }));
+        let previewer = tiles.insert_pane(Pane::Previewer(PreviewerPane { title: None, ctx }));
+        let log = tiles.insert_pane(Pane::Log(LogPane {}));
+        let mut binary = |dir, children, fraction| {
+            tiles.insert_container(egui_tiles::Linear::new_binary(dir, children, fraction))
+        };
+        let vertical = binary(egui_tiles::LinearDir::Vertical, [picker, options], 0.85);
+        let master = binary(
+            egui_tiles::LinearDir::Horizontal,
+            [vertical, previewer],
+            0.3,
+        );
+        let with_log = binary(egui_tiles::LinearDir::Vertical, [master, log], 0.8);
+        let root = tiles.insert_tab_tile(vec![with_log]);
+        egui_tiles::Tree::new("my_tree", root, tiles)
+    }
+
+    fn laid_out_pane_rects(app: &mut ZApp) -> [Option<Rect>; 3] {
+        laid_out_picker_height(app, &egui::Context::default());
+        [
+            pane_rect(&app.tree, is_picker_pane),
+            pane_rect(&app.tree, |pane| {
+                matches!(pane, Pane::ColorPickerOptionsPane(_))
+            }),
+            pane_rect(&app.tree, |pane| matches!(pane, Pane::Previewer(_))),
+        ]
+    }
+
+    #[test]
+    fn restored_tree_with_an_old_log_pane_drops_it_and_keeps_the_other_panes() {
+        let mut old_app = test_app();
+        old_app.tree = old_tree_with_a_visible_log(old_app.app_ctx.clone());
+        let mut json = serde_json::to_value(&old_app).unwrap();
+        let old_log_tile = json["tree"]["tiles"]["tiles"]
+            .as_object_mut()
+            .unwrap()
+            .values_mut()
+            .find(|tile| tile["Pane"].get("Log").is_some())
+            .unwrap();
+        old_log_tile["Pane"]["Log"] =
+            serde_json::json!({"title": "Log", "log_buffer": ["[INFO] old line"]});
+
+        let mut restored: ZApp = serde_json::from_value(json).unwrap();
+        remove_log_tiles(&mut restored.tree);
+
+        assert!(!restored
+            .tree
+            .tiles
+            .iter()
+            .any(|(_, tile)| matches!(tile, Tile::Pane(Pane::Log(_)))));
+        let restored_rects = laid_out_pane_rects(&mut restored);
+        assert!(
+            restored_rects.iter().all(Option::is_some),
+            "{restored_rects:?}"
+        );
+        assert_eq!(restored_rects, laid_out_pane_rects(&mut test_app()));
     }
 
     #[test]
@@ -1141,8 +1265,9 @@ mod tests {
         let app_ctx = Rc::new(RefCell::new(<ZColorPickerAppContext as Default>::default()));
         let app = ZApp {
             state: AppState::Idle,
-            tree: ZApp::create_tree(app_ctx.clone(), log_buffer.clone()),
+            tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
+            is_log_expanded: false,
             log_buffer,
             had_keyboard_focus: false,
         };
@@ -1183,8 +1308,9 @@ mod tests {
         let log_buffer = Arc::new(Mutex::new(Vec::new()));
         let mut app = ZApp {
             state: AppState::Startup,
-            tree: ZApp::create_tree(app_ctx.clone(), log_buffer.clone()),
+            tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
+            is_log_expanded: false,
             log_buffer,
             had_keyboard_focus: false,
         };
@@ -1211,8 +1337,9 @@ mod tests {
         let app_ctx = Rc::new(RefCell::new(<ZColorPickerAppContext as Default>::default()));
         let mut app = ZApp {
             state: AppState::Idle,
-            tree: ZApp::create_tree(app_ctx.clone(), log_buffer.clone()),
+            tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
+            is_log_expanded: false,
             log_buffer,
             had_keyboard_focus: false,
         };

@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::{Arc, Mutex},
-};
+use std::{cell::RefCell, rc::Rc};
 
 use eframe::egui;
 use serde::{Deserialize, Serialize};
@@ -10,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     common::{ColorStringCopy, SplineMode},
     datatypes::control_point::ControlPoint,
-    logger::ui_log_window,
     preset::PresetHandler,
     ui_egui::{
         app::ZColorPickerAppContext,
@@ -200,18 +195,12 @@ impl ZAppPane for PreviewerPane {
     }
 }
 
+// Parses the Log tile of old saved state; ZApp::startup removes it from the tree.
 #[derive(Serialize, Deserialize)]
-pub struct LogPane {
-    pub title: Option<String>,
-    pub log_buffer: Arc<Mutex<Vec<String>>>,
-}
+pub struct LogPane {}
 impl ZAppPane for LogPane {
-    fn title(&self) -> String {
-        self.title.clone().unwrap_or(format!("Pane"))
-    }
-    fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
-        ui_log_window(ui, self.log_buffer.clone());
-        return egui_tiles::UiResponse::None;
+    fn ui(&mut self, _ui: &mut egui::Ui) -> egui_tiles::UiResponse {
+        egui_tiles::UiResponse::None
     }
 
     fn update_ctx(&mut self, _new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {}

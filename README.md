@@ -31,6 +31,7 @@ To create a new preset, click the preset combo box and select `<NEW>`
 - Click the color readout or Ctrl+C: copy the selected point's color in the Copy-as format
 - Middle-click: Copy screen color as the selected format, on previewer, copies image to clipboard
 - H/S/V/T fields: drag, or click and type a value; Enter or Tab commits, Esc cancels. H is read-only for middle points under Auto hue, T for the first and last points; with Lock, S and V move every point
+- Click the log header (bottom of the window): expand or collapse the log; collapsed, it shows the last line; expanded, drag its top edge to resize it
 - F12: debug window with the control point values
 - Esc: quit (ignored while typing, or while a popup, dialog or the Create Preset window is open)
 
@@ -38,7 +39,7 @@ To create a new preset, click the preset combo box and select `<NEW>`
 
 - Preset: Pick a preset, then Save, Rename... (opens a name field; Enter renames), Delete, Auto-save (rewrite the selected preset file after every edit). A failed save shows its error at the end of the row
 - Copy as: Text format for a copied color; previewer strips are copied as images
-- Log (right end): Show or hide the log pane; hidden by default
+- Log (right end): Expand or collapse the log drawer; collapsed by default
 
 ## Options
 
