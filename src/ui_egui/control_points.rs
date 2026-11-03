@@ -290,6 +290,26 @@ pub fn insert_point(points: &mut Vec<ControlPoint>, index: usize, mut cp: Contro
         }
     }
     points.insert(index, cp);
+    keep_min_t_gap(points);
+}
+
+fn keep_min_t_gap(points: &mut [ControlPoint]) {
+    let count = points.len();
+    if count < 3 || points.windows(2).all(|pair| pair[1].t() - pair[0].t() >= MIN_T_GAP) {
+        return;
+    }
+    if (count - 1) as f32 * MIN_T_GAP > 1.0 {
+        space_t_evenly(points);
+        return;
+    }
+    for i in 1..count - 1 {
+        let lo = points[i - 1].t() + MIN_T_GAP;
+        *points[i].t_mut() = points[i].t().max(lo);
+    }
+    for i in (1..count - 1).rev() {
+        let hi = points[i + 1].t() - MIN_T_GAP;
+        *points[i].t_mut() = points[i].t().min(hi);
+    }
 }
 
 pub fn remove_point(points: &mut Vec<ControlPoint>, index: usize) -> ControlPoint {
@@ -790,6 +810,21 @@ mod tests {
             insert_point(&mut points, index, ControlPoint::default());
             assert_ts_near(&points, expected);
             assert!(has_valid_t(&points), "{ts:?} at {index}");
+        }
+    }
+
+    #[test]
+    fn repeated_inserts_into_one_gap_keep_t_valid_and_the_min_gap() {
+        let mut points = points_with_t(&[0.0, 0.3, 1.0]);
+        for _ in 0..40 {
+            let before_last = points.len() - 1;
+            insert_point(&mut points, before_last, ControlPoint::default());
+        }
+        assert!(has_valid_t(&points), "{:?}", ts_of(&points));
+        assert_eq!(*points[1].t(), 0.3);
+        for pair in points.windows(2) {
+            let gap = pair[1].t() - pair[0].t();
+            assert!(gap >= MIN_T_GAP * 0.999, "{gap} in {:?}", ts_of(&points));
         }
     }
 
