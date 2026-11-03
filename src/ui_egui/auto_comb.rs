@@ -521,17 +521,29 @@ struct Side {
 #[derive(Default)]
 struct Residuals {
     values: Vec<f64>,
-    rows: Vec<Vec<f64>>,
+    rows: Vec<Vec<(usize, f64)>>,
 }
 
 impl Residuals {
-    fn push(&mut self, value: f64, row: Vec<f64>) {
+    fn push(&mut self, value: f64, row: Vec<(usize, f64)>) {
         self.values.push(value);
         self.rows.push(row);
     }
 
     fn cost(&self) -> f64 {
         self.values.iter().map(|value| value * value).sum()
+    }
+
+    fn band_width(&self) -> usize {
+        self.rows
+            .iter()
+            .filter_map(|row| {
+                let low = row.iter().map(|&(variable, _)| variable).min()?;
+                let high = row.iter().map(|&(variable, _)| variable).max()?;
+                Some(high - low)
+            })
+            .max()
+            .unwrap_or(0)
     }
 }
 
@@ -681,13 +693,11 @@ impl<'a> Chain<'a> {
     // Weighted target misses and length moves, then the G2 gaps times `gap_weight`; without the
     // objective, only the G2 gaps.
     fn residuals(&self, x: &[f64], with_objective: bool, gap_weight: f64) -> Residuals {
-        let count = x.len();
         let row = |terms: &[(usize, f64)], factor: f64| {
-            let mut row = vec![0.0; count];
-            for &(variable, slope) in terms {
-                row[variable] += factor * slope;
-            }
-            row
+            terms
+                .iter()
+                .map(|&(variable, slope)| (variable, factor * slope))
+                .collect()
         };
         let sides = self.sides(x);
         let mut residuals = Residuals::default();
@@ -736,13 +746,15 @@ impl<'a> Chain<'a> {
             if cost == 0.0 {
                 break;
             }
+            let width = current.band_width();
+            let stride = width + 1;
             let mut gradient = vec![0.0; count];
-            let mut normal = vec![0.0; count * count];
+            let mut normal = vec![0.0; count * stride];
             for (value, row) in current.values.iter().zip(&current.rows) {
-                for i in (0..count).filter(|&i| row[i] != 0.0) {
-                    gradient[i] += value * row[i];
-                    for j in 0..count {
-                        normal[i * count + j] += row[i] * row[j];
+                for &(i, a) in row {
+                    gradient[i] += value * a;
+                    for &(j, b) in row.iter().filter(|&&(j, _)| j >= i) {
+                        normal[i * stride + j - i] += a * b;
                     }
                 }
             }
@@ -757,17 +769,17 @@ impl<'a> Chain<'a> {
                 let mut rhs: Vec<f64> = gradient.iter().map(|g| -g).collect();
                 for i in 0..count {
                     if held[i] {
-                        for j in 0..count {
-                            matrix[i * count + j] = 0.0;
-                            matrix[j * count + i] = 0.0;
+                        matrix[i * stride..(i + 1) * stride].fill(0.0);
+                        for k in i.saturating_sub(width)..i {
+                            matrix[k * stride + i - k] = 0.0;
                         }
-                        matrix[i * count + i] = 1.0;
+                        matrix[i * stride] = 1.0;
                         rhs[i] = 0.0;
                     } else {
-                        matrix[i * count + i] += damping * normal[i * count + i].max(f64::EPSILON);
+                        matrix[i * stride] += damping * normal[i * stride].max(f64::EPSILON);
                     }
                 }
-                solve_linear(matrix, rhs)
+                solve_band(matrix, width, rhs)
             };
             let accepted = loop {
                 if damping > MAX_DAMPING {
@@ -901,40 +913,38 @@ impl<'a> Chain<'a> {
     }
 }
 
-// Gaussian elimination with partial pivoting on a row-major square matrix.
-fn solve_linear(mut matrix: Vec<f64>, mut rhs: Vec<f64>) -> Option<Vec<f64>> {
+// Cholesky on a symmetric positive definite band matrix, stored as each row's diagonal and the
+// `width` entries right of it.
+fn solve_band(mut band: Vec<f64>, width: usize, mut rhs: Vec<f64>) -> Option<Vec<f64>> {
     let size = rhs.len();
-    for column in 0..size {
-        let pivot = (column..size).max_by(|&a, &b| {
-            let at = |row: usize| matrix[row * size + column].abs();
-            at(a).total_cmp(&at(b))
-        })?;
-        if matrix[pivot * size + column] == 0.0 {
+    let stride = width + 1;
+    let at = |i: usize, j: usize| i * stride + j - i;
+    for i in 0..size {
+        let end = size.min(i + stride);
+        let pivot = band[at(i, i)];
+        if pivot <= 0.0 || pivot.is_nan() {
             return None;
         }
-        for k in 0..size {
-            matrix.swap(pivot * size + k, column * size + k);
+        let root = pivot.sqrt();
+        for j in i..end {
+            band[at(i, j)] /= root;
         }
-        rhs.swap(pivot, column);
-        for row in column + 1..size {
-            let factor = matrix[row * size + column] / matrix[column * size + column];
-            if factor == 0.0 {
-                continue;
+        for k in i + 1..end {
+            for j in k..end {
+                band[at(k, j)] -= band[at(i, k)] * band[at(i, j)];
             }
-            for k in column..size {
-                matrix[row * size + k] -= factor * matrix[column * size + k];
-            }
-            rhs[row] -= factor * rhs[column];
+        }
+        rhs[i] /= root;
+        for j in i + 1..end {
+            rhs[j] -= band[at(i, j)] * rhs[i];
         }
     }
-    let mut solution = vec![0.0; size];
-    for row in (0..size).rev() {
-        let known: f64 = (row + 1..size)
-            .map(|k| matrix[row * size + k] * solution[k])
-            .sum();
-        solution[row] = (rhs[row] - known) / matrix[row * size + row];
+    for i in (0..size).rev() {
+        let end = size.min(i + stride);
+        let known: f64 = (i + 1..end).map(|j| band[at(i, j)] * rhs[j]).sum();
+        rhs[i] = (rhs[i] - known) / band[at(i, i)];
     }
-    solution.iter().all(|s| s.is_finite()).then_some(solution)
+    rhs.iter().all(|x| x.is_finite()).then_some(rhs)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -1866,5 +1876,35 @@ mod tests {
             let (after, _) = run(points);
             assert_finite(&after);
         }
+    }
+
+    #[test]
+    fn band_solve_matches_the_full_system() {
+        let (size, width) = (7, 2);
+        let full = |i: usize, j: usize| match i.abs_diff(j) {
+            0 => 4.0 + i as f64,
+            1 => -1.0 + 0.1 * i.min(j) as f64,
+            2 => 0.5,
+            _ => 0.0,
+        };
+        let band: Vec<f64> = (0..size)
+            .flat_map(|i| (i..=i + width).map(move |j| if j < size { full(i, j) } else { 0.0 }))
+            .collect();
+        let expected: Vec<f64> = (0..size).map(|i| i as f64 - 2.5).collect();
+        let rhs: Vec<f64> = (0..size)
+            .map(|i| (0..size).map(|j| full(i, j) * expected[j]).sum())
+            .collect();
+        let solution = solve_band(band, width, rhs).unwrap();
+        for (x, e) in solution.iter().zip(&expected) {
+            assert!((x - e).abs() < 1.0e-12, "{solution:?}");
+        }
+    }
+
+    #[test]
+    fn band_solve_rejects_a_matrix_that_is_not_positive_definite() {
+        assert_eq!(
+            solve_band(vec![1.0, 2.0, 1.0, 0.0], 1, vec![1.0, 1.0]),
+            None
+        );
     }
 }
