@@ -29,6 +29,7 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 - Middle-click: copy the color under the cursor in the selected format. On the previewer, it copies the image instead.
 - Drag (M1): move a point, a Bezier tangent handle, a hue gizmo, or a middle point's T (its marker on the T strip, or its previewer key band). End T markers and bands are fixed; clicking a marker selects its point.
 - Inspector (H, S, V, T under the readout): drag, or click and type the selected point's value; Enter, Tab or a click away commits, Esc cancels.
+- Click the log drawer's header (or the toolbar Log toggle): expand or collapse the log.
 - F12: debug window with the control point values.
 - Esc: quit, only on a first press (not a key repeat) and only when `ZApp::is_input_blocked` is false: no widget had keyboard focus last frame, and no popup, modal (delete confirm, pending switch) or Create Preset window is open. It is read before the tree is drawn, because egui drops focus and closes popups during the Esc frame. The same flag blocks Ctrl+C (`should_quit_on_escape`, `is_copy_shortcut`).
 
@@ -37,11 +38,12 @@ cargo test hermite   # single test by name filter (bin crate; tests live in #[cf
 ### App state and ownership
 - `src/main.rs` starts eframe. If eframe persistence storage holds a serialized `ZApp` (JSON under `eframe::APP_KEY`), the app is deserialized from it and `request_init()` sends it back through the startup path. Otherwise `ZApp::new` is used.
 - `ZApp` (`src/ui_egui/app.rs`) is a small state machine (`Startup` -> `Idle` -> `Exit`). It owns the `egui_tiles::Tree<Pane>` and an `Rc<RefCell<ZColorPickerAppContext>>`.
-- `ZColorPickerAppContext` is the central mutable state: `control_points`, `spline_mode`, `PresetHandler`, the picker and previewer widgets, pending input events, and so on. Each pane (`src/ui_egui/panes.rs`: ColorPicker, ColorPickerOptions, Previewer, Log) holds a clone of that `Rc`. After deserialization, `startup()` walks the tile tree and calls `update_ctx` to re-point every pane at the live context. Serde does not preserve `Rc` sharing, so this step is load-bearing.
+- `ZColorPickerAppContext` is the central mutable state: `control_points`, `spline_mode`, `PresetHandler`, the picker and previewer widgets, pending input events, and so on. Each pane (`src/ui_egui/panes.rs`: ColorPicker, ColorPickerOptions, Previewer) holds a clone of that `Rc`. After deserialization, `startup()` walks the tile tree and calls `update_ctx` to re-point every pane at the live context. Serde does not preserve `Rc` sharing, so this step is load-bearing.
 - Because everything shares one `RefCell`, borrow conflicts are the main runtime hazard. The existing code clones data out, drops the borrow, draws, then re-borrows mutably to write back. Examples are the `ui()` methods in `panes.rs` and `show_create_preset_window`. Follow that pattern.
 - Any cloned state has to be written back explicitly, or the edits are lost without any error. For example, `preset_bar_ui` has to assign `presets_window` and `preset_handler` back to the context.
 - The toolbar (`ZApp::draw_toolbar`, a `TopBottomPanel` drawn before the tile tree) holds the preset bar (`WindowPreset` via `preset_bar_ui` in `panes.rs`), the Copy-as combo and the Log toggle; the options pane holds only the Points, Curve and Comb rows. The "Create Preset" window is drawn from `ZApp::draw_ui_tree` before the toolbar. Rename is a `popup_below_widget` popup, not a `menu_button`: egui menus are not `Memory` popups, so `any_popup_open` would miss them and Esc would also quit.
-- The Log pane is hidden by default (`create_tree`). The Log toggle sets its tile's visibility (`Tree::set_visible`), which is saved with the tree (`Tiles.invisible`); state saved before that has an empty set, so the log shows until toggled once. The tile id is looked up every frame (`log_tile_id`); without a Log tile the toggle is not drawn.
+- The log is a bottom drawer, not a tile: `ZApp::draw_log_drawer`, a `TopBottomPanel` drawn after the toolbar and before the tile tree. Its header (`ui_log_header` in `src/logger.rs`: painted chevron, "Log", and the last line while collapsed) and the toolbar Log toggle flip the same persisted `ZApp::is_log_expanded` (serde default: collapsed). Collapsed and expanded are two panels with their own ids, so a collapse keeps the resized height.
+- Saved state from before the drawer still has a `Pane::Log` tile; it parses into the empty `LogPane`, and `startup` drops it (`remove_log_tiles`) before re-pointing the panes, so its space goes to the others.
 - Fields marked `#[serde(skip)]` are transient UI/event state. Anything without it is persisted in eframe storage, so changing a persisted type's shape can break loading of existing saved state. On a parse failure, loading logs a warning (`Ignoring stored app state`) and falls back to defaults.
 
 ### Data model
@@ -82,6 +84,6 @@ Pressing the middle button stores a `ScreenshotTarget` in `pending_screenshot_ta
 
 ### Misc
 - The log filter defaults to `info,z_color_picker=debug` (`DEFAULT_LOG_FILTER` in `src/logger.rs`); a set `RUST_LOG` replaces it, e.g. `RUST_LOG=debug` shows dependency debug output too.
-- `LogCollector` (`src/logger.rs`) captures log lines into a shared `Arc<Mutex<Vec<String>>>`, capped at 2000 lines, which the Log pane displays. Never call `log::*` while holding that mutex; `LogCollector::log` locks it too, so it would deadlock.
+- `LogCollector` (`src/logger.rs`) captures log lines into a shared `Arc<Mutex<Vec<String>>>`, capped at 2000 lines, which the log drawer displays. Never call `log::*` while holding that mutex; `LogCollector::log` locks it too, so it would deadlock.
 - The UI scale (`pixels_per_point`) is set in `startup()` to the current monitor's shorter side in physical pixels / 1080 (`ui_scale`), read from `ViewportInfo::monitor_size`. It is not persisted. If the size is unknown or unusable, it falls back to 2560x1440 (`HARDCODED_MONITOR_SIZE`), i.e. 1.33.
 - The debug windows live in `src/ui_egui/debug_windows.rs`.
