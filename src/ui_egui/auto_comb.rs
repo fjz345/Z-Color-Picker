@@ -929,7 +929,6 @@ pub fn drag_handle_to(
     slot: usize,
     target: ControlPointValue,
     is_auto_comb_running: bool,
-    dragging_tangent: &mut Option<(usize, usize)>,
 ) {
     if points[index].tangents()[slot].is_none() {
         return;
@@ -939,7 +938,6 @@ pub fn drag_handle_to(
     }
     let offset = target - *points[index].val();
     points[index].tangents_mut()[slot] = Some(offset);
-    *dragging_tangent = Some((index, slot));
 }
 
 #[cfg(test)]
@@ -1232,9 +1230,7 @@ mod tests {
         let mut target = *points[index].val();
         target[0] += offset.x as f32;
         target[1] += offset.y as f32;
-        let mut pinned = None;
-        drag_handle_to(points, index, slot, target, true, &mut pinned);
-        assert_eq!(pinned, Some((index, slot)));
+        drag_handle_to(points, index, slot, target, true);
         apply_auto_comb(points, handle_drag(index, slot));
     }
 

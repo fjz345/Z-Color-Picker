@@ -10,10 +10,10 @@ use crate::{
     preset::PresetHandler,
     ui_egui::{
         app::ZColorPickerAppContext,
-        color_picker::ZColorPickerWrapper,
+        color_picker::{is_auto_comb_running, ZColorPickerWrapper},
         content_windows::{copy_format_combo, curve_controls, flip_control_points},
         theme,
-        view_3d::{View3d, View3dItem},
+        view_3d::{CurveSettings, View3d, View3dItem},
     },
 };
 pub struct TileUi;
@@ -164,34 +164,41 @@ impl ZAppPane for View3dPane {
         self.title.clone().unwrap_or_else(|| "Pane".to_owned())
     }
     fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
-        let (mut control_points, spline_mode, picker_space, blend_space, mut selected_index) = {
+        let (mut control_points, curve, mut selected_index) = {
             let ctx = self.ctx.borrow();
-            let selected_index = ctx.z_color_picker.borrow().last_modifying_point_index;
+            let color_picker = ctx.z_color_picker.borrow();
+            let curve = CurveSettings {
+                spline_mode: ctx.spline_mode,
+                picker_space: ctx.picker_space,
+                blend_space: ctx.blend_space,
+                is_auto_comb_running: is_auto_comb_running(
+                    ctx.spline_mode,
+                    ctx.blend_space,
+                    &color_picker.options,
+                ),
+            };
             (
                 ctx.control_points.clone(),
-                ctx.spline_mode,
-                ctx.picker_space,
-                ctx.blend_space,
-                selected_index,
+                curve,
+                color_picker.last_modifying_point_index,
             )
         };
-        let dragged = self.view.draw_ui(
-            ui,
-            &mut control_points,
-            spline_mode,
-            picker_space,
-            blend_space,
-            &mut selected_index,
-        );
+        let dragged = self
+            .view
+            .draw_ui(ui, &mut control_points, curve, &mut selected_index);
         let mut ctx = self.ctx.borrow_mut();
         let ctx = &mut *ctx;
         let mut color_picker = ctx.z_color_picker.borrow_mut();
         color_picker.last_modifying_point_index = selected_index;
-        if let Some(View3dItem::Handle(index, side)) = dragged {
-            color_picker.dragging_tangent = Some((index, side));
+        match dragged {
+            Some(View3dItem::Point(index)) => color_picker.dragging_index = Some(index),
+            Some(View3dItem::Handle(index, side)) => {
+                color_picker.dragging_tangent = Some((index, side))
+            }
+            None => {}
         }
         if control_points != ctx.control_points {
-            color_picker.apply_control_point_constraints(&mut control_points, picker_space);
+            color_picker.apply_control_point_constraints(&mut control_points, curve.picker_space);
             ctx.control_points = control_points;
         }
         egui_tiles::UiResponse::None

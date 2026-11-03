@@ -177,7 +177,7 @@ impl Default for ZColorPickerWrapper {
     }
 }
 
-fn is_auto_comb_running(
+pub fn is_auto_comb_running(
     spline_mode: SplineMode,
     blend_space: BlendSpace,
     options: &ZColorPickerOptions,
@@ -802,8 +802,7 @@ fn handle_hue_slider(
         slider_size,
         hue_strip_color_at_function(picker_space, selected_value),
     );
-    let hue_response =
-        hue_response.on_hover_text(strip_hint(strip, is_modifying_index.is_some()));
+    let hue_response = hue_response.on_hover_text(strip_hint(strip, is_modifying_index.is_some()));
 
     let picking = hue_response.clicked_by(PointerButton::Primary)
         || hue_response.dragged_by(PointerButton::Primary);
@@ -951,8 +950,8 @@ fn handle_control_points_ui(
                             tang_idx,
                             target,
                             is_auto_comb_running(ctx.spline_mode, ctx.blend_space, ctx.options),
-                            ctx.dragging_tangent,
                         );
+                        *ctx.dragging_tangent = Some((index, tang_idx));
                     }
                 }
             }
@@ -2630,12 +2629,27 @@ mod tests {
                 [[0.0, -0.1], [0.0, 0.1]],
             ],
         );
-        picker.pre_draw_update(&mut arc, SplineMode::Bezier, PickerSpace::Hsv, BlendSpace::Picker);
+        picker.pre_draw_update(
+            &mut arc,
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         assert_eq!(picker.auto_comb_unsolved, 0);
         *arc[1].curvature_mut() = Some(1.0e4);
-        picker.pre_draw_update(&mut arc, SplineMode::Bezier, PickerSpace::Hsv, BlendSpace::Picker);
+        picker.pre_draw_update(
+            &mut arc,
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         assert_eq!(picker.auto_comb_unsolved, 2);
-        picker.pre_draw_update(&mut arc, SplineMode::Linear, PickerSpace::Hsv, BlendSpace::Picker);
+        picker.pre_draw_update(
+            &mut arc,
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         assert_eq!(picker.auto_comb_unsolved, 0);
     }
 
@@ -2650,13 +2664,28 @@ mod tests {
                 [[0.0, -0.1], [0.0, 0.1]],
             ],
         );
-        picker.pre_draw_update(&mut arc, SplineMode::Bezier, PickerSpace::Hsv, BlendSpace::Picker);
+        picker.pre_draw_update(
+            &mut arc,
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         let combed = arc.clone();
         for cp in arc.iter_mut() {
             *cp.curvature_mut() = Some(1.0e4);
         }
-        picker.pre_draw_update(&mut arc, SplineMode::Linear, PickerSpace::Hsv, BlendSpace::Picker);
-        picker.pre_draw_update(&mut arc, SplineMode::Bezier, PickerSpace::Hsv, BlendSpace::Picker);
+        picker.pre_draw_update(
+            &mut arc,
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
+        picker.pre_draw_update(
+            &mut arc,
+            SplineMode::Bezier,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        );
         assert_eq!(picker.auto_comb_unsolved, 0);
         for (reseeded, original) in arc.iter().zip(&combed) {
             assert_eq!(reseeded.tangents(), original.tangents());

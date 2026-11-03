@@ -12,15 +12,17 @@ use serde::{Deserialize, Serialize};
 use crate::{
     color_space::{
         hsl_to_srgb, linear_to_color32, linear_to_oklab, linear_to_picker, linear_to_srgb,
-        oklab_to_linear, srgb_to_hsl, srgb_to_hsv, srgb_to_linear, BlendSpace, PickerSpace,
+        map_into_srgb_gamut, oklab_to_linear, srgb_to_hsl, srgb_to_hsv, srgb_to_linear, BlendSpace,
+        PickerSpace,
     },
     common::{ColorStringCopy, SplineMode},
     datatypes::control_point::{ControlPoint, ControlPointValue},
     math::shortest_hue_delta,
     ui_egui::{
+        auto_comb::drag_handle_to,
         blend::Gradient,
         color_picker::format_color_as,
-        control_points::{bezier_handle, control_point_outline},
+        control_points::{bezier_handle, clip_points_to_srgb, control_point_outline},
     },
 };
 
@@ -101,7 +103,7 @@ impl View3dSpace {
             }
             View3dSpace::Oklab => {
                 let [a, height, minus_b] = position;
-                clamp_to_srgb_gamut(oklab_to_linear([height + 0.5, a, -minus_b]))
+                map_into_srgb_gamut(oklab_to_linear([height + 0.5, a, -minus_b]))
             }
         }
     }
@@ -134,10 +136,6 @@ fn cylinder_coordinates([x, y, z]: [f32; 3]) -> [f32; 3] {
     let hue = ((-z).atan2(x) / TAU).rem_euclid(1.0);
     let radius = (x.hypot(z) / CYLINDER_RADIUS).min(1.0);
     [hue, radius, (y + 0.5).clamp(0.0, 1.0)]
-}
-
-fn clamp_to_srgb_gamut(linear: [f32; 3]) -> [f32; 3] {
-    linear.map(|c| c.clamp(0.0, 1.0))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -626,20 +624,22 @@ fn item_shapes(
 fn picker_value_from_linear(
     picker_space: PickerSpace,
     linear: [f32; 3],
-    previous_hue: f32,
+    previous_z: f32,
 ) -> ControlPointValue {
-    let [hue, s, y] = linear_to_picker(picker_space, linear);
+    let [z, s, y] = linear_to_picker(picker_space, linear);
     assert!(
-        [hue, s, y].iter().all(|c| c.is_finite()),
-        "{linear:?} in {picker_space:?}: {hue}, {s}, {y}"
+        [z, s, y].iter().all(|c| c.is_finite()),
+        "{linear:?} in {picker_space:?}: {z}, {s}, {y}"
     );
     let is_achromatic = s <= 0.0;
-    let hue = if is_achromatic {
-        previous_hue
+    let z = if !picker_space.is_z_hue() {
+        picker_space.z_on_bar(z)
+    } else if is_achromatic {
+        previous_z
     } else {
-        previous_hue + shortest_hue_delta(previous_hue, hue)
+        previous_z + shortest_hue_delta(previous_z, z)
     };
-    ControlPointValue::new(s.clamp(0.0, 1.0), y.clamp(0.0, 1.0), hue)
+    ControlPointValue::new(s.clamp(0.0, 1.0), y.clamp(0.0, 1.0), z)
 }
 
 pub fn move_point_to_linear(
@@ -650,6 +650,7 @@ pub fn move_point_to_linear(
 ) {
     let value = control_points[index].val_mut();
     *value = picker_value_from_linear(picker_space, linear, value.h());
+    clip_points_to_srgb(&mut control_points[index..=index], picker_space);
 }
 
 pub fn move_handle_to_linear(
@@ -658,11 +659,11 @@ pub fn move_handle_to_linear(
     side: usize,
     linear: [f32; 3],
     picker_space: PickerSpace,
+    is_auto_comb_running: bool,
 ) {
-    let cp = &mut control_points[index];
-    let handle = picker_value_from_linear(picker_space, linear, bezier_handle(cp, side).h());
-    let offset = handle - *cp.val();
-    cp.tangents_mut()[side] = Some(offset);
+    let previous = bezier_handle(&control_points[index], side);
+    let handle = picker_value_from_linear(picker_space, linear, previous.h());
+    drag_handle_to(control_points, index, side, handle, is_auto_comb_running);
 }
 
 const FACE_STEPS: usize = 12;
@@ -852,16 +853,28 @@ impl Default for View3d {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct CurveSettings {
+    pub spline_mode: SplineMode,
+    pub picker_space: PickerSpace,
+    pub blend_space: BlendSpace,
+    pub is_auto_comb_running: bool,
+}
+
 impl View3d {
     pub fn draw_ui(
         &mut self,
         ui: &mut Ui,
         control_points: &mut [ControlPoint],
-        spline_mode: SplineMode,
-        picker_space: PickerSpace,
-        blend_space: BlendSpace,
+        curve: CurveSettings,
         selected_index: &mut Option<usize>,
     ) -> Option<View3dItem> {
+        let CurveSettings {
+            spline_mode,
+            picker_space,
+            blend_space,
+            ..
+        } = curve;
         ui.horizontal_wrapped(|ui| {
             egui::ComboBox::from_id_salt("view_3d_space")
                 .selected_text(self.space.label())
@@ -885,14 +898,7 @@ impl View3d {
             picker_space,
             handles_of(*selected_index),
         );
-        let dragged = self.edit_items(
-            ui,
-            &response,
-            &items,
-            control_points,
-            picker_space,
-            selected_index,
-        );
+        let dragged = self.edit_items(ui, &response, &items, control_points, curve, selected_index);
         self.camera = camera_after_input(self.camera, ui, &response, self.drag.is_some());
         let (camera, space) = (self.camera, self.space);
         let items = scene_items(
@@ -964,7 +970,7 @@ impl View3d {
         response: &egui::Response,
         items: &[SceneItem],
         control_points: &mut [ControlPoint],
-        picker_space: PickerSpace,
+        curve: CurveSettings,
         selected_index: &mut Option<usize>,
     ) -> Option<View3dItem> {
         let targets: Vec<(Pos2, View3dItem)> = items
@@ -1007,11 +1013,16 @@ impl View3d {
         let linear = self.space.linear_at(moved);
         match drag.item {
             View3dItem::Point(index) => {
-                move_point_to_linear(control_points, index, linear, picker_space)
+                move_point_to_linear(control_points, index, linear, curve.picker_space)
             }
-            View3dItem::Handle(index, side) => {
-                move_handle_to_linear(control_points, index, side, linear, picker_space)
-            }
+            View3dItem::Handle(index, side) => move_handle_to_linear(
+                control_points,
+                index,
+                side,
+                linear,
+                curve.picker_space,
+                curve.is_auto_comb_running,
+            ),
         }
         Some(drag.item)
     }
@@ -1023,10 +1034,11 @@ mod tests {
     use std::{cell::RefCell, f32::consts::FRAC_PI_2, rc::Rc};
 
     use crate::{
-        color_space::BlendSpace,
+        color_space::{is_in_srgb_gamut, oklab_to_oklch, BlendSpace},
         datatypes::control_point::ControlPointValue,
         ui_egui::{
             app::ZColorPickerAppContext,
+            auto_comb::{apply_auto_comb, CombEdit},
             panes::{View3dPane, ZAppPane},
         },
     };
@@ -1170,6 +1182,26 @@ mod tests {
     }
 
     #[test]
+    fn oklab_positions_outside_srgb_lose_chroma_at_their_lightness_and_hue() {
+        for position in [[0.6, 0.0, 0.0], [0.0, 0.3, -0.2], [-0.25, -0.2, 0.1]] {
+            let [a, height, minus_b] = position;
+            let [wanted_l, wanted_chroma, wanted_hue] = oklab_to_oklch([height + 0.5, a, -minus_b]);
+            let linear = View3dSpace::Oklab.linear_at(position);
+            let [l, chroma, hue] = oklab_to_oklch(linear_to_oklab(linear));
+            assert!(is_in_srgb_gamut(linear), "{position:?}: {linear:?}");
+            assert!(
+                (l - wanted_l).abs() < 1e-3,
+                "{position:?}: L {l} != {wanted_l}"
+            );
+            assert!(
+                shortest_hue_delta(hue, wanted_hue).abs() < 1e-3,
+                "{position:?}: hue {hue} != {wanted_hue}"
+            );
+            assert!(chroma < wanted_chroma, "{position:?}");
+        }
+    }
+
+    #[test]
     fn unproject_puts_the_point_under_the_target_at_the_same_depth() {
         let camera = OrbitCamera::default();
         let original = [0.2, -0.1, 0.3];
@@ -1229,7 +1261,7 @@ mod tests {
         let original = point_with_tangents([0.5, 0.5, 0.3], 0.5);
         let mut points = vec![original.clone()];
         let target = [0.1, 0.5, 0.7];
-        move_handle_to_linear(&mut points, 0, 1, target, PickerSpace::Hsl);
+        move_handle_to_linear(&mut points, 0, 1, target, PickerSpace::Hsl, false);
         assert_close(
             bezier_handle(&points[0], 1).linear(PickerSpace::Hsl),
             target,
@@ -1238,6 +1270,43 @@ mod tests {
         assert_eq!(points[0].t(), original.t());
         assert_eq!(points[0].tangents()[0], original.tangents()[0]);
         assert_ne!(points[0].tangents()[1], original.tangents()[1]);
+    }
+
+    const OKLAB: PickerSpace = PickerSpace::Oklab {
+        clip_to_srgb: false,
+    };
+
+    #[test]
+    fn moving_a_point_in_oklab_sets_its_lightness_instead_of_turning_a_hue() {
+        let mut points = vec![point_with_tangents([0.5, 0.5, 0.95], 0.0)];
+        let dark_gray = [0.01; 3];
+        move_point_to_linear(&mut points, 0, dark_gray, OKLAB);
+        let value = *points[0].val();
+        assert!(
+            (value.h() - linear_to_oklab(dark_gray)[0]).abs() < 1e-4,
+            "{value:?}"
+        );
+        assert_close(value.unmapped_linear(OKLAB), dark_gray);
+    }
+
+    #[test]
+    fn moving_a_point_outside_srgb_clips_it_only_with_clip_on() {
+        let outside = oklab_to_linear([0.7, 0.3, 0.0]);
+        assert!(!is_in_srgb_gamut(outside));
+        let oklch = PickerSpace::Oklch {
+            clip_to_srgb: false,
+        };
+        for space in [oklch, OKLAB] {
+            let mut kept = vec![point_with_tangents([0.5, 0.5, 0.5], 0.0)];
+            move_point_to_linear(&mut kept, 0, outside, space);
+            assert_close(kept[0].val().unmapped_linear(space), outside);
+
+            let clipping = space.with_clip_to_srgb(true);
+            let mut clipped = vec![point_with_tangents([0.5, 0.5, 0.5], 0.0)];
+            move_point_to_linear(&mut clipped, 0, outside, clipping);
+            assert!(clipped[0].val().is_in_srgb(clipping), "{space:?}");
+            assert_eq!(*clipped[0].val(), kept[0].val().clipped_to_srgb(clipping));
+        }
     }
 
     #[test]
@@ -1471,6 +1540,7 @@ mod tests {
         assert!(under.distance(end) < 0.5, "{under:?} != {end:?}");
         let color_picker = ctx.z_color_picker.borrow();
         assert_eq!(color_picker.last_modifying_point_index, Some(0));
+        assert_eq!(color_picker.dragging_index, Some(0));
         assert_eq!(color_picker.dragging_tangent, None);
         assert_eq!(pane.view.camera, OrbitCamera::default());
     }
@@ -1510,6 +1580,67 @@ mod tests {
             }
         }
         assert_eq!(ctx.z_color_picker.borrow().dragging_tangent, Some((1, 1)));
+    }
+
+    fn seeded_arc() -> Vec<ControlPoint> {
+        let handles = [
+            [[0.0, 0.15], [0.0, -0.15]],
+            [[-0.15, 0.0], [0.15, 0.0]],
+            [[0.0, -0.15], [0.0, 0.15]],
+        ];
+        let mut points: Vec<ControlPoint> = [(0.2, 0.8, 0.0), (0.5, 0.5, 0.5), (0.8, 0.8, 1.0)]
+            .iter()
+            .zip(handles)
+            .map(|(&(s, v, t), handles)| {
+                let mut cp = ControlPoint::new_simple(ControlPointValue::new(s, v, 0.3), t);
+                *cp.tangents_mut() = handles.map(|[ds, dv]| Some([ds, dv, 0.0].into()));
+                cp
+            })
+            .collect();
+        let reseed = CombEdit {
+            is_reseed: true,
+            ..Default::default()
+        };
+        assert_eq!(apply_auto_comb(&mut points, reseed), 0);
+        assert!(points.iter().all(|cp| cp.curvature().is_some()));
+        points
+    }
+
+    fn stretch_handle(pane: &mut View3dPane, index: usize, side: usize) {
+        let egui_ctx = egui::Context::default();
+        let rect = view_rect(&pane_frame(&egui_ctx, pane, Vec::new()));
+        let cp = pane.ctx.borrow().control_points[index].clone();
+        let point = screen_pos(pane, rect, *cp.val());
+        let handle = screen_pos(pane, rect, bezier_handle(&cp, side));
+        let start = handle_marker_pos(point, handle, side);
+        let end = start + 12.0 * (start - point).normalized();
+        drag(&egui_ctx, pane, start, end);
+    }
+
+    #[test]
+    fn dragging_a_handle_with_auto_comb_on_sets_its_point_curvature() {
+        for is_auto_comb in [false, true] {
+            let points = seeded_arc();
+            let mut pane = pane_with(&points, SplineMode::Bezier, Some(1));
+            pane.ctx
+                .borrow()
+                .z_color_picker
+                .borrow_mut()
+                .options
+                .is_auto_comb = is_auto_comb;
+            stretch_handle(&mut pane, 1, 1);
+
+            let ctx = pane.ctx.borrow();
+            let moved = &ctx.control_points;
+            assert_ne!(moved[1].tangents()[1], points[1].tangents()[1]);
+            assert_eq!(
+                moved[1].curvature() != points[1].curvature(),
+                is_auto_comb,
+                "auto comb {is_auto_comb}: {:?} -> {:?}",
+                points[1].curvature(),
+                moved[1].curvature()
+            );
+        }
     }
 
     #[test]
