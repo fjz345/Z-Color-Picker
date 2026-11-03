@@ -74,15 +74,23 @@ impl<'a> ZColorPicker<'a> {
     fn picker_ui(&mut self, ui: &mut Ui) -> Response {
         let spacing = ui.spacing();
         let strip_ratio = spacing.interact_size.y / spacing.slider_width;
-        // Must match main_color_picker's stack inside the margins: header, inspector, color readout, hue, T, square, Points and Comb rows, and the overlays' add_space(8.0).
-        let row_count = 3.0;
-        let gap_count = 7.0;
+        let option_rows_id = ui.id().with("option_rows_height");
+        let option_rows_height = ui
+            .data(|data| data.get_temp(option_rows_id))
+            .unwrap_or(2.0 * spacing.interact_size.y + spacing.item_spacing.y);
+        // Must match main_color_picker's stack inside the margins: header, inspector, color readout, hue, T, square, and the overlays' add_space(8.0); then the option rows.
+        let row_count = 1.0;
+        let gap_count = 6.0;
         let overlay_space = 2.0 * 8.0;
         let fixed_height = header_height(spacing)
             + row_count * spacing.interact_size.y
             + color_readout_height(spacing)
             + gap_count * spacing.item_spacing.y
-            + overlay_space;
+            + overlay_space
+            + option_rows_height;
+        // The width-limited inset lines the rows up with a full-width square and keeps their wrapping independent of the square's size.
+        let (_, rows_margin) =
+            picker_layout(vec2(ui.available_width(), f32::INFINITY), strip_ratio, 0.0);
         let (side, margin) = picker_layout(ui.available_size(), strip_ratio, fixed_height);
         let desired_size = vec2(side, side);
         if let Some(last_modified_index) = *self.ctx.last_modifying_point_index {
@@ -97,13 +105,36 @@ impl<'a> ZColorPicker<'a> {
         let centering = ((ui.available_width() - side) / 2.0 - margin.x).max(0.0);
         let column = ui.available_rect_before_wrap();
         let column = column.with_min_x(column.min.x + centering);
-        ui.scope_builder(UiBuilder::new().max_rect(column), |ui| {
-            Frame::NONE
-                .inner_margin(Margin::symmetric(margin.x as i8, margin.y as i8))
-                .show(ui, |ui| main_color_picker(ui, desired_size, self.ctx))
-                .inner
-        })
-        .inner
+        let response = ui
+            .scope_builder(UiBuilder::new().max_rect(column), |ui| {
+                Frame::NONE
+                    .inner_margin(Margin::symmetric(margin.x as i8, margin.y as i8))
+                    .show(ui, |ui| main_color_picker(ui, desired_size, self.ctx))
+                    .inner
+            })
+            .inner;
+
+        let laid_out_rows_height = Frame::NONE
+            .inner_margin(Margin::symmetric(rows_margin.x as i8, 0))
+            .show(ui, |ui| {
+                points_row(ui, self.ctx.options);
+                comb_row(
+                    ui,
+                    self.ctx.options,
+                    self.ctx.spline_mode,
+                    self.ctx.blend_space,
+                    self.ctx.auto_comb_unsolved,
+                );
+            })
+            .response
+            .rect
+            .height();
+        if (laid_out_rows_height - option_rows_height).abs() > 0.5 {
+            ui.data_mut(|data| data.insert_temp(option_rows_id, laid_out_rows_height));
+            ui.ctx()
+                .request_discard("picker option rows changed height");
+        }
+        response
     }
 
     fn add_contents(&mut self, ui: &mut Ui) -> Response {
@@ -586,15 +617,6 @@ pub fn main_color_picker(
         }
 
         handle_control_points_ui(ui, ctx, &slider_2d_response, &mut is_modifying_index);
-
-        points_row(ui, ctx.options);
-        comb_row(
-            ui,
-            ctx.options,
-            ctx.spline_mode,
-            ctx.blend_space,
-            ctx.auto_comb_unsolved,
-        );
 
         slider_2d_response
     })
@@ -1413,6 +1435,21 @@ mod tests {
     fn picker_insets_square_in_height_limited_pane() {
         let LaidOutPicker { pane, used, .. } = assert_square_inset(vec2(1000.0, 520.0));
         assert!(pane.bottom() - used.bottom() < 1.0, "{used:?} in {pane:?}");
+    }
+
+    #[test]
+    fn picker_option_rows_span_the_pane_not_the_centered_column() {
+        for size in [vec2(540.0, 520.0), vec2(580.0, 560.0), vec2(620.0, 640.0)] {
+            let LaidOutPicker { pane, used, .. } = assert_square_inset(size);
+            assert!(used.right() <= pane.right() + 0.5, "{used:?} in {pane:?}");
+        }
+    }
+
+    #[test]
+    fn picker_fits_option_rows_that_wrap_in_a_narrow_pane() {
+        for height in (600..=800).step_by(4) {
+            assert_square_inset(vec2(300.0, height as f32));
+        }
     }
 
     #[test]
