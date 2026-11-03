@@ -1,14 +1,15 @@
 use ecolor::Color32;
 use eframe::{
     egui::{self, CursorIcon, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2},
-    emath::RectTransform,
     epaint::PathShape,
 };
 
 use crate::{
     datatypes::control_point::ControlPoint,
     ui_egui::{
-        control_points::{bezier_handle, control_point_pos, value_pos},
+        control_points::{
+            bezier_handle, control_point_pos, screen_to_unit, unit_to_screen, value_pos,
+        },
         curvature::catmull_rom_handles,
     },
 };
@@ -27,10 +28,10 @@ pub fn ui_control_point_tangents(
     is_first: bool,
     is_last: bool,
     is_selected: bool,
-    to_screen: &RectTransform,
+    square: Rect,
     parent_response: &egui::Response,
-    control_point_draw_size: Vec2,
-    control_point_radius: f32,
+    hit_size: Vec2,
+    point_radius: f32,
     tangent_shapes: &mut Vec<Shape>,
     tangent_paths: &mut Vec<PathShape>,
 ) -> TangentUiResult {
@@ -53,10 +54,10 @@ pub fn ui_control_point_tangents(
         return result;
     }
 
-    let cp_screen = to_screen.transform_pos(control_point_pos(cp));
+    let cp_screen = unit_to_screen(square, control_point_pos(cp));
     let parent_size = parent_response.rect.size();
 
-    let active_radius = TANGENT_RADIUS_SCALE * control_point_radius;
+    let active_radius = TANGENT_RADIUS_SCALE * point_radius;
     let line_stroke = Stroke::new(1.5, Color32::WHITE.linear_multiply(LINE_ALPHA));
     let ring_stroke = Stroke::new(1.5, Color32::WHITE);
 
@@ -68,17 +69,13 @@ pub fn ui_control_point_tangents(
         if tangent.is_none() {
             continue;
         }
-        let tang_screen = to_screen.transform_pos(value_pos(&bezier_handle(cp, tangent_index)));
+        let tang_screen = unit_to_screen(square, value_pos(&bezier_handle(cp, tangent_index)));
 
-        let tang_screen = with_min_handle_length(
-            cp_screen,
-            tang_screen,
-            tangent_index,
-            2.0 * control_point_radius,
-        );
+        let tang_screen =
+            with_min_handle_length(cp_screen, tang_screen, tangent_index, 2.0 * point_radius);
         let response = ui
             .interact(
-                Rect::from_center_size(tang_screen, control_point_draw_size),
+                Rect::from_center_size(tang_screen, hit_size),
                 parent_response.id.with((cp_index, tangent_index)),
                 Sense::drag(),
             )
@@ -89,7 +86,7 @@ pub fn ui_control_point_tangents(
         }
 
         if result.dragged_tangent.is_none() && response.dragged_by(Primary) {
-            let drawn_end = to_screen.inverse().transform_pos(tang_screen);
+            let drawn_end = screen_to_unit(square, tang_screen);
             let delta = response.drag_delta() / parent_size;
             result.selected_by_tangent = true;
             result.selected_tangent = Some(tangent_index);
@@ -120,14 +117,13 @@ pub fn paint_auto_tangents(ui: &Ui, rect: Rect, control_points: &[ControlPoint],
     };
     let line_stroke = Stroke::new(1.0, Color32::WHITE.linear_multiply(0.45));
 
-    let to_screen = RectTransform::from_to(Rect::from_min_size(Pos2::ZERO, Vec2::splat(1.0)), rect);
-    let cp_screen = to_screen.transform_pos(control_point_pos(&control_points[index]));
+    let cp_screen = unit_to_screen(rect, control_point_pos(&control_points[index]));
     let painter = ui.painter_at(rect);
     for handle in catmull_rom_handles(control_points, index)
         .into_iter()
         .flatten()
     {
-        let path = [cp_screen, to_screen.transform_pos(handle)];
+        let path = [cp_screen, unit_to_screen(rect, handle)];
         for stroke in [UNDERLAY, line_stroke] {
             painter.extend(Shape::dashed_line(&path, stroke, DASH_LENGTH, GAP_LENGTH));
         }
@@ -192,10 +188,6 @@ mod tests {
         let mut cp = ControlPoint::new_simple([0.5, 0.5, 0.2].into(), 0.0);
         *cp.tangents_mut() = [Some([-0.2, 0.0, 0.0].into()), Some([0.2, 0.0, 0.0].into())];
         let picker_rect = Rect::from_min_size(Pos2::new(50.0, 50.0), Vec2::splat(200.0));
-        let to_screen = RectTransform::from_to(
-            Rect::from_min_size(Pos2::ZERO, Vec2::splat(1.0)),
-            picker_rect,
-        );
         let mut tangent_shapes = Vec::new();
         let mut tangent_paths = Vec::new();
         let _ = egui::Context::default().run(egui::RawInput::default(), |ctx| {
@@ -208,7 +200,7 @@ mod tests {
                     false,
                     false,
                     false,
-                    &to_screen,
+                    picker_rect,
                     &parent,
                     Vec2::splat(16.0),
                     8.0,

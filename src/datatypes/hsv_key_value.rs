@@ -225,18 +225,33 @@ impl std::ops::Div<HsvKeyValue> for HsvKeyValue {
     }
 }
 
+fn mix(from: HsvKeyValue, to: HsvKeyValue, t: f32) -> HsvKeyValue {
+    from * (1.0 - t) + to * t
+}
+
+fn de_casteljau(
+    t: f32,
+    a: HsvKeyValue,
+    u: HsvKeyValue,
+    v: HsvKeyValue,
+    b: HsvKeyValue,
+) -> HsvKeyValue {
+    let (au, uv, vb) = (mix(a, u, t), mix(u, v, t), mix(v, b, t));
+    mix(mix(au, uv, t), mix(uv, vb, t), t)
+}
+
 impl splines::interpolate::Interpolate<f32> for HsvKeyValue {
     fn step(t: f32, threshold: f32, a: Self, b: Self) -> Self {
-        if t < threshold {
-            a
-        } else {
+        if t >= threshold {
             b
+        } else {
+            a
         }
     }
 
     fn cosine(t: f32, a: Self, b: Self) -> Self {
-        let cos_nt = (1. - (t * std::f32::consts::PI).cos()) * 0.5;
-        <Self as splines::interpolate::Interpolate<f32>>::lerp(cos_nt, a, b)
+        let eased = 0.5 - 0.5 * (std::f32::consts::PI * t).cos();
+        <Self as splines::interpolate::Interpolate<f32>>::lerp(eased, a, b)
     }
 
     fn lerp(t: f32, a: Self, b: Self) -> Self {
@@ -249,52 +264,35 @@ impl splines::interpolate::Interpolate<f32> for HsvKeyValue {
         }
     }
 
-    //a * (1. - t) + b * t
-
     fn cubic_hermite(
         t: f32,
-        x: (f32, Self),
-        a: (f32, Self),
-        b: (f32, Self),
-        y: (f32, Self),
+        before: (f32, Self),
+        start: (f32, Self),
+        end: (f32, Self),
+        after: (f32, Self),
     ) -> Self {
-        // sampler stuff
-        let two_t = t * 2.;
-        let three_t = t * 3.;
-        let t2 = t * t;
-        let t3 = t2 * t;
-        let two_t3 = t2 * two_t;
-        let two_t2 = t * two_t;
-        let three_t2 = t * three_t;
-
-        // tangents
-        let m0 = (b.1 - x.1) / (b.0 - x.0) * (b.0 - a.0);
-        let m1 = (y.1 - a.1) / (y.0 - a.0) * (b.0 - a.0);
-
-        a.1 * (two_t3 - three_t2 + 1.)
-            + m0 * (t3 - two_t2 + t)
-            + b.1 * (three_t2 - two_t3)
-            + m1 * (t3 - t2)
+        let start_velocity = (end.1 - before.1) / (end.0 - before.0);
+        let end_velocity = (after.1 - start.1) / (after.0 - start.0);
+        let handle_time = (end.0 - start.0) / 3.0;
+        de_casteljau(
+            t,
+            start.1,
+            start.1 + start_velocity * handle_time,
+            end.1 - end_velocity * handle_time,
+            end.1,
+        )
     }
 
     fn quadratic_bezier(t: f32, a: Self, u: Self, b: Self) -> Self {
-        let one_t = 1. - t;
-        let one_t2 = one_t * one_t;
-
-        u + (a - u) * one_t2 + (b - u) * t * t
+        mix(mix(a, u, t), mix(u, b, t), t)
     }
 
     fn cubic_bezier(t: f32, a: Self, u: Self, v: Self, b: Self) -> Self {
-        let one_t = 1. - t;
-        let one_t2 = one_t * one_t;
-        let one_t3 = one_t2 * one_t;
-        let t2 = t * t;
-
-        a * one_t3 + (u * one_t2 * t + v * one_t * t2) * 3. + b * t2 * t
+        de_casteljau(t, a, u, v, b)
     }
 
     fn cubic_bezier_mirrored(t: f32, a: Self, u: Self, v: Self, b: Self) -> Self {
-        <Self as splines::interpolate::Interpolate<f32>>::cubic_bezier(t, a, u, b + b - v, b)
+        de_casteljau(t, a, u, b + (b - v), b)
     }
 }
 
@@ -338,6 +336,82 @@ mod tests {
         let b = HsvKeyValue::new(0.8, 0.9, 0.3);
         assert_close(bezier(0.0, a, b), a);
         assert_close(bezier(1.0, a, b), b);
+    }
+
+    #[test]
+    fn step_holds_a_until_the_threshold() {
+        let (a, b) = (
+            HsvKeyValue::new(0.1, 0.2, 0.3),
+            HsvKeyValue::new(0.7, 0.8, 0.9),
+        );
+        assert_eq!(<HsvKeyValue as Interpolate<f32>>::step(0.49, 0.5, a, b), a);
+        assert_eq!(<HsvKeyValue as Interpolate<f32>>::step(0.5, 0.5, a, b), b);
+    }
+
+    #[test]
+    fn cosine_eases_between_the_keys() {
+        let (a, b) = (
+            HsvKeyValue::new(0.0, 0.2, 0.1),
+            HsvKeyValue::new(1.0, 0.6, 0.3),
+        );
+        let cosine = |t| <HsvKeyValue as Interpolate<f32>>::cosine(t, a, b);
+        assert_close(cosine(0.0), a);
+        assert_close(cosine(1.0), b);
+        assert_close(cosine(0.5), HsvKeyValue::new(0.5, 0.4, 0.2));
+        let eased = 0.146_446_6;
+        assert_close(
+            cosine(0.25),
+            HsvKeyValue::new(eased, 0.2 + 0.4 * eased, 0.1 + 0.2 * eased),
+        );
+    }
+
+    #[test]
+    fn cubic_hermite_uses_catmull_rom_tangents_over_uneven_key_times() {
+        let before = (0.0, HsvKeyValue::new(0.0, 0.0, 0.1));
+        let start = (1.0, HsvKeyValue::new(1.0, 0.0, 0.2));
+        let end = (3.0, HsvKeyValue::new(1.0, 1.0, 0.4));
+        let after = (4.0, HsvKeyValue::new(0.0, 1.0, 0.5));
+        let hermite =
+            |t| <HsvKeyValue as Interpolate<f32>>::cubic_hermite(t, before, start, end, after);
+        assert_close(hermite(0.0), start.1);
+        assert_close(hermite(1.0), end.1);
+        assert_close(hermite(0.5), HsvKeyValue::new(7.0 / 6.0, 0.5, 0.3));
+    }
+
+    #[test]
+    fn quadratic_bezier_weights_the_handle_by_its_bernstein_basis() {
+        let a = HsvKeyValue::new(0.0, 0.0, 0.0);
+        let u = HsvKeyValue::new(1.0, 0.5, 0.2);
+        let b = HsvKeyValue::new(0.0, 1.0, 0.4);
+        let quadratic = |t| <HsvKeyValue as Interpolate<f32>>::quadratic_bezier(t, a, u, b);
+        assert_close(quadratic(0.0), a);
+        assert_close(quadratic(1.0), b);
+        assert_close(quadratic(0.5), HsvKeyValue::new(0.5, 0.5, 0.2));
+    }
+
+    #[test]
+    fn cubic_bezier_midpoint_weights_inner_handles_three_eighths() {
+        let a = HsvKeyValue::new(0.0, 0.0, 0.0);
+        let u = HsvKeyValue::new(0.8, 0.0, 0.8);
+        let v = HsvKeyValue::new(0.8, 0.8, 0.0);
+        let b = HsvKeyValue::new(0.0, 0.8, 0.8);
+        let mid = <HsvKeyValue as Interpolate<f32>>::cubic_bezier(0.5, a, u, v, b);
+        assert_close(mid, HsvKeyValue::new(0.6, 0.4, 0.4));
+    }
+
+    #[test]
+    fn cubic_bezier_mirrored_reflects_the_end_handle_through_the_end() {
+        let a = HsvKeyValue::new(0.1, 0.1, 0.1);
+        let u = HsvKeyValue::new(0.4, 0.2, 0.2);
+        let v = HsvKeyValue::new(0.6, 0.5, 0.3);
+        let b = HsvKeyValue::new(0.8, 0.9, 0.5);
+        let reflected = HsvKeyValue::new(1.0, 1.3, 0.7);
+        for t in [0.0, 0.3, 0.5, 0.8, 1.0] {
+            assert_close(
+                <HsvKeyValue as Interpolate<f32>>::cubic_bezier_mirrored(t, a, u, v, b),
+                <HsvKeyValue as Interpolate<f32>>::cubic_bezier(t, a, u, reflected, b),
+            );
+        }
     }
 
     #[test]

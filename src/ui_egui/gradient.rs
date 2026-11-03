@@ -6,17 +6,11 @@ pub fn color_function_gradient(
     color_at: impl Fn(f32) -> Color32,
 ) -> Response {
     let (rect, response) = ui.allocate_at_least(size, Sense::click_and_drag());
-
     if ui.is_rect_visible(rect) {
-        let _visuals = ui.style().interact(&response);
-
-        // background_checkers(ui.painter(), rect); // for alpha:
-
         let segments = gradient_segment_count(rect.width());
         ui.painter()
             .add(Shape::mesh(gradient_mesh(rect, segments, color_at)));
     }
-
     response
 }
 
@@ -35,16 +29,16 @@ fn gradient_segment_count(width_pt: f32) -> u32 {
 fn gradient_mesh(rect: Rect, segments: u32, color_at: impl Fn(f32) -> Color32) -> Mesh {
     assert!(segments > 0);
     let mut mesh = Mesh::default();
-    for i in 0..=segments {
-        let t = i as f32 / (segments as f32);
-        let color = color_at(t);
-        let x = lerp(rect.left()..=rect.right(), t);
-        mesh.colored_vertex(pos2(x, rect.top()), color);
-        mesh.colored_vertex(pos2(x, rect.bottom()), color);
-        if i < segments {
-            mesh.add_triangle(2 * i, 2 * i + 1, 2 * i + 2);
-            mesh.add_triangle(2 * i + 1, 2 * i + 2, 2 * i + 3);
-        }
+    for column in 0..=segments {
+        let x = column as f32 / segments as f32;
+        let color = color_at(x);
+        mesh.colored_vertex(rect.lerp_inside(vec2(x, 0.0)), color);
+        mesh.colored_vertex(rect.lerp_inside(vec2(x, 1.0)), color);
+    }
+    for top_left in (0..2 * segments).step_by(2) {
+        let (bottom_left, top_right) = (top_left + 1, top_left + 2);
+        mesh.add_triangle(top_left, bottom_left, top_right);
+        mesh.add_triangle(top_right, bottom_left, top_right + 1);
     }
     mesh
 }

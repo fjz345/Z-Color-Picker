@@ -2,197 +2,112 @@ use eframe::egui::InnerResponse;
 use eframe::egui::Window;
 use eframe::{
     egui::{Painter, Response, Sense, Ui, WidgetInfo, WidgetType},
-    emath::{lerp, remap_clamp},
-    epaint::{pos2, Color32, Mesh, Rect, Rgba, Shape, Vec2},
+    emath::remap_clamp,
+    epaint::{vec2, Color32, Mesh, Rect, Rgba, Shape, StrokeKind, Vec2},
 };
 
-pub fn contrast_color(color: impl Into<Rgba>) -> Color32 {
-    if color.into().intensity() < 0.5 {
+use crate::ui_egui::gradient::color_function_gradient;
+
+pub fn black_or_white_against(background: Color32) -> Color32 {
+    let [r, g, b, _] = Rgba::from(background).to_array();
+    let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    if luminance < 0.5 {
         Color32::WHITE
     } else {
         Color32::BLACK
     }
 }
 
-pub fn background_checkers(painter: &Painter, rect: Rect) {
-    let rect = rect.shrink(0.5); // Small hack to avoid the checkers from peeking through the sides
-    if !rect.is_positive() {
-        return;
-    }
+const CHECKER_CELL: f32 = 6.0;
+const CHECKER_DARK: Color32 = Color32::from_gray(40);
+const CHECKER_LIGHT: Color32 = Color32::from_gray(115);
 
-    let dark_color = Color32::from_gray(32);
-    let bright_color = Color32::from_gray(128);
-
-    let checker_size = Vec2::splat(rect.height() / 2.0);
-    let n = (rect.width() / checker_size.x).round() as u32;
-
+fn checkerboard(rect: Rect) -> Mesh {
     let mut mesh = Mesh::default();
-    mesh.add_colored_rect(rect, dark_color);
-
-    let mut top = true;
-    for i in 0..n {
-        let x = lerp(rect.left()..=rect.right(), i as f32 / (n as f32));
-        let small_rect = if top {
-            Rect::from_min_size(pos2(x, rect.top()), checker_size)
-        } else {
-            Rect::from_min_size(pos2(x, rect.center().y), checker_size)
-        };
-        mesh.add_colored_rect(small_rect, bright_color);
-        top = !top;
+    mesh.add_colored_rect(rect, CHECKER_DARK);
+    let columns = (rect.width() / CHECKER_CELL).ceil().max(0.0) as usize;
+    let rows = (rect.height() / CHECKER_CELL).ceil().max(0.0) as usize;
+    for row in 0..rows {
+        for column in (row % 2..columns).step_by(2) {
+            let min = rect.min + CHECKER_CELL * vec2(column as f32, row as f32);
+            let cell = Rect::from_min_size(min, Vec2::splat(CHECKER_CELL)).intersect(rect);
+            mesh.add_colored_rect(cell, CHECKER_LIGHT);
+        }
     }
-    painter.add(Shape::mesh(mesh));
+    mesh
 }
 
-pub fn color_button(ui: &mut Ui, size: Vec2, color: Color32, _open: bool) -> Response {
+pub fn paint_swatch(painter: &Painter, rect: Rect, color: Color32) {
+    if !color.is_opaque() {
+        painter.add(Shape::mesh(checkerboard(rect)));
+    }
+    painter.rect_filled(rect, 0.0, color);
+}
+
+pub fn swatch(ui: &mut Ui, size: Vec2, color: Color32) -> Response {
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     response.widget_info(|| WidgetInfo::new(WidgetType::ColorButton));
-
-    if ui.is_rect_visible(rect) {
-        let visuals = &ui.visuals().widgets.open;
-        let rect = rect.expand(visuals.expansion);
-
-        show_color_at(ui.painter(), color, rect);
-    }
-
+    paint_swatch(ui.painter(), rect, color);
     response
 }
 
-/// Show a color with background checkers to demonstrate transparency (if any).
-pub fn show_color_at(painter: &Painter, color: Color32, rect: Rect) {
-    if color.is_opaque() {
-        painter.rect_filled(rect, 0.0, color);
-    } else {
-        // Transparent: how both the transparent and opaque versions of the color
-        background_checkers(painter, rect);
-
-        if color == Color32::TRANSPARENT {
-            // There is no opaque version, so just show the background checkers
-        } else {
-            let left = Rect::from_min_max(rect.left_top(), rect.center_bottom());
-            let right = Rect::from_min_max(rect.center_top(), rect.right_bottom());
-            painter.rect_filled(left, 0.0, color);
-            painter.rect_filled(right, 0.0, color.to_opaque());
-        }
-    }
+fn paint_outline(ui: &Ui, response: &Response) {
+    let stroke = ui.style().interact(response).bg_stroke;
+    ui.painter()
+        .rect_stroke(response.rect, 0.0, stroke, StrokeKind::Middle);
 }
 
-pub fn color_slider_1d(
+pub fn color_strip(
     ui: &mut Ui,
-    desired_size: Vec2,
-    val: Option<&mut f32>,
+    size: Vec2,
     color_at: impl Fn(f32) -> Color32,
-) -> Response {
-    #![allow(clippy::identity_op)]
-
-    let (rect, mut response) = ui.allocate_at_least(desired_size, Sense::click_and_drag());
-    let visuals = ui.style().interact(&response);
-
-    if let Some(mpos) = response.interact_pointer_pos() {
-        if let Some(val_mut) = val {
-            *val_mut = remap_clamp(
-                mpos.x,
-                response.rect.left()..=response.rect.right(),
-                0.0..=1.0,
-            );
-        }
-
+) -> (Response, Option<f32>) {
+    let mut response = color_function_gradient(ui, size, color_at);
+    paint_outline(ui, &response);
+    let picked = response
+        .interact_pointer_pos()
+        .map(|pointer| remap_clamp(pointer.x, response.rect.x_range(), 0.0..=1.0));
+    if picked.is_some() {
         response.mark_changed();
     }
-
-    if ui.is_rect_visible(rect) {
-        // fill color:
-        let mut mesh = Mesh::default();
-        for i in 0..=N {
-            let t = i as f32 / (N as f32);
-            let color = color_at(t);
-            let x = lerp(rect.left()..=rect.right(), t);
-            mesh.colored_vertex(pos2(x, rect.top()), color);
-            mesh.colored_vertex(pos2(x, rect.bottom()), color);
-            if i < N {
-                mesh.add_triangle(2 * i + 0, 2 * i + 1, 2 * i + 2);
-                mesh.add_triangle(2 * i + 1, 2 * i + 2, 2 * i + 3);
-            }
-        }
-        ui.painter().add(Shape::mesh(mesh));
-
-        ui.painter().rect_stroke(
-            rect,
-            0.0,
-            visuals.bg_stroke,
-            eframe::egui::StrokeKind::Middle,
-        ); // outline
-    }
-
-    response
+    (response, picked)
 }
 
-/// Number of vertices per dimension in the color sliders.
-/// We need at least 6 for hues, and more for smooth 2D areas.
-/// Should always be a multiple of 6 to hit the peak hues in HSV/HSL (every 60°).
-const N: u32 = 6 * 6;
-/// # Arguments
-/// * `x_value` - X axis, either saturation or value (0.0-1.0).
-/// * `y_value` - Y axis, either saturation or value (0.0-1.0).
-/// * `color_at` - A function that dictates how the mix of saturation and value will be displayed in the 2d slider.
-/// E.g.: `|x_value, y_value| HsvaGamma { h: 1.0, s: x_value, v: y_value, a: 1.0 }.into()` displays the colors as follows: top-left: white \[s: 0.0, v: 1.0], top-right: fully saturated color \[s: 1.0, v: 1.0], bottom-right: black \[s: 0.0, v: 1.0].
-///
-pub fn color_slider_2d(
-    ui: &mut Ui,
-    desiered_size: Vec2,
-    x_value: &mut f32,
-    y_value: &mut f32,
-    color_at: impl Fn(f32, f32) -> Color32,
-) -> Response {
-    let (rect, response) = ui.allocate_at_least(desiered_size, Sense::click());
+const COLOR_FIELD_CELLS: u32 = 32;
 
-    if let Some(mpos) = response.interact_pointer_pos() {
-        *x_value = remap_clamp(mpos.x, rect.left()..=rect.right(), 0.0..=1.0);
-        *y_value = remap_clamp(mpos.y, rect.bottom()..=rect.top(), 0.0..=1.0);
-    }
-
-    if ui.is_rect_visible(rect) {
-        let visuals = ui.style().interact(&response);
-        let mut mesh = Mesh::default();
-
-        for xi in 0..=N {
-            for yi in 0..=N {
-                let xt = xi as f32 / (N as f32);
-                let yt: f32 = yi as f32 / (N as f32);
-                let color = color_at(xt, yt);
-                let x = lerp(rect.left()..=rect.right(), xt);
-                let y = lerp(rect.bottom()..=rect.top(), yt);
-                mesh.colored_vertex(pos2(x, y), color);
-
-                if xi < N && yi < N {
-                    let x_offset = 1;
-                    let y_offset = N + 1;
-                    let tl = yi * y_offset + xi;
-                    mesh.add_triangle(tl, tl + x_offset, tl + y_offset);
-                    mesh.add_triangle(tl + x_offset, tl + y_offset, tl + y_offset + x_offset);
-                }
-            }
+fn color_field_mesh(rect: Rect, cells: u32, color_at: impl Fn(f32, f32) -> Color32) -> Mesh {
+    assert!(cells > 0);
+    let fraction = |i: u32| i as f32 / cells as f32;
+    let mut mesh = Mesh::default();
+    for row in 0..=cells {
+        let down = fraction(row);
+        for column in 0..=cells {
+            let x = fraction(column);
+            mesh.colored_vertex(rect.lerp_inside(vec2(x, down)), color_at(x, 1.0 - down));
         }
-        ui.painter().add(Shape::mesh(mesh)); // fill
-
-        ui.painter().rect_stroke(
-            rect,
-            0.0,
-            visuals.bg_stroke,
-            eframe::egui::StrokeKind::Middle,
-        ); // outline
-
-        // // Show where the slider is at:
-        // let x = lerp(rect.left()..=rect.right(), *x_value);
-        // let y = lerp(rect.bottom()..=rect.top(), *y_value);
-        // let picked_color = color_at(*x_value, *y_value);
-        // ui.painter().add(epaint::CircleShape {
-        //     center: pos2(x, y),
-        //     radius: rect.width() / 12.0,
-        //     fill: picked_color,
-        //     stroke: Stroke::new(visuals.fg_stroke.width, contrast_color(picked_color)),
-        // });
     }
+    let row_stride = cells + 1;
+    for row in 0..cells {
+        for column in 0..cells {
+            let top_left = row * row_stride + column;
+            let bottom_left = top_left + row_stride;
+            mesh.add_triangle(top_left, top_left + 1, bottom_left);
+            mesh.add_triangle(top_left + 1, bottom_left + 1, bottom_left);
+        }
+    }
+    mesh
+}
 
+pub fn color_field(ui: &mut Ui, size: Vec2, color_at: impl Fn(f32, f32) -> Color32) -> Response {
+    let (rect, response) = ui.allocate_at_least(size, Sense::click());
+    if ui.is_rect_visible(rect) {
+        ui.painter().add(Shape::mesh(color_field_mesh(
+            rect,
+            COLOR_FIELD_CELLS,
+            color_at,
+        )));
+        paint_outline(ui, &response);
+    }
     response
 }
 
@@ -229,5 +144,234 @@ pub trait ContentWindow {
         ui.ctx().set_visuals(prev_visuals);
 
         response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::egui::{self, Event, PointerButton, Pos2};
+
+    const STRIP_SIZE: Vec2 = Vec2::new(200.0, 40.0);
+    const FIELD_SIZE: Vec2 = Vec2::new(160.0, 160.0);
+    const SWATCH_SIZE: Vec2 = Vec2::new(30.0, 20.0);
+
+    fn run_frame(
+        ctx: &egui::Context,
+        events: Vec<Event>,
+        mut add: impl FnMut(&mut Ui),
+    ) -> egui::FullOutput {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0))),
+            events,
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| add(ui));
+        })
+    }
+
+    fn press(pos: Pos2, pressed: bool) -> Event {
+        Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }
+    }
+
+    fn painted_colors_within(output: &egui::FullOutput, rect: Rect) -> Vec<Color32> {
+        let mut colors = Vec::new();
+        for clipped in &output.shapes {
+            if !rect.contains_rect(clipped.shape.visual_bounding_rect()) {
+                continue;
+            }
+            match &clipped.shape {
+                Shape::Rect(shape) => colors.push(shape.fill),
+                Shape::Mesh(mesh) => colors.extend(mesh.vertices.iter().map(|v| v.color)),
+                _ => {}
+            }
+        }
+        colors.retain(|color| *color != Color32::TRANSPARENT);
+        colors
+    }
+
+    fn vertex_color_at(output: &egui::FullOutput, pos: Pos2) -> Option<Color32> {
+        output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                Shape::Mesh(mesh) => mesh.vertices.iter().find(|v| v.pos == pos).map(|v| v.color),
+                _ => None,
+            })
+    }
+
+    fn strip_color(t: f32) -> Color32 {
+        Color32::from_gray((t * 255.0).round() as u8)
+    }
+
+    fn strip(ui: &mut Ui) -> (Response, Option<f32>) {
+        color_strip(ui, STRIP_SIZE, strip_color)
+    }
+
+    fn strip_frame(ctx: &egui::Context, events: Vec<Event>) -> (Response, Option<f32>) {
+        let mut result = None;
+        run_frame(ctx, events, |ui| result = Some(strip(ui)));
+        result.unwrap()
+    }
+
+    fn field_color(x: f32, y: f32) -> Color32 {
+        Color32::from_rgb((x * 255.0).round() as u8, (y * 255.0).round() as u8, 0)
+    }
+
+    fn field(ui: &mut Ui) -> Response {
+        color_field(ui, FIELD_SIZE, field_color)
+    }
+
+    fn swatch_frame(color: Color32) -> (Response, egui::FullOutput) {
+        let mut response = None;
+        let output = run_frame(&egui::Context::default(), vec![], |ui| {
+            response = Some(swatch(ui, SWATCH_SIZE, color));
+        });
+        (response.unwrap(), output)
+    }
+
+    #[test]
+    fn contrast_is_white_on_dark_colors_and_black_on_bright_ones() {
+        for (background, expected) in [
+            (Color32::BLACK, Color32::WHITE),
+            (Color32::WHITE, Color32::BLACK),
+            (Color32::from_gray(100), Color32::WHITE),
+            (Color32::from_gray(200), Color32::BLACK),
+            (Color32::RED, Color32::WHITE),
+            (Color32::GREEN, Color32::BLACK),
+            (Color32::BLUE, Color32::WHITE),
+            (Color32::YELLOW, Color32::BLACK),
+            (Color32::from_rgb(255, 0, 255), Color32::WHITE),
+            (Color32::from_rgb(0, 255, 255), Color32::BLACK),
+        ] {
+            assert_eq!(
+                black_or_white_against(background),
+                expected,
+                "{background:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn strip_allocates_its_size_and_senses_click_and_drag() {
+        let (response, _) = strip_frame(&egui::Context::default(), vec![]);
+        assert_eq!(response.rect.size(), STRIP_SIZE);
+        assert!(response.sense.senses_click());
+        assert!(response.sense.senses_drag());
+    }
+
+    #[test]
+    fn strip_picks_the_pointer_fraction_clamped_to_its_ends() {
+        let ctx = egui::Context::default();
+        let (response, picked) = strip_frame(&ctx, vec![]);
+        assert_eq!(picked, None);
+        let rect = response.rect;
+        let quarter = rect.lerp_inside(Vec2::new(0.25, 0.5));
+        strip_frame(&ctx, vec![Event::PointerMoved(quarter)]);
+        let (response, picked) = strip_frame(&ctx, vec![press(quarter, true)]);
+        assert!(response.changed());
+        assert!((picked.unwrap() - 0.25).abs() < 1e-6, "{picked:?}");
+
+        let left_of_strip = rect.left_center() - Vec2::X * 5.0;
+        let (_, picked) = strip_frame(&ctx, vec![Event::PointerMoved(left_of_strip)]);
+        assert_eq!(picked, Some(0.0));
+        let right_of_strip = rect.right_center() + Vec2::X * 5.0;
+        let (_, picked) = strip_frame(&ctx, vec![Event::PointerMoved(right_of_strip)]);
+        assert_eq!(picked, Some(1.0));
+
+        strip_frame(&ctx, vec![press(right_of_strip, false)]);
+        let (response, picked) = strip_frame(&ctx, vec![]);
+        assert_eq!(picked, None);
+        assert!(!response.changed());
+    }
+
+    #[test]
+    fn strip_paints_color_at_from_left_to_right() {
+        let mut rect = Rect::NOTHING;
+        let output = run_frame(&egui::Context::default(), vec![], |ui| {
+            rect = strip(ui).0.rect;
+        });
+        assert_eq!(
+            vertex_color_at(&output, rect.left_top()),
+            Some(strip_color(0.0))
+        );
+        assert_eq!(
+            vertex_color_at(&output, rect.left_bottom()),
+            Some(strip_color(0.0))
+        );
+        assert_eq!(
+            vertex_color_at(&output, rect.right_top()),
+            Some(strip_color(1.0))
+        );
+        assert_eq!(
+            vertex_color_at(&output, rect.right_bottom()),
+            Some(strip_color(1.0))
+        );
+    }
+
+    #[test]
+    fn field_allocates_its_size_and_senses_clicks_only() {
+        let mut response = None;
+        run_frame(&egui::Context::default(), vec![], |ui| {
+            response = Some(field(ui));
+        });
+        let response = response.unwrap();
+        assert_eq!(response.rect.size(), FIELD_SIZE);
+        assert!(response.sense.senses_click());
+        assert!(!response.sense.senses_drag());
+    }
+
+    #[test]
+    fn field_paints_color_at_with_y_up_from_the_bottom_left_corner() {
+        let mut rect = Rect::NOTHING;
+        let output = run_frame(&egui::Context::default(), vec![], |ui| {
+            rect = field(ui).rect
+        });
+        for (corner, x, y) in [
+            (rect.left_bottom(), 0.0, 0.0),
+            (rect.left_top(), 0.0, 1.0),
+            (rect.right_top(), 1.0, 1.0),
+            (rect.right_bottom(), 1.0, 0.0),
+        ] {
+            assert_eq!(
+                vertex_color_at(&output, corner),
+                Some(field_color(x, y)),
+                "{corner:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn swatch_allocates_its_exact_size_and_senses_click_and_drag() {
+        let (response, _) = swatch_frame(Color32::RED);
+        assert_eq!(response.rect.size(), SWATCH_SIZE);
+        assert!(response.sense.senses_click());
+        assert!(response.sense.senses_drag());
+    }
+
+    #[test]
+    fn opaque_swatch_paints_only_its_color() {
+        let color = Color32::from_rgb(10, 120, 200);
+        let (response, output) = swatch_frame(color);
+        let colors = painted_colors_within(&output, response.rect);
+        assert!(!colors.is_empty());
+        assert!(colors.iter().all(|c| *c == color), "{colors:?}");
+    }
+
+    #[test]
+    fn transparent_swatch_paints_opaque_checkers() {
+        let (response, output) = swatch_frame(Color32::TRANSPARENT);
+        let mut colors = painted_colors_within(&output, response.rect);
+        colors.dedup();
+        colors.sort_by_key(|c| c.to_array());
+        colors.dedup();
+        assert_eq!(colors.len(), 2, "{colors:?}");
+        assert!(colors.iter().all(|c| c.is_opaque()), "{colors:?}");
     }
 }

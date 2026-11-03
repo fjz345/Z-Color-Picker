@@ -12,7 +12,7 @@ use crate::{
         blend::Gradient,
         control_points::{drag_grab_offset_x, drag_t, key_ts, space_t_evenly, t_at_pointer},
         gradient::color_function_gradient,
-        ui_common::{color_button, show_color_at},
+        ui_common::{paint_swatch, swatch},
     },
 };
 
@@ -53,14 +53,13 @@ fn ui_previewer_colors(
 
     for color in colors {
         let size_weight: f32 = 1.0;
-        let response_button = color_button(
+        let response_button = swatch(
             &mut previewer_ui_control_points,
             Vec2 {
                 x: size_weight * size_per_color_x,
                 y: size_per_color_y,
             },
             *color,
-            true,
         );
         on_hover_strip_hint(response_button, &hover_text);
     }
@@ -98,10 +97,10 @@ fn ui_previewer_control_points_with_drag(
             lerp(rect.x_range(), edges[i])..=lerp(rect.x_range(), edges[i + 1]),
             rect.y_range(),
         );
-        show_color_at(
+        paint_swatch(
             ui.painter(),
-            control_points[i].val().color(picker_space),
             band,
+            control_points[i].val().color(picker_space),
         );
 
         let id = response.id.with(i);

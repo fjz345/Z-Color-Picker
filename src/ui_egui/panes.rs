@@ -16,9 +16,9 @@ use crate::{
         view_3d::View3d,
     },
 };
-pub struct TreeBehavior {}
+pub struct TileUi;
 
-impl egui_tiles::Behavior<Pane> for TreeBehavior {
+impl egui_tiles::Behavior<Pane> for TileUi {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
         pane.title().into()
     }
@@ -26,7 +26,7 @@ impl egui_tiles::Behavior<Pane> for TreeBehavior {
     fn pane_ui(
         &mut self,
         ui: &mut egui::Ui,
-        _tile_id: egui_tiles::TileId,
+        _: egui_tiles::TileId,
         pane: &mut Pane,
     ) -> egui_tiles::UiResponse {
         theme::pane_card(ui, |ui| pane.ui(ui))

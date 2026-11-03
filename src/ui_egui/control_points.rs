@@ -1,7 +1,6 @@
 use ecolor::Color32;
 use eframe::{
     egui::{self, CursorIcon, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2},
-    emath::RectTransform,
     epaint::PathShape,
 };
 use splines::{Interpolate, Interpolation, Key, Spline};
@@ -11,7 +10,9 @@ use crate::{
     common::SplineMode,
     datatypes::control_point::{ControlPoint, ControlPointValue},
     math::shortest_hue_delta,
-    ui_egui::{blend::Gradient, tangents::ui_control_point_tangents, ui_common::contrast_color},
+    ui_egui::{
+        blend::Gradient, tangents::ui_control_point_tangents, ui_common::black_or_white_against,
+    },
 };
 
 const CONTROL_POINT_RADIUS: f32 = 8.0;
@@ -36,13 +37,21 @@ pub fn value_pos(val: &ControlPointValue) -> Pos2 {
     Pos2::new(val[0].clamp(0.0, 1.0), 1.0 - val[1].clamp(0.0, 1.0))
 }
 
-fn to_screen_pos(to_screen: &RectTransform, cp: &ControlPoint) -> Pos2 {
-    to_screen.transform_pos(control_point_pos(cp))
+pub fn unit_to_screen(square: Rect, unit: Pos2) -> Pos2 {
+    square.lerp_inside(unit.to_vec2())
+}
+
+pub fn screen_to_unit(square: Rect, screen: Pos2) -> Pos2 {
+    ((screen - square.min) / square.size()).to_pos2()
+}
+
+fn screen_pos(square: Rect, cp: &ControlPoint) -> Pos2 {
+    unit_to_screen(square, control_point_pos(cp))
 }
 
 pub fn control_point_outline(fill: Color32, emphasized: bool) -> Stroke {
     let width = if emphasized { 2.5 } else { 1.5 };
-    Stroke::new(width, contrast_color(fill))
+    Stroke::new(width, black_or_white_against(fill))
 }
 
 fn control_point_hint(index: usize, count: usize) -> String {
@@ -69,13 +78,8 @@ pub fn ui_ordered_control_points(
         return ControlPointUiResult::default();
     }
 
-    let to_screen = RectTransform::from_to(
-        Rect::from_min_size(Pos2::ZERO, Vec2::new(1.0, 1.0)),
-        parent_response.rect,
-    );
-
-    let control_point_radius = CONTROL_POINT_RADIUS;
-    let control_point_draw_size = Vec2::splat(2.0 * control_point_radius);
+    let square = parent_response.rect;
+    let hit_size = Vec2::splat(2.0 * CONTROL_POINT_RADIUS);
 
     let mut selected_index = marked_control_point_index;
     let mut tangent_selected_index = None;
@@ -95,10 +99,10 @@ pub fn ui_ordered_control_points(
                 i == 0,
                 i == control_points.len() - 1,
                 marked_control_point_index == Some(i),
-                &to_screen,
+                square,
                 parent_response,
-                control_point_draw_size,
-                control_point_radius,
+                hit_size,
+                CONTROL_POINT_RADIUS,
                 &mut tangent_shapes,
                 &mut tangent_paths,
             );
@@ -115,15 +119,18 @@ pub fn ui_ordered_control_points(
         }
     }
 
-    let control_point_shapes_fill: Vec<Shape> = control_points
+    let fills: Vec<Shape> = control_points
         .iter()
         .enumerate()
         .map(|(i, cp)| {
-            let point_in_screen = to_screen_pos(&to_screen, cp);
-
-            let rect = Rect::from_center_size(point_in_screen, control_point_draw_size);
+            let center = screen_pos(square, cp);
+            let hit_rect = Rect::from_center_size(center, hit_size);
             let response = ui
-                .interact(rect, parent_response.id.with(i), Sense::click_and_drag())
+                .interact(
+                    hit_rect,
+                    parent_response.id.with(i),
+                    Sense::click_and_drag(),
+                )
                 .on_hover_and_drag_cursor(CursorIcon::Grab)
                 .on_hover_text(control_point_hint(i, control_points.len()));
             if response.dragged_by(Primary) {
@@ -142,31 +149,31 @@ pub fn ui_ordered_control_points(
             }
 
             Shape::circle_filled(
-                point_in_screen,
-                FILL_RADIUS_SCALE * control_point_radius,
+                center,
+                CONTROL_POINT_FILL_RADIUS,
                 cp.val().color(picker_space),
             )
         })
         .collect();
 
     let hovered_index = hovering_control_point.as_ref().map(|(_, i)| *i);
-    let control_point_shapes: Vec<Shape> = control_points
+    let outlines: Vec<Shape> = control_points
         .iter()
         .enumerate()
         .map(|(i, cp)| {
-            let point = to_screen_pos(&to_screen, cp);
+            let center = screen_pos(square, cp);
             let emphasized = hovered_index == Some(i) || marked_control_point_index == Some(i);
             let outline = control_point_outline(cp.val().color(picker_space), emphasized);
 
             if i == 0 || i == control_points.len() - 1 {
                 Shape::rect_stroke(
-                    Rect::from_center_size(point, Vec2::splat(control_point_radius)),
+                    Rect::from_center_size(center, Vec2::splat(CONTROL_POINT_RADIUS)),
                     0.0,
                     outline,
                     egui::StrokeKind::Middle,
                 )
             } else {
-                Shape::circle_stroke(point, control_point_radius, outline)
+                Shape::circle_stroke(center, CONTROL_POINT_RADIUS, outline)
             }
         })
         .collect();
@@ -174,7 +181,7 @@ pub fn ui_ordered_control_points(
     if SHOW_LINEAR_LINE {
         let points: Vec<Pos2> = control_points
             .iter()
-            .map(|cp| to_screen_pos(&to_screen, cp))
+            .map(|cp| screen_pos(square, cp))
             .collect();
 
         ui.painter().add(PathShape::line(
@@ -183,17 +190,17 @@ pub fn ui_ordered_control_points(
         ));
     }
 
-    ui.painter().extend(control_point_shapes_fill);
-    ui.painter().extend(control_point_shapes);
+    ui.painter().extend(fills);
+    ui.painter().extend(outlines);
     ui.painter()
         .extend(tangent_paths.into_iter().map(Into::into));
     ui.painter().extend(tangent_shapes);
 
     if let Some(marked) = marked_control_point_index {
         let marked_point = &control_points[marked];
-        let point = to_screen_pos(&to_screen, marked_point);
+        let center = screen_pos(square, marked_point);
         ui.painter().add(Shape::rect_stroke(
-            Rect::from_center_size(point, Vec2::splat(control_point_radius * 0.5)),
+            Rect::from_center_size(center, Vec2::splat(CONTROL_POINT_RADIUS * 0.5)),
             0.0,
             control_point_outline(marked_point.val().color(picker_space), true),
             egui::StrokeKind::Middle,
