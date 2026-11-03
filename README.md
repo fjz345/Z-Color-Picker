@@ -55,7 +55,7 @@ Groups, left to right: Preset, Curve (Spline, Blend, Flip) and Copy as; Log at t
 ## Options
 
 Picker (under the selected color's readout):
-- Space: Color space of the square and the hue bar: HSV, HSL, or the perceptual OKHSV and OKHSL (built on Oklab). Switching converts every point and keeps its color; it is saved with the preset
+- Space: Color space of the square and the hue bar: HSV, HSL, or the perceptual OKHSV and OKHSL (built on Oklab). Switching converts every point and keeps its color, except middle points under Auto hue: their hues are re-interpolated in the new space; it is saved with the preset
 
 Points row (under the square):
 - Lock: Apply any control point coordinate translation to all control points

@@ -74,7 +74,8 @@ pub fn picker_space_combo(ui: &mut Ui, picker_space: &mut PickerSpace) {
         .response
         .on_hover_text(
             "Color space of the square and the hue bar; switching converts every point \
-             and keeps its color",
+             and keeps its color, except middle points under Auto hue: their hues are \
+             re-interpolated in the new space",
         );
 }
 
