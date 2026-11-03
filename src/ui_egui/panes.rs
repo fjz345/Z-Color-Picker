@@ -180,6 +180,7 @@ impl ZAppPane for View3dPane {
                 ),
                 is_curve_locked: color_picker.options.is_curve_locked,
                 is_window_lock: color_picker.options.is_window_lock,
+                is_auto_hue: color_picker.options.is_auto_hue(ctx.picker_space),
             };
             (
                 ctx.control_points.clone(),

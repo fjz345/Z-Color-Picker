@@ -38,7 +38,7 @@ To create a new preset, click the preset combo box and select `<NEW>`
 - Middle-click: Copy screen color as the selected format, on previewer, copies image to clipboard
 - H/S/V/T fields (H/C/L/T in OkLCh, L/a/b/T in Oklab): drag, or click and type a value; Enter or Tab commits, Esc cancels. S, V and the HSL / OKHSL L are in % of the square; OkLCh and Oklab show absolute values with 3 decimals, typed in the same units: L from 0 to 1, chroma from 0 to the square's 0.33, a and b signed, 0 at gray. H is read-only for middle points under Auto hue, T for the first and last points; with Lock, S and V move every point
 - Click the log header (bottom of the window): expand or collapse the log; collapsed, it shows the last line; expanded, drag its top edge to resize it
-- 3D view: Drag-M1 on a point (or, in Bezier mode, on a handle of the selected point) moves it across the view, keeping its T and staying inside sRGB; Drag-M1 elsewhere orbits; click a point to select it; scroll zooms, double-click resets the camera; hover a point, handle or the curve for its hex color
+- 3D view: Drag-M1 on a point (or, in Bezier mode, on a handle of the selected point) moves it across the view, keeping its T and staying inside sRGB (under Auto hue a middle point keeps its hue and follows as near as it can); Drag-M1 elsewhere orbits; click a point to select it; scroll zooms, double-click away from the points resets the camera to fit the space; hover a point, handle or the curve for its hex color
 - F12: debug window with the control point values
 - Esc: quit (ignored while typing, or while a popup, dialog or the Create Preset window is open)
 
