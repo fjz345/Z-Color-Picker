@@ -30,10 +30,11 @@ use crate::{
         debug_windows::DebugWindowControlPoints,
         panes::{
             copy_format_bar_ui, preset_bar_ui, ColorPickerOptionsPane, ColorPickerPane, LogPane,
-            Pane, PreviewerPane, TreeBehavior, ZAppPane,
+            Pane, PreviewerPane, TreeBehavior, View3dPane, ZAppPane,
         },
         previewer::{PreviewerUiResponses, ZPreviewer},
         ui_common::ContentWindow,
+        view_3d::View3d,
     },
 };
 use eframe::epaint::{Pos2, Vec2};
@@ -327,6 +328,11 @@ impl ZApp {
             title: None,
             ctx: ctx.clone(),
         };
+        let pane_view_3d = View3dPane {
+            title: Some("3D view".to_string()),
+            ctx: ctx.clone(),
+            view: View3d::default(),
+        };
         let pane_log = LogPane {
             title: Some("Log".to_string()),
             log_buffer: log_buffer.clone(),
@@ -334,6 +340,7 @@ impl ZApp {
 
         let tile_color_picker = tiles.insert_pane(Pane::ColorPicker(pane_color_picker));
         let tile_options = tiles.insert_pane(Pane::ColorPickerOptionsPane(pane_options));
+        let tile_view_3d = tiles.insert_pane(Pane::View3d(pane_view_3d));
         let tile_previewer = tiles.insert_pane(Pane::Previewer(pane_previewer));
         let tile_console = tiles.insert_pane(Pane::Log(pane_log));
         tiles.set_visible(tile_console, false);
@@ -341,14 +348,20 @@ impl ZApp {
         const PICKER_FRACTION: f32 = 0.85;
         const MASTER_FRACTION: f32 = 0.8;
         const PICKER_COLUMN_FRACTION: f32 = 0.3;
+        const VIEW_3D_FRACTION: f32 = 0.5;
         let vertical_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
             egui_tiles::LinearDir::Vertical,
             [tile_color_picker, tile_options],
             PICKER_FRACTION,
         ));
+        let right_column_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
+            egui_tiles::LinearDir::Vertical,
+            [tile_view_3d, tile_previewer],
+            VIEW_3D_FRACTION,
+        ));
         let master_tile = tiles.insert_container(egui_tiles::Linear::new_binary(
             egui_tiles::LinearDir::Horizontal,
-            [vertical_tile, tile_previewer],
+            [vertical_tile, right_column_tile],
             PICKER_COLUMN_FRACTION,
         ));
         tabs.push(tiles.insert_container(egui_tiles::Linear::new_binary(

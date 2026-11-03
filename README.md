@@ -20,6 +20,7 @@ Each control point is a value in a color space (currently only HSV).
 Hue of each individual control point can be changed in the hue bar, and saturation & value in the 2d slider.
 T, the strip under the hue bar, is each point's position along the gradient: the first and last points stay at 0 and 1, the middle points can be dragged between their neighbours.
 The selected control point's color is shown in the top left; the H, S, V and T fields under it show its values and take exact ones. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
+The 3D view above it draws the gradient curve and its control points inside a color space (view only).
 To create a new preset, click the preset combo box and select `<NEW>`
 
 ## Controls
@@ -31,6 +32,7 @@ To create a new preset, click the preset combo box and select `<NEW>`
 - Click the color readout or Ctrl+C: copy the selected point's color in the Copy-as format
 - Middle-click: Copy screen color as the selected format, on previewer, copies image to clipboard
 - H/S/V/T fields: drag, or click and type a value; Enter or Tab commits, Esc cancels. H is read-only for middle points under Auto hue, T for the first and last points; with Lock, S and V move every point
+- 3D view: Drag-M1 orbits, scroll zooms, double-click resets the camera; hover a point or the curve for its hex color
 - F12: debug window with the control point values
 - Esc: quit (ignored while typing, or while a popup, dialog or the Create Preset window is open)
 
@@ -60,6 +62,9 @@ Comb row:
 Previewer:
 - Levels: Number of colors in the quantized gradient
 - Space evenly: Spread the points evenly along the gradient (equal T steps)
+
+3D view:
+- Space: sRGB cube, Linear RGB cube, HSV cylinder, HSL cylinder, or Oklab (L up, a/b across, with the sRGB gamut outline)
 
 ## Presets
 
@@ -96,5 +101,4 @@ Previewer:
 - Polynomial spline mode
 - Auto gradient button with "undo"
 - Add Interpolation::Bezier with just one tanget point
-- 3D visualization
 - Screen-mouse gradient picker

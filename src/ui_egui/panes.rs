@@ -16,6 +16,7 @@ use crate::{
         app::ZColorPickerAppContext,
         color_picker::ZColorPickerWrapper,
         content_windows::{copy_format_combo, flip_control_points},
+        view_3d::View3d,
     },
 };
 pub struct TreeBehavior {}
@@ -39,6 +40,7 @@ impl egui_tiles::Behavior<Pane> for TreeBehavior {
 pub enum Pane {
     ColorPicker(ColorPickerPane),
     ColorPickerOptionsPane(ColorPickerOptionsPane),
+    View3d(View3dPane),
     Previewer(PreviewerPane),
     Log(LogPane),
 }
@@ -48,6 +50,7 @@ impl ZAppPane for Pane {
         match self {
             Pane::ColorPicker(pane) => pane.title().into(),
             Pane::ColorPickerOptionsPane(pane) => pane.title().into(),
+            Pane::View3d(pane) => pane.title(),
             Pane::Previewer(pane) => pane.title().into(),
             Pane::Log(pane) => pane.title().into(),
         }
@@ -56,6 +59,7 @@ impl ZAppPane for Pane {
         match self {
             Pane::ColorPicker(pane) => pane.update_ctx(new_ctx),
             Pane::ColorPickerOptionsPane(pane) => pane.update_ctx(new_ctx),
+            Pane::View3d(pane) => pane.update_ctx(new_ctx),
             Pane::Previewer(pane) => pane.update_ctx(new_ctx),
             Pane::Log(pane) => pane.update_ctx(new_ctx),
         }
@@ -70,6 +74,7 @@ impl ZAppPane for Pane {
                     .show(ui, |ui| pane.ui(ui))
                     .inner
             }
+            Pane::View3d(pane) => pane.ui(ui),
             Pane::Previewer(pane) => pane.ui(ui),
             Pane::Log(pane) => pane.ui(ui),
         }
@@ -164,6 +169,33 @@ impl ZAppPane for ColorPickerOptionsPane {
 
     fn update_ctx(&mut self, new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {
         self.ctx = new_ctx.clone();
+    }
+}
+#[derive(Serialize, Deserialize)]
+pub struct View3dPane {
+    pub title: Option<String>,
+    #[serde(skip)]
+    pub ctx: Rc<RefCell<ZColorPickerAppContext>>,
+    #[serde(default)]
+    pub view: View3d,
+}
+impl ZAppPane for View3dPane {
+    fn title(&self) -> String {
+        self.title.clone().unwrap_or_else(|| "Pane".to_owned())
+    }
+    fn ui(&mut self, ui: &mut egui::Ui) -> egui_tiles::UiResponse {
+        let (control_points, spline_mode, selected_index) = {
+            let ctx = self.ctx.borrow();
+            let selected_index = ctx.z_color_picker.borrow().last_modifying_point_index;
+            (ctx.control_points.clone(), ctx.spline_mode, selected_index)
+        };
+        self.view
+            .draw_ui(ui, &control_points, spline_mode, selected_index);
+        egui_tiles::UiResponse::None
+    }
+
+    fn update_ctx(&mut self, new_ctx: Rc<RefCell<ZColorPickerAppContext>>) {
+        self.ctx = new_ctx;
     }
 }
 #[derive(Serialize, Deserialize)]
