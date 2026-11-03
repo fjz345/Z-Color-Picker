@@ -2799,16 +2799,23 @@ mod tests {
             BlendSpace::Picker,
         );
         assert_eq!(picker.auto_comb_unsolved, 0);
-        *arc[1].curvature_mut() = Some(1.0e4);
+        let mut inflection = with_handles(
+            points_sv(&[(0.2, 0.5), (0.5, 0.5), (0.8, 0.5)]),
+            &[
+                [[0.0, -0.1], [0.0, 0.1]],
+                [[-0.1, 0.0], [0.1, 0.0]],
+                [[0.0, -0.1], [0.0, 0.1]],
+            ],
+        );
         picker.pre_draw_update(
-            &mut arc,
+            &mut inflection,
             SplineMode::Bezier,
             PickerSpace::Hsv,
             BlendSpace::Picker,
         );
         assert_eq!(picker.auto_comb_unsolved, 2);
         picker.pre_draw_update(
-            &mut arc,
+            &mut inflection,
             SplineMode::Linear,
             PickerSpace::Hsv,
             BlendSpace::Picker,

@@ -313,6 +313,8 @@ fn normalize_applied_preset(
     picker_space: PickerSpace,
     blend_space: BlendSpace,
 ) {
+    // Like enabling Auto comb: curvatures a preset stored stale are reseeded, not chased.
+    color_picker.was_auto_comb_running = false;
     color_picker.pre_draw_update(control_points, spline_mode, picker_space, blend_space);
     // Twice: the hue lerp runs before the clamp, so one pass lerps from unclamped endpoint hues.
     color_picker.apply_control_point_constraints(control_points, picker_space);
@@ -458,6 +460,56 @@ mod tests {
 
         assert_eq!(selected.color_picker.last_modifying_point_index, None);
         assert_eq!(selected.color_picker.dragging_index, None);
+    }
+
+    #[test]
+    fn applying_a_preset_with_auto_comb_on_reseeds_stale_curvatures_without_rewriting_it() {
+        let mut combed: Vec<ControlPoint> = [(0.2, 0.5), (0.5, 0.2), (0.8, 0.5)]
+            .into_iter()
+            .zip([
+                [[0.0, 0.1], [0.0, -0.1]],
+                [[-0.1, 0.0], [0.1, 0.0]],
+                [[0.0, -0.1], [0.0, 0.1]],
+            ])
+            .zip([0.0, 0.5, 1.0])
+            .map(|(((s, v), handles), t)| {
+                let mut cp = ControlPoint::new_simple(ControlPointValue::new(s, v, 0.3), t);
+                *cp.tangents_mut() = handles.map(|[ds, dv]| Some([ds, dv, 0.0].into()));
+                cp
+            })
+            .collect();
+        crate::ui_egui::auto_comb::apply_auto_comb(&mut combed, Default::default());
+        let mut stale = combed.clone();
+        for cp in &mut stale {
+            *cp.curvature_mut() = cp.curvature().map(|k| 3.0 * k);
+        }
+        let mut selected = select_preset_with_auto_save_from(stale);
+        let before = selected.file_bytes();
+        selected.color_picker.options.is_auto_comb = true;
+        selected.color_picker.was_auto_comb_running = true;
+        normalize_applied_preset(
+            &mut selected.color_picker,
+            &mut selected.handler,
+            &mut selected.points,
+            MODE,
+            SPACE,
+            BLEND,
+        );
+
+        for (applied, original) in selected.points.iter().zip(&combed) {
+            assert_eq!(applied.tangents(), original.tangents());
+            let [applied, original] = [applied, original].map(|cp| cp.curvature().unwrap());
+            assert!(
+                (applied - original).abs() <= 1e-3 * original.abs(),
+                "{applied} {original}"
+            );
+        }
+        next_picker_frame(&mut selected.color_picker, &mut selected.points);
+        assert!(!selected
+            .handler
+            .auto_save(&selected.points, MODE, SPACE, BLEND)
+            .unwrap());
+        assert_eq!(selected.file_bytes(), before);
     }
 
     #[test]
