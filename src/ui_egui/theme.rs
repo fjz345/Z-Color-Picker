@@ -1,8 +1,8 @@
 use eframe::egui::{
     self,
     style::{Selection, WidgetVisuals},
-    vec2, Color32, CornerRadius, Frame, Margin, Response, RichText, Stroke, Style, Ui, UiBuilder,
-    Visuals,
+    vec2, Color32, CornerRadius, Frame, Margin, Rect, Response, RichText, Stroke, Style, Ui,
+    UiBuilder, Vec2, Visuals,
 };
 
 const ACCENT: Color32 = Color32::from_rgb(86, 156, 245);
@@ -123,11 +123,10 @@ pub fn drawer_frame() -> Frame {
 pub fn pane_card<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
     let card = ui.max_rect();
     ui.painter().rect_filled(card, PANE_RADIUS, PANE_FILL);
-    ui.scope_builder(
-        UiBuilder::new().max_rect(card.shrink(PANE_PADDING)),
-        add_contents,
-    )
-    .inner
+    let content_size = (card.size() - Vec2::splat(2.0 * PANE_PADDING)).max(Vec2::ZERO);
+    let content = Rect::from_center_size(card.center(), content_size);
+    ui.scope_builder(UiBuilder::new().max_rect(content), add_contents)
+        .inner
 }
 
 pub fn section_header(ui: &mut Ui, title: &str) -> Response {
@@ -219,6 +218,22 @@ mod tests {
                 assert!(stands_out(fill, halo, background), "{fill:?}");
             }
         }
+    }
+
+    #[test]
+    fn pane_card_content_stays_inside_a_card_smaller_than_its_padding() {
+        let ctx = egui::Context::default();
+        apply(&ctx);
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let card = egui::Rect::from_min_size(ui.max_rect().min, vec2(10.0, 0.0));
+                ui.scope_builder(UiBuilder::new().max_rect(card), |ui| {
+                    let content = pane_card(ui, |ui| ui.max_rect());
+                    assert!(card.contains_rect(content), "{content:?} in {card:?}");
+                    pane_card(ui, |ui| ui.allocate_ui(ui.max_rect().size(), |_| {}));
+                });
+            });
+        });
     }
 
     #[test]
