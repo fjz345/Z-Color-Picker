@@ -20,6 +20,7 @@ Each control point is a value in the picker space: HSV, HSL, OKHSV or OKHSL (Spa
 Hue of each individual control point can be changed in the hue bar, and saturation & value (lightness in HSL and OKHSL) in the 2d slider.
 T, the strip under the hue bar, is each point's position along the gradient: the first and last points stay at 0 and 1, the middle points can be dragged between their neighbours.
 The selected control point's color is shown in the top left; the H, S, V (L) and T fields under it show its values and take exact ones. The previewer shows the control point colors, the gradient using the selected spline mode, and a quantized gradient.
+The rows under the fields show the selected color as Hex, sRGB (0-255), HSL, Oklab and OkLCh.
 Between the points, the gradient is blended in the Blend space (options Curve row): the picker space itself, sRGB, Linear RGB, Oklab or OkLCh.
 To create a new preset, click the preset combo box and select `<NEW>`
 
@@ -30,6 +31,7 @@ To create a new preset, click the preset combo box and select `<NEW>`
 - Right-click-M2: Remove control-point
 - Drag-M1 on a middle previewer key color: move its point's T
 - Click the color readout or Ctrl+C: copy the selected point's color in the Copy-as format
+- Click a Hex/sRGB/HSL/Oklab/OkLCh row: copy the selected point's color in that row's Copy-as format (`hsl()`, `oklab()`, ...), with more decimals than the row shows
 - Middle-click: Copy screen color as the selected format, on previewer, copies image to clipboard
 - H/S/V/T fields: drag, or click and type a value; Enter or Tab commits, Esc cancels. H is read-only for middle points under Auto hue, T for the first and last points; with Lock, S and V move every point
 - Click the log header (bottom of the window): expand or collapse the log; collapsed, it shows the last line; expanded, drag its top edge to resize it
