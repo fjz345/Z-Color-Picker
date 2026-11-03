@@ -28,7 +28,7 @@ use eframe::{
     egui::{
         self, color_picker::show_color, lerp, pos2, CursorIcon, Frame, Label, Layout, Margin,
         PointerButton, Pos2, Rect, Response, RichText, Sense, Shape, Spacing, Stroke, StrokeKind,
-        TextStyle, Ui, Widget, WidgetInfo,
+        TextStyle, Ui, UiBuilder, Widget, WidgetInfo,
     },
     epaint::{vec2, Color32, Vec2},
 };
@@ -94,10 +94,16 @@ impl<'a> ZColorPicker<'a> {
             }
         }
 
-        Frame::NONE
-            .inner_margin(Margin::symmetric(margin.x as i8, margin.y as i8))
-            .show(ui, |ui| main_color_picker(ui, desired_size, self.ctx))
-            .inner
+        let centering = ((ui.available_width() - side) / 2.0 - margin.x).max(0.0);
+        let column = ui.available_rect_before_wrap();
+        let column = column.with_min_x(column.min.x + centering);
+        ui.scope_builder(UiBuilder::new().max_rect(column), |ui| {
+            Frame::NONE
+                .inner_margin(Margin::symmetric(margin.x as i8, margin.y as i8))
+                .show(ui, |ui| main_color_picker(ui, desired_size, self.ctx))
+                .inner
+        })
+        .inner
     }
 
     fn add_contents(&mut self, ui: &mut Ui) -> Response {
@@ -1328,6 +1334,7 @@ mod tests {
 
     fn lay_out_picker(screen_size: Vec2) -> LaidOutPicker {
         let ctx = egui::Context::default();
+        crate::ui_egui::theme::apply(&ctx);
         let mut picker = ZColorPickerWrapper::default();
         let mut points = vec![
             ControlPoint::new_simple(ControlPointValue::new(0.0, 0.0, 0.0), 0.0),
@@ -1408,6 +1415,14 @@ mod tests {
         assert!(pane.bottom() - used.bottom() < 1.0, "{used:?} in {pane:?}");
     }
 
+    #[test]
+    fn picker_centers_the_square_in_a_height_limited_pane() {
+        let LaidOutPicker { square, pane, .. } = assert_square_inset(vec2(1000.0, 520.0));
+        let left = square.left() - pane.left();
+        let right = pane.right() - square.right();
+        assert!((left - right).abs() < 1.0, "{square:?} in {pane:?}");
+    }
+
     fn painted_text_rect(output: &egui::FullOutput, wanted: &str) -> Rect {
         output
             .shapes
@@ -1432,13 +1447,13 @@ mod tests {
             text("Space")
         );
         assert!(
-            text("Points").top() >= picker.square.bottom(),
+            text("POINTS").top() >= picker.square.bottom(),
             "{:?} under {:?}",
-            text("Points"),
+            text("POINTS"),
             picker.square
         );
-        assert!(text("Comb").top() >= text("Points").bottom());
-        assert!(text("Comb").bottom() <= picker.used.bottom());
+        assert!(text("COMB").top() >= text("POINTS").bottom());
+        assert!(text("COMB").bottom() <= picker.used.bottom());
     }
 
     const STRIP_RECT: Rect = Rect {

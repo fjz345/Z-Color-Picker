@@ -1,4 +1,7 @@
-use eframe::egui::{style::Spacing, CursorIcon, Label, PointerButton, Pos2, RichText, Sense, Ui};
+use eframe::egui::{
+    style::Spacing, text::LayoutJob, Align, CursorIcon, FontSelection, Label, PointerButton, Pos2,
+    RichText, Sense, Ui,
+};
 use eframe::epaint::Color32;
 
 use crate::{
@@ -71,9 +74,29 @@ fn row_values(color: Color32, row: ReadoutRow) -> String {
     }
 }
 
+fn row_label(row: ReadoutRow) -> String {
+    format!("{:<5} ", row.label())
+}
+
 fn row_text(color: Option<Color32>, row: ReadoutRow) -> String {
     let values = color.map_or_else(|| "-".to_owned(), |color| row_values(color, row));
-    format!("{:<5} {values}", row.label())
+    format!("{}{values}", row_label(row))
+}
+
+fn row_job(ui: &Ui, color: Color32, row: ReadoutRow) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let style = ui.style();
+    RichText::new(row_label(row))
+        .monospace()
+        .color(ui.visuals().text_color())
+        .append_to(&mut job, style, FontSelection::Default, Align::Center);
+    RichText::new(row_values(color, row)).monospace().append_to(
+        &mut job,
+        style,
+        FontSelection::Default,
+        Align::Center,
+    );
+    job
 }
 
 pub fn color_readout_height(spacing: &Spacing) -> f32 {
@@ -81,17 +104,17 @@ pub fn color_readout_height(spacing: &Spacing) -> f32 {
 }
 
 fn readout_row(ui: &mut Ui, color: Option<Color32>, row: ReadoutRow) -> Option<Pos2> {
-    let text = RichText::new(row_text(color, row)).monospace();
     ui.horizontal(|ui| {
         let Some(color) = color else {
-            ui.add(Label::new(text.weak()).truncate())
+            let text = RichText::new(row_text(None, row)).monospace().weak();
+            ui.add(Label::new(text).truncate())
                 .on_hover_text(NO_SELECTION_HINT);
             return None;
         };
         let copied = format_color_as(color, row.copy_format(), None);
         let response = ui
             .add(
-                Label::new(text)
+                Label::new(row_job(ui, color, row))
                     .truncate()
                     .selectable(false)
                     .sense(Sense::click()),
@@ -383,6 +406,39 @@ mod tests {
                 selected_color_payload(&red_point(), Some(0), PickerSpace::Hsv, format),
                 Some(ClipboardPayload::Text(expected.to_owned())),
                 "{row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn row_labels_are_dimmer_than_their_values() {
+        let ctx = egui::Context::default();
+        crate::ui_egui::theme::apply(&ctx);
+        let output = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| color_readout(ui, Some(Color32::WHITE)));
+        });
+        let rows: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                Shape::Text(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows.len(), ReadoutRow::ALL.len());
+        let intensity = |text: &egui::epaint::TextShape, section: usize| {
+            let color = match text.galley.job.sections[section].format.color {
+                Color32::PLACEHOLDER => text.fallback_color,
+                color => color,
+            };
+            egui::Rgba::from(color).intensity()
+        };
+        for row in &rows {
+            let last = row.galley.job.sections.len() - 1;
+            assert!(
+                intensity(row, 0) < intensity(row, last),
+                "{}",
+                row.galley.text()
             );
         }
     }

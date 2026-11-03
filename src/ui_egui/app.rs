@@ -34,6 +34,7 @@ use crate::{
             TreeBehavior, View3dPane, ZAppPane,
         },
         previewer::{PreviewerUiResponses, ZPreviewer},
+        theme,
         ui_common::ContentWindow,
         view_3d::View3d,
     },
@@ -305,8 +306,7 @@ impl ZApp {
             }
         }
 
-        let visuals: egui::Visuals = egui::Visuals::dark();
-        ctx.set_visuals(visuals);
+        theme::apply(ctx);
         let monitor_size_px = ctx.input(|i| {
             i.viewport()
                 .monitor_size
@@ -484,12 +484,13 @@ impl ZApp {
     }
 
     fn draw_toolbar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+        let toolbar = egui::TopBottomPanel::top("toolbar").frame(theme::toolbar_frame());
+        toolbar.show(ctx, |ui| {
             ui.horizontal(|ui| {
                 preset_bar_ui(&self.app_ctx, ui);
-                ui.separator();
+                theme::group_separator(ui);
                 curve_bar_ui(&self.app_ctx, ui);
-                ui.separator();
+                theme::group_separator(ui);
                 copy_format_bar_ui(&self.app_ctx, ui);
                 ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                     let hint = if self.is_log_expanded {
@@ -497,8 +498,10 @@ impl ZApp {
                     } else {
                         "Expand the log"
                     };
-                    ui.toggle_value(&mut self.is_log_expanded, "Log")
-                        .on_hover_text(hint);
+                    let log_button = egui::Button::new("Log").selected(self.is_log_expanded);
+                    if ui.add(log_button).on_hover_text(hint).clicked() {
+                        self.is_log_expanded = !self.is_log_expanded;
+                    }
                 });
             });
         });
@@ -514,7 +517,7 @@ impl ZApp {
         } else {
             egui::TopBottomPanel::bottom("log_drawer_collapsed")
         };
-        panel.show(ctx, |ui| {
+        panel.frame(theme::drawer_frame()).show(ctx, |ui| {
             if ui_log_header(ui, is_expanded, &self.log_buffer).clicked() {
                 self.is_log_expanded = !is_expanded;
             }
@@ -1035,6 +1038,7 @@ mod tests {
             ..Default::default()
         };
         ctx.run(input, |ctx| {
+            theme::apply(ctx);
             app.draw_toolbar(ctx);
             app.draw_log_drawer(ctx);
             egui::CentralPanel::default().show(ctx, |ui| app.tree.ui(&mut TreeBehavior {}, ui));
@@ -1065,7 +1069,7 @@ mod tests {
         let picker = pane_rect(&app.tree, is_picker_pane).unwrap();
         let view_3d = pane_rect(&app.tree, |pane| matches!(pane, Pane::View3d(_))).unwrap();
         let previewer = pane_rect(&app.tree, |pane| matches!(pane, Pane::Previewer(_))).unwrap();
-        let last_row = text_centers(&output, "Comb")[0];
+        let last_row = text_centers(&output, "COMB")[0];
         assert!(
             picker.width() >= MIN_PICKER_PANE_WIDTH,
             "picker pane {picker:?}"
@@ -1106,13 +1110,52 @@ mod tests {
             centers[0].x
         };
         let order = [
-            "Preset", "Spline", "Blend", "Picker", "Flip", "Copy as", "Log",
+            "PRESET", "CURVE", "Spline", "Blend", "Picker", "Flip", "COPY AS", "Log",
         ];
         let xs = order.map(toolbar_x);
         assert!(
             xs.windows(2).all(|pair| pair[0] < pair[1]),
             "{order:?} at {xs:?}"
         );
+    }
+
+    #[test]
+    fn toolbar_panes_and_log_drawer_have_their_own_fills() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        laid_out_picker_height(&mut app, &ctx);
+        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
+        let filled = |fill: Color32| -> Vec<Rect> {
+            output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Rect(rect) if rect.fill == fill => Some(rect.rect),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        let spans_screen = |rect: &Rect| rect.width() == DEFAULT_SCREEN.width();
+        let toolbar = filled(theme::TOOLBAR_FILL);
+        assert!(
+            toolbar.iter().any(|r| spans_screen(r) && r.top() == 0.0),
+            "{toolbar:?}"
+        );
+        let drawer = filled(theme::DRAWER_FILL);
+        assert!(
+            drawer
+                .iter()
+                .any(|r| spans_screen(r) && r.bottom() == DEFAULT_SCREEN.bottom()),
+            "{drawer:?}"
+        );
+        let cards = filled(theme::PANE_FILL);
+        for (id, tile) in app.tree.tiles.iter() {
+            if tile.is_pane() {
+                let tile_rect = app.tree.tiles.rect(*id).unwrap();
+                assert!(cards.contains(&tile_rect), "{tile_rect:?} not in {cards:?}");
+            }
+        }
     }
 
     #[test]

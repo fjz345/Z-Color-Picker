@@ -15,6 +15,7 @@ use crate::ui_egui::app::ZColorPickerOptions;
 use crate::ui_egui::color_picker::format_color_as;
 use crate::ui_egui::control_points::mirror_t;
 use crate::ui_egui::curvature::COMB_SCALE_RANGE;
+use crate::ui_egui::theme::{row_header, section_header};
 use crate::ui_egui::ui_common::ContentWindow;
 
 pub struct WindowPresetDrawResult {
@@ -79,7 +80,7 @@ pub fn picker_space_combo(ui: &mut Ui, picker_space: &mut PickerSpace) {
 
 pub fn points_row(ui: &mut Ui, options: &mut ZColorPickerOptions) {
     ui.horizontal_wrapped(|ui| {
-        ui.strong("Points");
+        row_header(ui, "Points");
         ui.checkbox(&mut options.is_curve_locked, "Lock")
             .on_hover_text("Move all control points together, also for S/V edits in the inspector");
         ui.checkbox(&mut options.is_window_lock, "Clamp")
@@ -109,6 +110,7 @@ pub fn curve_controls(
     spline_mode: &mut SplineMode,
     blend_space: &mut BlendSpace,
 ) -> bool {
+    section_header(ui, "Curve");
     ui.label("Spline");
     egui::ComboBox::from_id_salt("spline_mode")
         .selected_text(spline_mode_label(*spline_mode))
@@ -159,7 +161,7 @@ pub fn comb_row(
         NON_PICKER_BLEND_COMB_HINT
     };
     ui.horizontal_wrapped(|ui| {
-        ui.strong("Comb");
+        row_header(ui, "Comb");
         ui.add_enabled(
             enabled.show,
             egui::Checkbox::new(&mut options.is_show_curvature_comb, "Show"),
@@ -233,7 +235,7 @@ pub fn comb_controls_enabled(
 }
 
 pub fn copy_format_combo(ui: &mut Ui, color_copy_format: &mut ColorStringCopy) {
-    ui.label("Copy as");
+    section_header(ui, "Copy as");
     egui::ComboBox::from_id_salt("copy_format")
         .selected_text(copy_format_label(*color_copy_format))
         .show_ui(ui, |ui| {
@@ -657,7 +659,7 @@ impl WindowPreset {
 
             let selected_index = preset_handler.preset_selected_index;
             let mut choice = None;
-            ui.label("Preset");
+            section_header(ui, "Preset");
             let _combobox_response = egui::ComboBox::new(1232313, "")
                 .selected_text(combobox_selected_text_to_show)
                 .show_ui(ui, |ui| {
@@ -1290,9 +1292,9 @@ mod tests {
     fn options_rows_start_with_their_group_labels() {
         let texts = options_painted_texts(true);
         let position = |wanted: &str| texts.iter().position(|text| text == wanted);
-        assert_eq!(position("Points"), Some(0), "{texts:?}");
-        assert!(position("Comb").is_some(), "{texts:?}");
-        for moved in ["Space", "Spline", "Blend", "Flip", "Copy as"] {
+        assert_eq!(position("POINTS"), Some(0), "{texts:?}");
+        assert!(position("COMB").is_some(), "{texts:?}");
+        for moved in ["Space", "Spline", "Blend", "Flip", "COPY AS"] {
             assert_eq!(position(moved), None, "{moved:?}: {texts:?}");
         }
     }

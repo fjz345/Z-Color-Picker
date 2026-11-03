@@ -12,6 +12,7 @@ use crate::{
         app::ZColorPickerAppContext,
         color_picker::ZColorPickerWrapper,
         content_windows::{copy_format_combo, curve_controls, flip_control_points},
+        theme,
         view_3d::View3d,
     },
 };
@@ -28,7 +29,23 @@ impl egui_tiles::Behavior<Pane> for TreeBehavior {
         _tile_id: egui_tiles::TileId,
         pane: &mut Pane,
     ) -> egui_tiles::UiResponse {
-        pane.ui(ui)
+        theme::pane_card(ui, |ui| pane.ui(ui))
+    }
+
+    fn gap_width(&self, _style: &egui::Style) -> f32 {
+        theme::PANE_GAP
+    }
+
+    fn resize_stroke(
+        &self,
+        style: &egui::Style,
+        resize_state: egui_tiles::ResizeState,
+    ) -> egui::Stroke {
+        match resize_state {
+            egui_tiles::ResizeState::Idle => egui::Stroke::NONE,
+            egui_tiles::ResizeState::Hovering => style.visuals.widgets.hovered.bg_stroke,
+            egui_tiles::ResizeState::Dragging => style.visuals.widgets.active.bg_stroke,
+        }
     }
 }
 
