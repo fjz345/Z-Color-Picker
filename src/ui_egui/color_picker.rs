@@ -1033,10 +1033,40 @@ pub fn limit_group_delta_to_srgb(
     delta_sv: Vec2,
     picker_space: PickerSpace,
 ) -> Vec2 {
-    let fraction = srgb_move_fraction(points, picker_space, |points, fraction| {
-        apply_group_delta_sv(points, fraction * delta_sv)
+    let [x, y] = srgb_slide_fractions(points, picker_space, |points, [x, y]| {
+        apply_group_delta_sv(points, vec2(x * delta_sv.x, y * delta_sv.y))
     });
-    fraction * delta_sv
+    vec2(x * delta_sv.x, y * delta_sv.y)
+}
+
+// A slide along one axis can make room along an axis already slid.
+const SRGB_SLIDE_ROUNDS: usize = 2;
+
+pub fn srgb_slide_fractions<const AXES: usize>(
+    points: &[ControlPoint],
+    picker_space: PickerSpace,
+    move_by: impl Fn(&mut [ControlPoint], [f32; AXES]),
+) -> [f32; AXES] {
+    let fraction = srgb_move_fraction(points, picker_space, |points, fraction| {
+        move_by(points, [fraction; AXES])
+    });
+    let mut fractions = [fraction; AXES];
+    if fraction == 1.0 {
+        return fractions;
+    }
+    for axis in (0..AXES).cycle().take(SRGB_SLIDE_ROUNDS * AXES) {
+        let start = fractions[axis];
+        let along_axis = |fraction: f32| {
+            let mut slid = fractions;
+            slid[axis] = lerp(start..=1.0, fraction);
+            slid
+        };
+        let slid = srgb_move_fraction(points, picker_space, |points, fraction| {
+            move_by(points, along_axis(fraction))
+        });
+        fractions = along_axis(slid);
+    }
+    fractions
 }
 
 pub fn srgb_move_fraction(
@@ -3546,6 +3576,30 @@ mod tests {
     fn limit_group_delta_wider_than_range_does_not_move() {
         let points = points_sv(&[(-0.1, 0.5), (1.1, 0.5)]);
         assert_eq!(limit_group_delta(&points, vec2(0.2, 0.0)).x, 0.0);
+    }
+
+    #[test]
+    fn clipped_lock_group_pushed_diagonally_into_the_srgb_edge_slides_along_it() {
+        let space = OKLCH.with_clip_to_srgb(true);
+        let points: Vec<ControlPoint> = [(0.15, 0.3, 0.3, 0.0), (0.1, 0.4, 0.3, 1.0)]
+            .map(|(s, v, h, t)| ControlPoint::new_simple(ControlPointValue::new(s, v, h), t))
+            .to_vec();
+        assert!(points.iter().all(|cp| cp.val().is_in_srgb(space)));
+        let push = vec2(0.3, 0.2);
+        let stop_at_edge = push
+            * srgb_move_fraction(&points, space, |points, fraction| {
+                apply_group_delta_sv(points, fraction * push)
+            });
+
+        let delta = limit_group_delta_to_srgb(&points, push, space);
+        let mut moved = points.clone();
+        apply_group_delta_sv(&mut moved, delta);
+
+        let offset = |points: &[ControlPoint]| points[1].val().vec2() - points[0].val().vec2();
+        assert!((offset(&moved) - offset(&points)).length() < 1e-6, "{moved:?}");
+        assert!(moved.iter().all(|cp| cp.val().is_in_srgb(space)), "{moved:?}");
+        assert!(delta.x >= stop_at_edge.x, "{delta:?} vs {stop_at_edge:?}");
+        assert!(delta.y > stop_at_edge.y + 0.05, "{delta:?} vs {stop_at_edge:?}");
     }
 
     const DRAG_RECT: Rect = Rect {
