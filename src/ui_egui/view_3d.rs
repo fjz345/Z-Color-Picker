@@ -147,6 +147,7 @@ struct OrbitCamera {
     yaw: f32,
     pitch: f32,
     distance: f32,
+    scene_radius: f32,
 }
 
 const MAX_PITCH: f32 = 1.48;
@@ -156,8 +157,6 @@ const ORBIT_RADIANS_PER_POINT: f32 = 0.01;
 const ZOOM_PER_SCROLL_POINT: f32 = 0.002;
 const FOCAL_LENGTH_PER_SIZE: f32 = 1.2;
 const NEAR_DEPTH: f32 = 0.05;
-// Half the unit cube's diagonal: every reference shape fits inside.
-const SCENE_RADIUS: f32 = 0.866_025_4;
 const FAR_FADE: f32 = 0.45;
 const FIT_FILL: f32 = 0.9;
 
@@ -182,13 +181,37 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
 
 impl OrbitCamera {
     fn fitted(space: View3dSpace) -> Self {
-        // A sphere of radius r at distance d projects to a circle of radius focal * r / sqrt(d^2 - r^2).
-        let focal_per_filled_radius = 2.0 * FOCAL_LENGTH_PER_SIZE / FIT_FILL;
-        let radius = gamut_radius(space);
         Self {
             yaw: 0.6,
             pitch: 0.45,
-            distance: radius * (1.0 + focal_per_filled_radius.powi(2)).sqrt(),
+            distance: 0.0,
+            scene_radius: 0.0,
+        }
+        .refitted(space)
+    }
+
+    fn refitted(self, space: View3dSpace) -> Self {
+        // A sphere of radius r at distance d projects to a circle of radius focal * r / sqrt(d^2 - r^2).
+        let focal_per_filled_radius = 2.0 * FOCAL_LENGTH_PER_SIZE / FIT_FILL;
+        let scene_radius = gamut_radius(space);
+        let gamut_distance = scene_radius * (1.0 + focal_per_filled_radius.powi(2)).sqrt();
+        let [right, up, toward_camera] = self.basis();
+        let guide_ends = reference_segments(space, Color32::TRANSPARENT)
+            .into_iter()
+            .flat_map(|segment| segment.ends);
+        let labels = axis_labels(space).iter().map(|&(_, position)| position);
+        // Each guide end and label fits within FIT_FILL of a centered square of the shorter side.
+        let distance = guide_ends
+            .chain(labels)
+            .map(|p| {
+                let screen_offset = dot(p, right).abs().max(dot(p, up).abs());
+                dot(p, toward_camera) + focal_per_filled_radius * screen_offset
+            })
+            .fold(gamut_distance, f32::max);
+        Self {
+            distance,
+            scene_radius,
+            ..self
         }
     }
 
@@ -225,9 +248,13 @@ impl OrbitCamera {
         FOCAL_LENGTH_PER_SIZE * rect.size().min_elem() / depth
     }
 
+    fn depth(self, p: [f32; 3]) -> f32 {
+        self.distance - dot(p, self.basis()[2])
+    }
+
     fn project(self, p: [f32; 3], rect: Rect) -> Option<Projected> {
-        let [right, up, toward_camera] = self.basis();
-        let depth = self.distance - dot(p, toward_camera);
+        let [right, up, _] = self.basis();
+        let depth = self.depth(p);
         if depth < NEAR_DEPTH {
             return None;
         }
@@ -246,13 +273,24 @@ impl OrbitCamera {
         })
     }
 
+    fn dragged_on_view_plane(
+        self,
+        position: [f32; 3],
+        [from, to]: [Pos2; 2],
+        rect: Rect,
+    ) -> [f32; 3] {
+        let depth = self.depth(position);
+        let [from, to] = [from, to].map(|pos| self.unproject(pos, depth, rect));
+        std::array::from_fn(|i| position[i] + (to[i] - from[i]))
+    }
+
     fn size_scale(self, depth: f32) -> f32 {
         self.distance / depth
     }
 
     fn depth_fade(self, depth: f32) -> f32 {
-        let nearest = self.distance - SCENE_RADIUS;
-        let far_fraction = ((depth - nearest) / (2.0 * SCENE_RADIUS)).clamp(0.0, 1.0);
+        let nearest = self.distance - self.scene_radius;
+        let far_fraction = ((depth - nearest) / (2.0 * self.scene_radius)).clamp(0.0, 1.0);
         1.0 - FAR_FADE * far_fraction
     }
 }
@@ -270,7 +308,7 @@ const GUIDE_WIDTH: f32 = 1.0;
 const EDGE_STEPS: usize = 16;
 const RING_STEPS: usize = 48;
 const SPOKES: usize = 6;
-const OKLAB_FLOOR_AXIS: f32 = 0.35;
+const OKLAB_FLOOR_AXIS: f32 = 0.28;
 
 fn colored_polyline(
     space: View3dSpace,
@@ -383,7 +421,9 @@ fn reference_segments(space: View3dSpace, guide: Color32) -> Vec<WorldSegment> {
 }
 
 const LABEL_EXTENT: f32 = 0.62;
-const OKLAB_LABEL_EXTENT: f32 = 0.42;
+const OKLAB_LABEL_EXTENT: f32 = 0.35;
+// Above white, the label would set the fitted distance and shrink the gamut.
+const OKLAB_L_LABEL_SIDE: f32 = 0.08;
 const LABEL_SIZE: f32 = 12.0;
 
 fn axis_labels(space: View3dSpace) -> &'static [(&'static str, [f32; 3])] {
@@ -402,7 +442,7 @@ fn axis_labels(space: View3dSpace) -> &'static [(&'static str, [f32; 3])] {
             ("S", [LABEL_EXTENT, 0.5, 0.0]),
         ],
         View3dSpace::Oklab => &[
-            ("L", [0.0, LABEL_EXTENT, 0.0]),
+            ("L", [OKLAB_L_LABEL_SIDE, 0.5, 0.0]),
             ("+a", [OKLAB_LABEL_EXTENT, -0.5, 0.0]),
             ("+b", [0.0, -0.5, -OKLAB_LABEL_EXTENT]),
         ],
@@ -417,7 +457,6 @@ const HOVER_RADIUS: f32 = 10.0;
 const HANDLE_RADIUS: f32 = 4.5;
 const HANDLE_LINE_WIDTH: f32 = 1.5;
 const HANDLE_MIN_SCREEN_LENGTH: f32 = 2.0 * SELECTED_POINT_RADIUS;
-const MIN_DRAG_PIXELS: f32 = 1e-3;
 const VIEW_3D_HINT: &str =
     "Drag a point or handle: move it. Drag elsewhere: orbit. Scroll: zoom. Double-click elsewhere: reset";
 
@@ -499,12 +538,10 @@ impl View3dItem {
         }
     }
 
-    fn value(self, control_points: &[ControlPoint]) -> Option<ControlPointValue> {
+    fn value(self, cp: &ControlPoint) -> ControlPointValue {
         match self {
-            View3dItem::Point(index) => Some(*control_points.get(index)?.val()),
-            View3dItem::Handle(index, side) => {
-                Some(bezier_handle(control_points.get(index)?, side))
-            }
+            View3dItem::Point(_) => *cp.val(),
+            View3dItem::Handle(_, side) => bezier_handle(cp, side),
         }
     }
 }
@@ -551,7 +588,9 @@ fn scene_items(
     handles_of: Option<usize>,
 ) -> Vec<SceneItem> {
     let project = |item: View3dItem| {
-        let linear = item.value(control_points)?.linear(picker_space);
+        let linear = item
+            .value(control_points.get(item.point_index())?)
+            .linear(picker_space);
         let projected = camera.project(space.position(linear), rect)?;
         Some(SceneItem {
             item,
@@ -663,11 +702,16 @@ fn picker_value_after_drag(
     [shown, target]: [[f32; 3]; 2],
     picker_space: PickerSpace,
 ) -> ControlPointValue {
-    let moved = picker_value_from_linear(picker_space, target, value.h());
+    let [shown, moved] =
+        [shown, target].map(|linear| picker_value_from_linear(picker_space, linear, value.h()));
+    // The linear round trip is not exact, so without motion it would still rewrite the value.
+    if moved == shown {
+        return value;
+    }
     if value.is_in_srgb(picker_space) {
         return moved;
     }
-    let dragged = value + moved - picker_value_from_linear(picker_space, shown, value.h());
+    let dragged = value + (moved - shown);
     let z = if picker_space.is_z_hue() {
         dragged.h()
     } else {
@@ -679,11 +723,11 @@ fn picker_value_after_drag(
 pub fn move_point_by_linear(
     control_points: &mut [ControlPoint],
     index: usize,
+    start: ControlPointValue,
     shown_and_target: [[f32; 3]; 2],
     curve: CurveSettings,
 ) {
-    let value = *control_points[index].val();
-    let moved = picker_value_after_drag(value, shown_and_target, curve.picker_space);
+    let moved = picker_value_after_drag(start, shown_and_target, curve.picker_space);
     move_point_to(control_points, index, moved, curve);
 }
 
@@ -843,14 +887,20 @@ pub fn move_handle_to_linear(
     control_points: &mut [ControlPoint],
     index: usize,
     side: usize,
+    start: &ControlPoint,
     shown_and_target: [[f32; 3]; 2],
     picker_space: PickerSpace,
     is_auto_comb_running: bool,
 ) {
-    let previous = bezier_handle(&control_points[index], side);
-    let handle = picker_value_after_drag(previous, shown_and_target, picker_space);
+    let start_handle = bezier_handle(start, side);
+    let handle = picker_value_after_drag(start_handle, shown_and_target, picker_space);
     let handle = clip_value_to_srgb(handle, picker_space);
-    drag_handle_to(control_points, index, side, handle, is_auto_comb_running);
+    if handle == start_handle {
+        // handle - point is not the stored tangent bit for bit, nor a runaway one bezier_handle clamped.
+        control_points[index].tangents_mut()[side] = start.tangents()[side];
+    } else {
+        drag_handle_to(control_points, index, side, handle, is_auto_comb_running);
+    }
 }
 
 const FACE_STEPS: usize = 12;
@@ -1025,10 +1075,12 @@ fn default_gamut_opacity() -> f32 {
     DEFAULT_GAMUT_OPACITY
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct ItemDrag {
     item: View3dItem,
-    grab_offset: Vec2,
+    start: ControlPoint,
+    start_position: [f32; 3],
+    press: Pos2,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1071,6 +1123,13 @@ impl View3d {
         *self.camera.get_or_insert_with(|| OrbitCamera::fitted(space))
     }
 
+    fn set_space(&mut self, space: View3dSpace) {
+        if space != self.space {
+            self.space = space;
+            self.camera = self.camera.map(|camera| camera.refitted(space));
+        }
+    }
+
     pub fn draw_ui(
         &mut self,
         ui: &mut Ui,
@@ -1085,13 +1144,15 @@ impl View3d {
             ..
         } = curve;
         ui.horizontal_wrapped(|ui| {
+            let mut space = self.space;
             egui::ComboBox::from_id_salt("view_3d_space")
-                .selected_text(self.space.label())
+                .selected_text(space.label())
                 .show_ui(ui, |ui| {
-                    for space in View3dSpace::ALL {
-                        ui.selectable_value(&mut self.space, space, space.label());
+                    for option in View3dSpace::ALL {
+                        ui.selectable_value(&mut space, option, option.label());
                     }
                 });
+            self.set_space(space);
             ui.add(egui::Slider::new(&mut self.gamut_opacity, 0.0..=1.0).text("Gamut"))
                 .on_hover_text("Opacity of the shaded gamut faces");
             ui.weak(VIEW_3D_HINT);
@@ -1190,12 +1251,16 @@ impl View3d {
         curve: CurveSettings,
         selected_index: &mut Option<usize>,
     ) -> Option<View3dItem> {
+        let space = self.space;
         if response.drag_started_by(PointerButton::Primary) {
             self.drag = ui.input(|i| i.pointer.press_origin()).and_then(|press| {
-                let (screen, item) = item_at(items, press)?;
+                let (_, item) = item_at(items, press)?;
+                let pressed = items.iter().find(|scene_item| scene_item.item == item)?;
                 Some(ItemDrag {
                     item,
-                    grab_offset: press - screen,
+                    start: control_points[item.point_index()].clone(),
+                    start_position: space.position(pressed.linear),
+                    press,
                 })
             });
         }
@@ -1211,24 +1276,22 @@ impl View3d {
             }
         }
 
-        let drag = self.drag?;
+        let drag = self.drag.clone()?;
         *selected_index = Some(drag.item.point_index());
-        let dragged = items
-            .iter()
-            .find(|scene_item| scene_item.item == drag.item)?;
-        let target = response.interact_pointer_pos()? - drag.grab_offset;
-        if target.distance(dragged.screen) < MIN_DRAG_PIXELS {
-            return Some(drag.item);
+        if !items.iter().any(|scene_item| scene_item.item == drag.item) {
+            return None;
         }
-        let (camera, space, rect) = (self.camera(), self.space, response.rect);
-        let moved = camera.unproject(target, dragged.projected.depth, rect);
-        let shown_and_target = [dragged.linear, space.linear_at(moved)];
+        let pointer = response.interact_pointer_pos()?;
+        let (camera, rect) = (self.camera(), response.rect);
+        let moved = camera.dragged_on_view_plane(drag.start_position, [drag.press, pointer], rect);
+        let shown_and_target = [drag.start_position, moved].map(|p| space.linear_at(p));
+        let start_value = drag.item.value(&drag.start);
         let is_middle = |index: usize| 0 < index && index + 1 < control_points.len();
         match drag.item {
             View3dItem::Point(index) if curve.is_auto_hue && is_middle(index) => {
                 let value = auto_hue_drag_value(
-                    *control_points[index].val(),
-                    target,
+                    start_value,
+                    camera.project(moved, rect)?.pos,
                     curve.picker_space,
                     |value| {
                         let linear = value.linear(curve.picker_space);
@@ -1238,12 +1301,13 @@ impl View3d {
                 move_point_to(control_points, index, value, curve)
             }
             View3dItem::Point(index) => {
-                move_point_by_linear(control_points, index, shown_and_target, curve)
+                move_point_by_linear(control_points, index, start_value, shown_and_target, curve)
             }
             View3dItem::Handle(index, side) => move_handle_to_linear(
                 control_points,
                 index,
                 side,
+                &drag.start,
                 shown_and_target,
                 curve.picker_space,
                 curve.is_auto_comb_running,
@@ -1294,6 +1358,7 @@ mod tests {
             yaw: 0.0,
             pitch: 0.0,
             distance,
+            ..OrbitCamera::fitted(View3dSpace::Srgb)
         }
     }
 
@@ -1477,8 +1542,9 @@ mod tests {
         target: [f32; 3],
         curve: CurveSettings,
     ) {
-        let shown = points[index].val().linear(curve.picker_space);
-        move_point_by_linear(points, index, [shown, target], curve);
+        let start = *points[index].val();
+        let shown = start.linear(curve.picker_space);
+        move_point_by_linear(points, index, start, [shown, target], curve);
     }
 
     #[test]
@@ -1557,7 +1623,7 @@ mod tests {
         let shown = value.linear(oklch);
         let [l, a, b] = linear_to_oklab(shown);
         let lighter = oklab_to_linear([l + 0.05, a, b]);
-        move_point_by_linear(&mut points, 0, [shown, lighter], unlocked(oklch));
+        move_point_by_linear(&mut points, 0, value, [shown, lighter], unlocked(oklch));
         let moved = *points[0].val();
         assert!(!moved.is_in_srgb(oklch), "{moved:?}");
         assert_close([moved.s(), moved.v(), moved.h()], [0.9, 0.65, 0.4]);
@@ -1569,7 +1635,15 @@ mod tests {
         let mut points = vec![original.clone()];
         let target = [0.1, 0.5, 0.7];
         let shown = bezier_handle(&points[0], 1).linear(PickerSpace::Hsl);
-        move_handle_to_linear(&mut points, 0, 1, [shown, target], PickerSpace::Hsl, false);
+        move_handle_to_linear(
+            &mut points,
+            0,
+            1,
+            &original,
+            [shown, target],
+            PickerSpace::Hsl,
+            false,
+        );
         assert_close(
             bezier_handle(&points[0], 1).linear(PickerSpace::Hsl),
             target,
@@ -1658,7 +1732,8 @@ mod tests {
             let shown = bezier_handle(&points[0], 1).linear(space);
             let [l, a, b] = linear_to_oklab(shown);
             let lighter = oklab_to_linear([l + 0.02, a, b]);
-            move_handle_to_linear(&mut points, 0, 1, [shown, lighter], clipping, false);
+            let start = points[0].clone();
+            move_handle_to_linear(&mut points, 0, 1, &start, [shown, lighter], clipping, false);
             let handle = bezier_handle(&points[0], 1);
             assert!(handle.is_in_srgb(clipping), "{space:?}: {handle:?}");
         }
@@ -1998,6 +2073,164 @@ mod tests {
         }
     }
 
+    const OKLCH: PickerSpace = PickerSpace::Oklch {
+        clip_to_srgb: false,
+    };
+    const HELD_FRAMES: usize = 5;
+
+    fn drag_hold_and_return<T>(
+        egui_ctx: &egui::Context,
+        pane: &mut View3dPane,
+        [start, end]: [Pos2; 2],
+        read: impl Fn(&[ControlPoint]) -> T,
+    ) -> [T; 3] {
+        let read_pane = |pane: &View3dPane| read(&pane.ctx.borrow().control_points);
+        pane_frame(egui_ctx, pane, vec![egui::Event::PointerMoved(start)]);
+        pane_frame(egui_ctx, pane, vec![primary(start, true)]);
+        for step in 1..=3 {
+            let pos = start.lerp(end, step as f32 / 3.0);
+            pane_frame(egui_ctx, pane, vec![egui::Event::PointerMoved(pos)]);
+        }
+        let moved = read_pane(pane);
+        for _ in 0..HELD_FRAMES {
+            pane_frame(egui_ctx, pane, Vec::new());
+        }
+        let held = read_pane(pane);
+        for pos in [start.lerp(end, 0.5), start] {
+            pane_frame(egui_ctx, pane, vec![egui::Event::PointerMoved(pos)]);
+        }
+        let returned = read_pane(pane);
+        pane_frame(egui_ctx, pane, vec![primary(start, false)]);
+        [moved, held, returned]
+    }
+
+    #[test]
+    fn a_point_outside_srgb_stays_put_while_held_and_comes_back_bit_for_bit() {
+        let [first_hue, last_hue] = [0.1, 0.6];
+        let middle_hue = crate::math::hue_lerp(first_hue, last_hue, 0.5);
+        let points: Vec<ControlPoint> = [
+            (0.9, 0.7, first_hue, 0.0),
+            (0.9, 0.5, middle_hue, 0.5),
+            (0.3, 0.4, last_hue, 1.0),
+        ]
+        .map(|(s, v, h, t)| ControlPoint::new_simple(ControlPointValue::new(s, v, h), t))
+        .to_vec();
+        for space in View3dSpace::ALL {
+            for index in [0, 1] {
+                assert!(!points[index].val().is_in_srgb(OKLCH));
+                let mut pane = pane_with(&points, SplineMode::Linear, None);
+                pane.ctx.borrow_mut().picker_space = OKLCH;
+                pane.view.space = space;
+                let egui_ctx = egui::Context::default();
+                let rect = view_rect(&pane_frame(&egui_ctx, &mut pane, Vec::new()));
+                let start = screen_pos(&pane, rect, *points[index].val());
+                let path = [start, start + Vec2::new(12.0, -9.0)];
+                let bits = |points: &[ControlPoint]| points[index].val().val.map(f32::to_bits);
+                let [moved, held, returned] =
+                    drag_hold_and_return(&egui_ctx, &mut pane, path, bits);
+                let label = format!("point {index} in {space:?}");
+                assert_ne!(moved, bits(&points), "{label}");
+                assert_eq!(held, moved, "{label}");
+                assert_eq!(returned, bits(&points), "{label}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_handle_outside_srgb_stays_put_while_held_and_comes_back_bit_for_bit() {
+        let mut points: Vec<ControlPoint> = [(0.3, 0.6, 0.0), (0.4, 0.5, 0.5), (0.7, 0.4, 1.0)]
+            .map(|(s, v, t)| point_with_tangents([s, v, 0.75], t))
+            .to_vec();
+        points[1].tangents_mut()[1] = Some([0.55, 0.0, 0.0].into());
+        for picker_space in [OKLCH, OKLAB] {
+            assert!(!bezier_handle(&points[1], 1).is_in_srgb(picker_space));
+            for space in View3dSpace::ALL {
+                let mut pane = pane_with(&points, SplineMode::Bezier, Some(1));
+                pane.ctx.borrow_mut().picker_space = picker_space;
+                pane.view.space = space;
+                let egui_ctx = egui::Context::default();
+                let rect = view_rect(&pane_frame(&egui_ctx, &mut pane, Vec::new()));
+                let point = screen_pos(&pane, rect, *points[1].val());
+                let handle = screen_pos(&pane, rect, bezier_handle(&points[1], 1));
+                let start = handle_marker_pos(point, handle, 1);
+                let path = [start, start + Vec2::new(10.0, 8.0)];
+                let bits = |points: &[ControlPoint]| {
+                    points[1].tangents()[1].unwrap().val.map(f32::to_bits)
+                };
+                let [moved, held, returned] =
+                    drag_hold_and_return(&egui_ctx, &mut pane, path, bits);
+                let label = format!("{picker_space:?} in {space:?}");
+                assert_ne!(moved, bits(&points), "{label}");
+                assert_eq!(held, moved, "{label}");
+                assert_eq!(returned, bits(&points), "{label}");
+            }
+        }
+    }
+
+    #[test]
+    fn fitted_camera_keeps_every_label_and_guide_inside_the_pane() {
+        let wide = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0));
+        let tall = Rect::from_min_size(Pos2::ZERO, Vec2::new(200.0, 400.0));
+        let orbits = [
+            Vec2::ZERO,
+            Vec2::new(150.0, 100.0),
+            Vec2::new(-220.0, -140.0),
+        ];
+        for space in View3dSpace::ALL {
+            let guide_ends = reference_segments(space, Color32::WHITE)
+                .into_iter()
+                .flat_map(|segment| segment.ends);
+            let labels = axis_labels(space).iter().map(|&(_, position)| position);
+            let drawn: Vec<[f32; 3]> = guide_ends.chain(labels).collect();
+            for orbit in orbits {
+                let camera = OrbitCamera::fitted(space).orbited(orbit).refitted(space);
+                for rect in [wide, tall] {
+                    for &position in &drawn {
+                        let pos = camera.project(position, rect).unwrap().pos;
+                        assert!(
+                            rect.contains(pos),
+                            "{space:?} in {rect:?} from {camera:?}: {position:?} at {pos:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn switching_the_space_refits_the_distance_and_keeps_the_orientation() {
+        let mut view = View3d::default();
+        let orbited = OrbitCamera::fitted(View3dSpace::Srgb)
+            .orbited(Vec2::new(40.0, -25.0))
+            .zoomed(80.0);
+        view.camera = Some(orbited);
+        view.set_space(View3dSpace::Srgb);
+        assert_eq!(view.camera, Some(orbited));
+
+        view.set_space(View3dSpace::Oklab);
+        let camera = view.camera.unwrap();
+        assert_eq!(view.space, View3dSpace::Oklab);
+        assert_eq!([camera.yaw, camera.pitch], [orbited.yaw, orbited.pitch]);
+        assert_eq!(camera, orbited.refitted(View3dSpace::Oklab));
+        assert_ne!(camera.distance, orbited.distance);
+    }
+
+    #[test]
+    fn depth_fade_spans_the_depths_of_the_spaces_own_gamut_sphere() {
+        for space in View3dSpace::ALL {
+            let camera = OrbitCamera::fitted(space).zoomed(-120.0);
+            let radius = gamut_radius(space);
+            let [near, far] = [-radius, radius].map(|r| camera.depth_fade(camera.distance + r));
+            assert_eq!(near, 1.0, "{space:?}");
+            assert!((far - (1.0 - FAR_FADE)).abs() < 1e-6, "{space:?}: {far}");
+            let middle = camera.depth_fade(camera.distance);
+            assert!(
+                (middle - (1.0 - 0.5 * FAR_FADE)).abs() < 1e-6,
+                "{space:?}: {middle}"
+            );
+        }
+    }
+
     #[test]
     fn clicking_a_point_selects_it_without_editing() {
         let points = three_points();
@@ -2129,7 +2362,14 @@ mod tests {
         let depth = camera.project(space.position(shown), rect).unwrap().depth;
         let target = space.linear_at(camera.unproject(end, depth, rect));
         let mut snapped = points.to_vec();
-        move_point_by_linear(&mut snapped, index, [shown, target], unlocked(picker_space));
+        let start = *points[index].val();
+        move_point_by_linear(
+            &mut snapped,
+            index,
+            start,
+            [shown, target],
+            unlocked(picker_space),
+        );
         snapped[index].val_mut()[2] = points[index].val().h();
         *snapped[index].val()
     }
