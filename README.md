@@ -77,7 +77,7 @@ Previewer:
 - Space evenly: Spread the points evenly along the gradient (equal T steps)
 
 3D view:
-- Space: sRGB cube, Linear RGB cube, HSV cylinder, HSL cylinder, or Oklab (L up, a/b across, with the sRGB gamut outline)
+- Space: sRGB cube, Linear RGB cube, HSV cylinder, HSL cylinder, or Oklab (L up, a/b across, with the sRGB gamut outline); switching it refits the zoom and keeps the angle
 - Gamut: Opacity of the shaded gamut faces (0 hides them); the curve and points show through the near faces
 
 ## Presets
