@@ -619,22 +619,57 @@ struct JointGoal {
     scale: f64,
 }
 
-// One side's curvature, with its slopes along the solver variables it depends on.
+// One side's curvature, with its slopes along its segment's two solver variables when it has them.
+#[derive(Clone, Copy)]
 struct Side {
     k: f64,
-    slopes: Vec<(usize, f64)>,
+    slopes: Option<[(usize, f64); 2]>,
 }
 
-#[derive(Default)]
+impl Side {
+    fn slopes(&self) -> impl Iterator<Item = (usize, f64)> {
+        self.slopes.into_iter().flatten()
+    }
+}
+
+// Arriving and leaving; a side is missing at a chain end or where its handles are degenerate.
+type JointSides = [Option<Side>; 2];
+
+fn both_sides(sides: &JointSides, joint: usize) -> (Side, Side) {
+    match *sides {
+        [Some(arriving), Some(leaving)] => (arriving, leaving),
+        _ => panic!("joint {joint} lost a side"),
+    }
+}
+
+// Each row's terms are stored back to back, `ends` closing each row.
 struct Residuals {
     values: Vec<f64>,
-    rows: Vec<Vec<(usize, f64)>>,
+    terms: Vec<(usize, f64)>,
+    ends: Vec<usize>,
 }
 
 impl Residuals {
-    fn push(&mut self, value: f64, row: Vec<(usize, f64)>) {
+    fn with_capacity(rows: usize) -> Self {
+        Self {
+            values: Vec::with_capacity(rows),
+            terms: Vec::with_capacity(4 * rows),
+            ends: Vec::with_capacity(rows),
+        }
+    }
+
+    fn push(&mut self, value: f64, factor: f64, slopes: impl Iterator<Item = (usize, f64)>) {
         self.values.push(value);
-        self.rows.push(row);
+        self.terms
+            .extend(slopes.map(|(variable, slope)| (variable, factor * slope)));
+        self.ends.push(self.terms.len());
+    }
+
+    fn rows(&self) -> impl Iterator<Item = &[(usize, f64)]> {
+        let starts = std::iter::once(0).chain(self.ends.iter().copied());
+        starts
+            .zip(&self.ends)
+            .map(|(start, &end)| &self.terms[start..end])
     }
 
     fn cost(&self) -> f64 {
@@ -642,8 +677,7 @@ impl Residuals {
     }
 
     fn band_width(&self) -> usize {
-        self.rows
-            .iter()
+        self.rows()
             .filter_map(|row| {
                 let low = row.iter().map(|&(variable, _)| variable).min()?;
                 let high = row.iter().map(|&(variable, _)| variable).max()?;
@@ -747,9 +781,11 @@ impl<'a> Chain<'a> {
             })
             .collect();
         chain.constrained = (1..segment_count)
-            .filter(|&joint| {
-                let sides = &start_sides[joint];
-                sides.len() == 2 && sides.iter().any(|side| !side.slopes.is_empty())
+            .filter(|&joint| match start_sides[joint] {
+                [Some(arriving), Some(leaving)] => {
+                    arriving.slopes.is_some() || leaving.slopes.is_some()
+                }
+                _ => false,
             })
             .collect();
         chain
@@ -773,26 +809,21 @@ impl<'a> Chain<'a> {
             .collect()
     }
 
-    fn sides(&self, x: &[f64]) -> Vec<Vec<Side>> {
+    fn sides(&self, x: &[f64]) -> Vec<JointSides> {
         let lengths = self.lengths(x);
         let segment_count = self.layout.segments.len();
         (0..=segment_count)
             .map(|joint| {
-                joint_side_ends(segment_count, joint)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|(segment, end)| {
-                        let lengths = lengths[segment];
-                        let geometry = &self.layout.segments[segment];
-                        geometry.curvatures(lengths)?;
-                        let (k, slopes) = geometry.curvature_slopes(lengths)[end];
-                        let slopes = match self.variables[segment] {
-                            Some(variables) => variables.into_iter().zip(slopes).collect(),
-                            None => Vec::new(),
-                        };
-                        Some(Side { k, slopes })
-                    })
-                    .collect()
+                joint_side_ends(segment_count, joint).map(|side_end| {
+                    let (segment, end) = side_end?;
+                    let lengths = lengths[segment];
+                    let geometry = &self.layout.segments[segment];
+                    geometry.curvatures(lengths)?;
+                    let (k, slopes) = geometry.curvature_slopes(lengths)[end];
+                    let slopes = self.variables[segment]
+                        .map(|[start, end]| [(start, slopes[0]), (end, slopes[1])]);
+                    Some(Side { k, slopes })
+                })
             })
             .collect()
     }
@@ -800,44 +831,40 @@ impl<'a> Chain<'a> {
     // Weighted target misses and length moves, then the G2 gaps times `gap_weight`; without the
     // objective, only the G2 gaps.
     fn residuals(&self, x: &[f64], with_objective: bool, gap_weight: f64) -> Residuals {
-        let row = |terms: &[(usize, f64)], factor: f64| {
-            terms
-                .iter()
-                .map(|&(variable, slope)| (variable, factor * slope))
-                .collect()
-        };
         let sides = self.sides(x);
-        let mut residuals = Residuals::default();
+        let rows = self.goals.len() + self.length_weights.len() + self.constrained.len();
+        let mut residuals = Residuals::with_capacity(rows);
         if with_objective {
             for (goal, sides) in self.goals.iter().zip(&sides) {
-                if sides.iter().all(|side| side.slopes.is_empty()) {
+                let present = || sides.iter().flatten();
+                if present().all(|side| side.slopes.is_none()) {
                     continue;
                 }
-                let factor = goal.weight.sqrt() * goal.scale / sides.len() as f64;
-                let k: f64 = sides.iter().map(|side| side.k).sum();
-                let terms: Vec<(usize, f64)> = sides
-                    .iter()
-                    .flat_map(|side| side.slopes.iter().copied())
-                    .collect();
+                let count = present().count() as f64;
+                let factor = goal.weight.sqrt() * goal.scale / count;
+                let k: f64 = present().map(|side| side.k).sum();
                 residuals.push(
-                    factor * (k - sides.len() as f64 * goal.target),
-                    row(&terms, factor),
+                    factor * (k - count * goal.target),
+                    factor,
+                    present().flat_map(Side::slopes),
                 );
             }
             for (variable, weight) in self.length_weights.iter().enumerate() {
                 let factor = weight.sqrt();
                 residuals.push(
                     factor * (x[variable] - self.start[variable]),
-                    row(&[(variable, 1.0)], factor),
+                    factor,
+                    std::iter::once((variable, 1.0)),
                 );
             }
         }
         for &joint in &self.constrained {
             let factor = gap_weight.sqrt() * self.goals[joint].scale;
-            let [arriving, leaving] = [&sides[joint][0], &sides[joint][1]];
-            let mut terms = arriving.slopes.clone();
-            terms.extend(leaving.slopes.iter().map(|&(v, slope)| (v, -slope)));
-            residuals.push(factor * (arriving.k - leaving.k), row(&terms, factor));
+            let (arriving, leaving) = both_sides(&sides[joint], joint);
+            let slopes = arriving
+                .slopes()
+                .chain(leaving.slopes().map(|(variable, slope)| (variable, -slope)));
+            residuals.push(factor * (arriving.k - leaving.k), factor, slopes);
         }
         residuals
     }
@@ -864,7 +891,7 @@ impl<'a> Chain<'a> {
             let stride = width + 1;
             let mut gradient = vec![0.0; count];
             let mut normal = vec![0.0; count * stride];
-            for (value, row) in current.values.iter().zip(&current.rows) {
+            for (value, row) in current.values.iter().zip(current.rows()) {
                 for &(i, a) in row {
                     gradient[i] += value * a;
                     for &(j, b) in row.iter().filter(|&&(j, _)| j >= i) {
@@ -994,7 +1021,8 @@ impl<'a> Chain<'a> {
             .constrained
             .iter()
             .map(|&joint| {
-                let [arriving, leaving] = [sides[joint][0].k, sides[joint][1].k];
+                let (arriving, leaving) = both_sides(&sides[joint], joint);
+                let [arriving, leaving] = [arriving.k, leaving.k];
                 let gap = (arriving - leaving).abs() / arriving.abs().max(leaving.abs()).max(1.0);
                 (joint, gap)
             })
@@ -1070,8 +1098,10 @@ impl<'a> Chain<'a> {
             .iter()
             .enumerate()
             .map(|(joint, sides)| {
-                (self.is_free_joint(joint) && !sides.is_empty())
-                    .then(|| sides.iter().map(|side| side.k).sum::<f64>() / sides.len() as f64)
+                let present = || sides.iter().flatten();
+                let count = present().count();
+                (self.is_free_joint(joint) && count > 0)
+                    .then(|| present().map(|side| side.k).sum::<f64>() / count as f64)
             })
             .collect()
     }
