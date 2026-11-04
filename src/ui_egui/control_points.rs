@@ -27,7 +27,7 @@ pub struct ControlPointUiResult {
     pub hovering_control_point: Option<(egui::Response, usize)>,
     pub selected_tangent: Option<usize>,
     pub dragged_tangent: Option<egui::Response>,
-    pub dragged_tangent_offset: Option<Vec2>,
+    pub dragged_tangent_offset: Option<ControlPointValue>,
 }
 
 pub fn control_point_pos(cp: &ControlPoint) -> Pos2 {
@@ -450,6 +450,23 @@ pub fn clip_value_to_srgb(value: ControlPointValue, space: PickerSpace) -> Contr
         value.clipped_to_srgb(space)
     } else {
         value
+    }
+}
+
+pub fn clamped_handle_offset(
+    point: ControlPointValue,
+    offset: ControlPointValue,
+    space: PickerSpace,
+) -> ControlPointValue {
+    let end = point + offset;
+    let mut in_square = end;
+    in_square[0] = in_square[0].clamp(0.0, 1.0);
+    in_square[1] = in_square[1].clamp(0.0, 1.0);
+    let clamped = clip_value_to_srgb(in_square, space);
+    if clamped == end {
+        offset
+    } else {
+        clamped - point
     }
 }
 
@@ -1577,7 +1594,7 @@ mod tests {
         let offset = result.dragged_tangent_offset.unwrap();
         let min_length_sv = 2.0 * CONTROL_POINT_RADIUS / PICKER_RECT.width();
         assert!(
-            offset.x < -min_length_sv && offset.y.abs() < 1e-6,
+            offset.s() < -min_length_sv && offset.v().abs() < 1e-6,
             "{offset:?}"
         );
     }
@@ -1617,6 +1634,24 @@ mod tests {
     fn bezier_handle_clamps_negative_overshoot_to_zero() {
         let cp = point_with_tangent([0.2, 0.3, 0.5], 0, [-0.5, -0.9, 0.0]);
         assert_eq!(bezier_handle(&cp, 0), ControlPointValue::new(0.0, 0.0, 0.5));
+    }
+
+    #[test]
+    fn clamped_handle_offset_inside_the_square_is_the_offset_bit_for_bit() {
+        let point = ControlPointValue::new(0.5, 0.5, 0.2);
+        let offset = ControlPointValue::new(0.1, -0.2, 0.05);
+        assert_eq!(
+            clamped_handle_offset(point, offset, PickerSpace::Hsv),
+            offset
+        );
+    }
+
+    #[test]
+    fn clamped_handle_offset_past_the_square_stops_at_its_edge() {
+        let point = ControlPointValue::new(0.5, 0.5, 0.2);
+        let offset = ControlPointValue::new(0.7, -0.9, 0.0);
+        let clamped = clamped_handle_offset(point, offset, PickerSpace::Hsv);
+        assert_eq!(point + clamped, ControlPointValue::new(1.0, 0.0, 0.2));
     }
 
     #[test]

@@ -22,7 +22,7 @@ use crate::{
         auto_comb::drag_handle_to,
         blend::Gradient,
         color_picker::{
-            apply_group_delta_sv, format_color_as, limit_group_delta, srgb_move_fraction,
+            apply_group_delta_sv, format_color_as, limit_group_delta, srgb_slide_fractions,
         },
         control_points::{
             bezier_handle, clip_points_to_srgb, clip_value_to_srgb, control_point_outline,
@@ -707,12 +707,12 @@ fn move_point_to(
     } else {
         delta_sv
     };
-    let move_group = |points: &mut [ControlPoint], fraction: f32| {
-        apply_group_delta_sv(points, fraction * delta_sv);
-        points[index].val_mut()[2] = lerp(value.h()..=moved.h(), fraction);
+    let move_group = |points: &mut [ControlPoint], [x, y, z]: [f32; 3]| {
+        apply_group_delta_sv(points, Vec2::new(x * delta_sv.x, y * delta_sv.y));
+        points[index].val_mut()[2] = lerp(value.h()..=moved.h(), z);
     };
-    let fraction = srgb_move_fraction(control_points, picker_space, move_group);
-    move_group(control_points, fraction);
+    let fractions = srgb_slide_fractions(control_points, picker_space, move_group);
+    move_group(control_points, fractions);
     clip_points_to_srgb(control_points, picker_space);
 }
 
@@ -1264,6 +1264,7 @@ mod tests {
         ui_egui::{
             app::ZColorPickerAppContext,
             auto_comb::{apply_auto_comb, CombEdit},
+            color_picker::srgb_move_fraction,
             panes::{View3dPane, ZAppPane},
         },
     };
@@ -1643,6 +1644,42 @@ mod tests {
         let [s, v, h] = points[0].val().val;
         assert!(s > 0.2, "{points:?}");
         assert!(!ControlPointValue::new(s + 1e-3, v, h).is_in_srgb(clipping));
+    }
+
+    #[test]
+    fn dragging_a_point_under_lock_with_clip_diagonally_into_the_srgb_edge_slides_along_it() {
+        let clipping = PickerSpace::Oklch { clip_to_srgb: true };
+        let original = vec![
+            point_with_tangents([0.15, 0.3, 0.3], 0.0),
+            point_with_tangents([0.1, 0.4, 0.3], 1.0),
+        ];
+        let target_value = ControlPointValue::new(0.38, 0.6, 0.3);
+        assert!(target_value.is_in_srgb(clipping));
+        let delta = target_value.vec2() - original[1].val().vec2();
+        let stop_at_edge = delta
+            * srgb_move_fraction(&original, clipping, |points, fraction| {
+                apply_group_delta_sv(points, fraction * delta)
+            });
+        let mut points = original.clone();
+        let locked = CurveSettings {
+            is_curve_locked: true,
+            ..unlocked(clipping)
+        };
+        move_point_to_linear(&mut points, 1, target_value.linear(clipping), locked);
+
+        let offset = |points: &[ControlPoint]| points[1].val().vec2() - points[0].val().vec2();
+        let shape_change = (offset(&points) - offset(&original)).length();
+        assert!(shape_change < 1e-5, "{points:?}");
+        assert!(points.iter().all(|cp| cp.val().is_in_srgb(clipping)));
+        let slid = points[0].val().vec2() - original[0].val().vec2();
+        assert!(
+            slid.x >= stop_at_edge.x - 1e-5,
+            "{slid:?} vs {stop_at_edge:?}"
+        );
+        assert!(
+            slid.y > stop_at_edge.y + 0.05,
+            "{slid:?} vs {stop_at_edge:?}"
+        );
     }
 
     #[test]

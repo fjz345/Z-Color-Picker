@@ -10,14 +10,14 @@ use crate::{
     },
     ui_egui::{
         app::ZColorPickerOptions,
-        auto_comb::{apply_auto_comb, drag_handle_to, CombEdit},
+        auto_comb::{apply_auto_comb, drag_handle_by, CombEdit},
         color_readout::{color_readout, color_readout_height},
         content_windows::{
             clip_to_srgb_checkbox, comb_row, curve_row, flip_control_points, picker_space_combo,
             points_row,
         },
         control_points::{
-            clip_points_to_srgb, clip_value_to_srgb, control_point_outline, control_point_pos,
+            clamped_handle_offset, clip_points_to_srgb, control_point_outline, control_point_pos,
             convert_picker_space, drag_grab_offset_x, drag_t, gradient_color_at, insert_point,
             normalize_t, remove_point, t_at_pointer, ui_ordered_control_points,
             ControlPointUiResult, CONTROL_POINT_FILL_RADIUS,
@@ -1033,10 +1033,40 @@ pub fn limit_group_delta_to_srgb(
     delta_sv: Vec2,
     picker_space: PickerSpace,
 ) -> Vec2 {
-    let fraction = srgb_move_fraction(points, picker_space, |points, fraction| {
-        apply_group_delta_sv(points, fraction * delta_sv)
+    let [x, y] = srgb_slide_fractions(points, picker_space, |points, [x, y]| {
+        apply_group_delta_sv(points, vec2(x * delta_sv.x, y * delta_sv.y))
     });
-    fraction * delta_sv
+    vec2(x * delta_sv.x, y * delta_sv.y)
+}
+
+// A slide along one axis can make room along an axis already slid.
+const SRGB_SLIDE_ROUNDS: usize = 2;
+
+pub fn srgb_slide_fractions<const AXES: usize>(
+    points: &[ControlPoint],
+    picker_space: PickerSpace,
+    move_by: impl Fn(&mut [ControlPoint], [f32; AXES]),
+) -> [f32; AXES] {
+    let fraction = srgb_move_fraction(points, picker_space, |points, fraction| {
+        move_by(points, [fraction; AXES])
+    });
+    let mut fractions = [fraction; AXES];
+    if fraction == 1.0 {
+        return fractions;
+    }
+    for axis in (0..AXES).cycle().take(SRGB_SLIDE_ROUNDS * AXES) {
+        let start = fractions[axis];
+        let along_axis = |fraction: f32| {
+            let mut slid = fractions;
+            slid[axis] = lerp(start..=1.0, fraction);
+            slid
+        };
+        let slid = srgb_move_fraction(points, picker_space, |points, fraction| {
+            move_by(points, along_axis(fraction))
+        });
+        fractions = along_axis(slid);
+    }
+    fractions
 }
 
 pub fn srgb_move_fraction(
@@ -1158,14 +1188,13 @@ fn handle_control_points_ui(
             if let Some(index) = *ctx.last_modifying_point_index {
                 if let (Some(tang_idx), Some(offset)) = (selected_tangent, dragged_tangent_offset) {
                     let cp = &ctx.control_points[index];
-                    if let Some(tangent) = cp.tangents()[tang_idx] {
-                        let target = *cp.val() + HsvKeyValue::new(offset.x, offset.y, tangent.h());
-                        let target = clip_value_to_srgb(target, *ctx.picker_space);
-                        drag_handle_to(
+                    if cp.tangents()[tang_idx].is_some() {
+                        let offset = clamped_handle_offset(*cp.val(), offset, *ctx.picker_space);
+                        drag_handle_by(
                             ctx.control_points,
                             index,
                             tang_idx,
-                            target,
+                            offset,
                             is_auto_comb_running(*ctx.spline_mode, *ctx.blend_space, ctx.options),
                         );
                         *ctx.dragging_tangent = Some((index, tang_idx));
@@ -3115,6 +3144,69 @@ mod tests {
     }
 
     #[test]
+    fn clipped_handle_dragged_out_along_the_srgb_edge_and_back_returns_bit_for_bit() {
+        let mut space = OKLCH.with_clip_to_srgb(true);
+        let ctx = egui::Context::default();
+        let mut picker = ZColorPickerWrapper::default();
+        picker.last_modifying_point_index = Some(1);
+        let mut original = with_handles(
+            points_sv(&[(0.1, 0.3), (0.3, 0.5), (0.1, 0.8)]),
+            &[[[-0.15, 0.0], [0.15, 0.0]]; 3],
+        );
+        crate::ui_egui::control_points::space_t_evenly(&mut original);
+        let mut points = original.clone();
+        let mut run = |points: &mut Vec<ControlPoint>, event: egui::Event| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 700.0))),
+                events: vec![event],
+                ..Default::default()
+            };
+            let mut square = Rect::NOTHING;
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    square = picker
+                        .draw_ui(
+                            ui,
+                            points,
+                            &mut SplineMode::Bezier,
+                            &mut space,
+                            &mut BlendSpace::Picker,
+                            &ColorStringCopy::HexNoAlpha,
+                        )
+                        .rect;
+                });
+            });
+            square
+        };
+        let square = run(&mut points, egui::Event::WindowFocused(true));
+        let handle = square.lerp_inside(vec2(0.45, 0.5));
+        let out = pos2(square.right() - 2.0, handle.y);
+        let along = out - vec2(0.0, 0.2 * square.height());
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        run(&mut points, egui::Event::PointerMoved(handle));
+        run(&mut points, button(handle, true));
+        let mut at_edge = None;
+        for (from, to) in [(handle, out), (out, along), (along, handle)] {
+            for step in 1..=4 {
+                let pos = from.lerp(to, step as f32 / 4.0);
+                run(&mut points, egui::Event::PointerMoved(pos));
+            }
+            at_edge.get_or_insert(bezier_handle(&points[1], 1));
+        }
+        run(&mut points, button(handle, false));
+
+        let at_edge = at_edge.unwrap();
+        assert!(at_edge.is_in_srgb(space), "{at_edge:?}");
+        assert!(at_edge.s() < 0.9, "{at_edge:?}");
+        assert_eq!(points, original);
+    }
+
+    #[test]
     fn auto_comb_keeps_the_dragged_handle_direction() {
         let mut picker = auto_comb_picker();
         picker.dragging_tangent = Some((1, 0));
@@ -3546,6 +3638,39 @@ mod tests {
     fn limit_group_delta_wider_than_range_does_not_move() {
         let points = points_sv(&[(-0.1, 0.5), (1.1, 0.5)]);
         assert_eq!(limit_group_delta(&points, vec2(0.2, 0.0)).x, 0.0);
+    }
+
+    #[test]
+    fn clipped_lock_group_pushed_diagonally_into_the_srgb_edge_slides_along_it() {
+        let space = OKLCH.with_clip_to_srgb(true);
+        let points: Vec<ControlPoint> = [(0.15, 0.3, 0.3, 0.0), (0.1, 0.4, 0.3, 1.0)]
+            .map(|(s, v, h, t)| ControlPoint::new_simple(ControlPointValue::new(s, v, h), t))
+            .to_vec();
+        assert!(points.iter().all(|cp| cp.val().is_in_srgb(space)));
+        let push = vec2(0.3, 0.2);
+        let stop_at_edge = push
+            * srgb_move_fraction(&points, space, |points, fraction| {
+                apply_group_delta_sv(points, fraction * push)
+            });
+
+        let delta = limit_group_delta_to_srgb(&points, push, space);
+        let mut moved = points.clone();
+        apply_group_delta_sv(&mut moved, delta);
+
+        let offset = |points: &[ControlPoint]| points[1].val().vec2() - points[0].val().vec2();
+        assert!(
+            (offset(&moved) - offset(&points)).length() < 1e-6,
+            "{moved:?}"
+        );
+        assert!(
+            moved.iter().all(|cp| cp.val().is_in_srgb(space)),
+            "{moved:?}"
+        );
+        assert!(delta.x >= stop_at_edge.x, "{delta:?} vs {stop_at_edge:?}");
+        assert!(
+            delta.y > stop_at_edge.y + 0.05,
+            "{delta:?} vs {stop_at_edge:?}"
+        );
     }
 
     const DRAG_RECT: Rect = Rect {

@@ -54,7 +54,7 @@ Groups, left to right: Preset and Copy as; Log at the right end.
 
 Picker (under the selected color's readout):
 - Space: Color space of the square and the hue bar: HSV, HSL, the perceptual OKHSV and OKHSL (built on Oklab), or OkLCh and Oklab themselves, which reach outside sRGB (shown with chroma reduced to fit). Switching converts every point and keeps its color, except middle points under Auto hue: their hues are re-interpolated in the new space; it is saved with the preset
-- Clip (OkLCh and Oklab): Clip to sRGB: colors outside sRGB are left blank on the square and bar, and every point or Bezier handle you move, type in or convert is pulled into sRGB by reducing its chroma; under Lock the group stops at the sRGB edge instead, keeping its shape. Dragging a hue out of sRGB and back gives the chroma back. Turning it on pulls in every point and handle once. Saved with the space
+- Clip (OkLCh and Oklab): Clip to sRGB: colors outside sRGB are left blank on the square and bar, and every point or Bezier handle you move, type in or convert is pulled into sRGB by reducing its chroma; under Lock the group slides along the sRGB edge instead, keeping its shape. Dragging a hue or a handle on the square out of sRGB and back gives the chroma back. Turning it on pulls in every point and handle once. Saved with the space
 
 Points row (under the square):
 - Lock: Apply any control point coordinate translation to all control points

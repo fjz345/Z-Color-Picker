@@ -1107,13 +1107,23 @@ pub fn drag_handle_to(
     target: ControlPointValue,
     is_auto_comb_running: bool,
 ) {
+    let offset = target - *points[index].val();
+    drag_handle_by(points, index, slot, offset, is_auto_comb_running);
+}
+
+pub fn drag_handle_by(
+    points: &mut [ControlPoint],
+    index: usize,
+    slot: usize,
+    offset: ControlPointValue,
+    is_auto_comb_running: bool,
+) {
     if points[index].tangents()[slot].is_none() {
         return;
     }
     if is_auto_comb_running {
-        set_curvature_from_drag(points, index, slot, sv(target));
+        set_curvature_from_drag(points, index, slot, sv(*points[index].val() + offset));
     }
-    let offset = target - *points[index].val();
     points[index].tangents_mut()[slot] = Some(offset);
 }
 

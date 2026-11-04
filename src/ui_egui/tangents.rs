@@ -5,7 +5,7 @@ use eframe::{
 };
 
 use crate::{
-    datatypes::control_point::ControlPoint,
+    datatypes::control_point::{ControlPoint, ControlPointValue},
     ui_egui::control_points::{
         bezier_handle, control_point_pos, screen_to_unit, unit_to_screen, value_pos,
     },
@@ -15,7 +15,7 @@ pub struct TangentUiResult {
     pub selected_by_tangent: bool,
     pub selected_tangent: Option<usize>,
     pub dragged_tangent: Option<egui::Response>,
-    pub dragged_tangent_offset: Option<Vec2>,
+    pub dragged_tangent_offset: Option<ControlPointValue>,
 }
 
 pub fn ui_control_point_tangents(
@@ -63,13 +63,14 @@ pub fn ui_control_point_tangents(
             continue;
         }
 
-        if tangent.is_none() {
+        let Some(tangent) = *tangent else {
             continue;
-        }
-        let tang_screen = unit_to_screen(square, value_pos(&bezier_handle(cp, tangent_index)));
+        };
+        let handle = bezier_handle(cp, tangent_index);
+        let handle_screen = unit_to_screen(square, value_pos(&handle));
 
         let tang_screen =
-            with_min_handle_length(cp_screen, tang_screen, tangent_index, 2.0 * point_radius);
+            with_min_handle_length(cp_screen, handle_screen, tangent_index, 2.0 * point_radius);
         let response = ui
             .interact(
                 Rect::from_center_size(tang_screen, hit_size),
@@ -82,17 +83,40 @@ pub fn ui_control_point_tangents(
             ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
         }
 
+        let drag_start_id = response.id.with("drag_start");
+        if response.drag_started_by(Primary) {
+            let press_origin = ui
+                .input(|i| i.pointer.press_origin())
+                .or(response.interact_pointer_pos());
+            if let Some(press_origin) = press_origin {
+                let is_drawn_where_stored =
+                    tang_screen == handle_screen && handle == *cp.val() + tangent;
+                let start_offset = if is_drawn_where_stored {
+                    tangent
+                } else {
+                    let drawn_end = screen_to_unit(square, tang_screen);
+                    ControlPointValue::new(
+                        drawn_end.x - cp.val()[0],
+                        1.0 - drawn_end.y - cp.val()[1],
+                        tangent.h(),
+                    )
+                };
+                ui.data_mut(|d| d.insert_temp(drag_start_id, (start_offset, press_origin)));
+            }
+        }
+
         if result.dragged_tangent.is_none() && response.dragged_by(Primary) {
-            let drawn_end = screen_to_unit(square, tang_screen);
-            let delta = response.drag_delta() / parent_size;
             result.selected_by_tangent = true;
             result.selected_tangent = Some(tangent_index);
             result.dragged_tangent = Some(response.clone());
-            result.dragged_tangent_offset = Some(tangent_offset_after_drag(
-                Vec2::new(cp.val()[0], cp.val()[1]),
-                Vec2::new(drawn_end.x, 1.0 - drawn_end.y),
-                Vec2::new(delta.x, -delta.y),
-            ));
+            let drag_start = ui.data(|d| d.get_temp::<(ControlPointValue, Pos2)>(drag_start_id));
+            if let (Some((start_offset, press_origin)), Some(pointer)) =
+                (drag_start, response.interact_pointer_pos())
+            {
+                let delta = (pointer - press_origin) / parent_size;
+                result.dragged_tangent_offset =
+                    Some(start_offset + ControlPointValue::new(delta.x, -delta.y, 0.0));
+            }
         }
 
         for stroke in [UNDERLAY, line_stroke] {
@@ -123,40 +147,9 @@ fn with_min_handle_length(
     cp_screen + min_length * direction
 }
 
-fn tangent_offset_after_drag(point_sv: Vec2, drawn_end_sv: Vec2, delta_sv: Vec2) -> Vec2 {
-    (drawn_end_sv + delta_sv).clamp(Vec2::ZERO, Vec2::splat(1.0)) - point_sv
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const POINT: Vec2 = Vec2::new(0.5, 0.5);
-
-    #[test]
-    fn drag_inside_square_follows_delta() {
-        let offset = tangent_offset_after_drag(POINT, Vec2::new(0.6, 0.5), Vec2::new(0.1, -0.2));
-        assert!(
-            (offset - Vec2::new(0.2, -0.2)).length() < 1e-6,
-            "{offset:?}"
-        );
-    }
-
-    #[test]
-    fn drag_past_square_stops_at_edge() {
-        let past_max = tangent_offset_after_drag(POINT, Vec2::new(0.9, 0.9), Vec2::new(0.5, 0.5));
-        assert_eq!(POINT + past_max, Vec2::splat(1.0));
-        let past_min = tangent_offset_after_drag(POINT, Vec2::new(0.1, 0.1), Vec2::new(-0.5, -0.5));
-        assert_eq!(POINT + past_min, Vec2::ZERO);
-    }
-
-    #[test]
-    fn drag_back_from_edge_moves_immediately() {
-        let at_edge =
-            POINT + tangent_offset_after_drag(POINT, Vec2::new(0.9, 0.5), Vec2::new(0.5, 0.0));
-        let back = POINT + tangent_offset_after_drag(POINT, at_edge, Vec2::new(-0.1, 0.0));
-        assert!((back - Vec2::new(0.9, 0.5)).length() < 1e-6, "{back:?}");
-    }
 
     #[test]
     fn unselected_point_emits_no_tangent_shapes() {
