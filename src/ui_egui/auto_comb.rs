@@ -21,10 +21,9 @@ const MIN_DAMPING: f64 = 1.0e-9;
 const INITIAL_DAMPING: f64 = 1.0e-3;
 const MAX_DAMPING: f64 = 1.0e12;
 const CONVERGED_DECREASE: f64 = 1.0e-14;
-// A stage ends once no log length would move further: far below f32 resolution, or coarse for a
-// stage that only warm-starts the next.
-const STEP_TOLERANCE: f64 = 1.0e-9;
-const WARM_START_STEP_TOLERANCE: f64 = 1.0e-3;
+// Far below f32 resolution; a warm-start stage only feeds the next one, so it may stop coarse.
+const STAGE_END_LOG_LENGTH_STEP: f64 = 1.0e-9;
+const WARM_START_STAGE_END_LOG_LENGTH_STEP: f64 = 1.0e-3;
 const OPEN_JOINT_WINDOW: usize = 2;
 const OPEN_JOINT_RATIO: f64 = 0.1;
 const GAP_WEIGHTS: [f64; 3] = [1.0e2, 1.0e4, 1.0e6];
@@ -990,13 +989,15 @@ impl<'a> Chain<'a> {
             .enumerate()
             .fold(self.start.clone(), |x, (stage, &weight)| {
                 let tolerance = if stage == last {
-                    STEP_TOLERANCE
+                    STAGE_END_LOG_LENGTH_STEP
                 } else {
-                    WARM_START_STEP_TOLERANCE
+                    WARM_START_STAGE_END_LOG_LENGTH_STEP
                 };
                 self.least_squares(x, tolerance, |x| self.residuals(x, true, weight))
             });
-        self.least_squares(x, STEP_TOLERANCE, |x| self.residuals(x, false, 1.0))
+        self.least_squares(x, STAGE_END_LOG_LENGTH_STEP, |x| {
+            self.residuals(x, false, 1.0)
+        })
     }
 
     // A move below f32 resolution would only flip rounding bits of a handle that is already solved.
