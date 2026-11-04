@@ -191,35 +191,46 @@ impl OrbitCamera {
     }
 
     fn refitted(self, space: View3dSpace) -> Self {
+        let camera = Self {
+            scene_radius: gamut_radius(space),
+            ..self
+        };
+        Self {
+            distance: camera.fitted_distance(space),
+            ..camera
+        }
+    }
+
+    fn fitted_distance(self, space: View3dSpace) -> f32 {
         // A sphere of radius r at distance d projects to a circle of radius focal * r / sqrt(d^2 - r^2).
         let focal_per_filled_radius = 2.0 * FOCAL_LENGTH_PER_SIZE / FIT_FILL;
-        let scene_radius = gamut_radius(space);
-        let gamut_distance = scene_radius * (1.0 + focal_per_filled_radius.powi(2)).sqrt();
+        let gamut_distance = self.scene_radius * (1.0 + focal_per_filled_radius.powi(2)).sqrt();
         let [right, up, toward_camera] = self.basis();
         let guide_ends = reference_segments(space, Color32::TRANSPARENT)
             .into_iter()
             .flat_map(|segment| segment.ends);
         let labels = axis_labels(space).iter().map(|&(_, position)| position);
         // Each guide end and label fits within FIT_FILL of a centered square of the shorter side.
-        let distance = guide_ends
+        guide_ends
             .chain(labels)
             .map(|p| {
                 let screen_offset = dot(p, right).abs().max(dot(p, up).abs());
                 dot(p, toward_camera) + focal_per_filled_radius * screen_offset
             })
-            .fold(gamut_distance, f32::max);
-        Self {
-            distance,
-            scene_radius,
-            ..self
-        }
+            .fold(gamut_distance, f32::max)
     }
 
-    fn orbited(self, drag: Vec2) -> Self {
-        Self {
+    // Guides and labels reach past the gamut sphere, so the fit follows the orientation.
+    fn orbited(self, drag: Vec2, space: View3dSpace) -> Self {
+        let turned = Self {
             yaw: self.yaw - drag.x * ORBIT_RADIANS_PER_POINT,
             pitch: (self.pitch + drag.y * ORBIT_RADIANS_PER_POINT).clamp(-MAX_PITCH, MAX_PITCH),
             ..self
+        };
+        let zoom = self.distance / self.fitted_distance(space);
+        Self {
+            distance: (zoom * turned.fitted_distance(space)).clamp(MIN_DISTANCE, MAX_DISTANCE),
+            ..turned
         }
     }
 
@@ -1112,7 +1123,7 @@ fn camera_after_input(
     }
     let mut camera = camera;
     if response.dragged_by(PointerButton::Primary) && !is_editing {
-        camera = camera.orbited(response.drag_delta());
+        camera = camera.orbited(response.drag_delta(), space);
     }
     if response.hovered() {
         camera = camera.zoomed(ui.input(|i| i.smooth_scroll_delta.y));
@@ -1459,8 +1470,16 @@ mod tests {
     #[test]
     fn orbit_clamps_pitch() {
         let camera = OrbitCamera::fitted(View3dSpace::Srgb);
-        assert_eq!(camera.orbited(Vec2::new(0.0, 1e6)).pitch, MAX_PITCH);
-        assert_eq!(camera.orbited(Vec2::new(0.0, -1e6)).pitch, -MAX_PITCH);
+        assert_eq!(
+            camera.orbited(Vec2::new(0.0, 1e6), View3dSpace::Srgb).pitch,
+            MAX_PITCH
+        );
+        assert_eq!(
+            camera
+                .orbited(Vec2::new(0.0, -1e6), View3dSpace::Srgb)
+                .pitch,
+            -MAX_PITCH
+        );
     }
 
     #[test]
@@ -2283,22 +2302,27 @@ mod tests {
     }
 
     #[test]
-    fn fitted_camera_keeps_every_label_and_guide_inside_the_pane() {
+    fn fitted_camera_keeps_every_label_and_guide_inside_the_pane_while_orbiting() {
         let wide = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0));
         let tall = Rect::from_min_size(Pos2::ZERO, Vec2::new(200.0, 400.0));
-        let orbits = [
-            Vec2::ZERO,
-            Vec2::new(150.0, 100.0),
-            Vec2::new(-220.0, -140.0),
-        ];
+        let fitted_pitch = OrbitCamera::fitted(View3dSpace::Srgb).pitch;
+        let yaw_turns = (0..12).map(|step| step as f32 * TAU / 12.0);
+        let orbits: Vec<Vec2> = yaw_turns
+            .flat_map(|yaw_turn| {
+                [-1.4, -0.7, 0.0, 0.7, 1.4].map(|pitch| {
+                    Vec2::new(-yaw_turn, pitch - fitted_pitch) / ORBIT_RADIANS_PER_POINT
+                })
+            })
+            .collect();
         for space in View3dSpace::ALL {
             let guide_ends = reference_segments(space, Color32::WHITE)
                 .into_iter()
                 .flat_map(|segment| segment.ends);
             let labels = axis_labels(space).iter().map(|&(_, position)| position);
             let drawn: Vec<[f32; 3]> = guide_ends.chain(labels).collect();
-            for orbit in orbits {
-                let camera = OrbitCamera::fitted(space).orbited(orbit).refitted(space);
+            let fitted = OrbitCamera::fitted(space);
+            for &orbit in &orbits {
+                let camera = fitted.orbited(orbit, space);
                 for rect in [wide, tall] {
                     for &position in &drawn {
                         let pos = camera.project(position, rect).unwrap().pos;
@@ -2313,10 +2337,27 @@ mod tests {
     }
 
     #[test]
+    fn orbiting_refits_the_distance_to_the_new_orientation_and_keeps_the_zoom() {
+        let space = View3dSpace::Oklab;
+        let fitted = OrbitCamera::fitted(space);
+        let zoomed = fitted.zoomed(80.0);
+        let orbit = Vec2::new(0.0, -150.0);
+        let [orbited, zoomed_orbited] = [fitted, zoomed].map(|camera| camera.orbited(orbit, space));
+        assert_eq!(orbited, orbited.refitted(space));
+        assert_ne!(orbited.distance, fitted.distance);
+        let zoom = |camera: OrbitCamera, unzoomed: OrbitCamera| camera.distance / unzoomed.distance;
+        let [before, after] = [zoom(zoomed, fitted), zoom(zoomed_orbited, orbited)];
+        assert!(
+            before < 0.95 && (after - before).abs() < 1e-6,
+            "{before} -> {after}"
+        );
+    }
+
+    #[test]
     fn switching_the_space_refits_the_distance_and_keeps_the_orientation() {
         let mut view = View3d::default();
         let orbited = OrbitCamera::fitted(View3dSpace::Srgb)
-            .orbited(Vec2::new(40.0, -25.0))
+            .orbited(Vec2::new(40.0, -25.0), View3dSpace::Srgb)
             .zoomed(80.0);
         view.camera = Some(orbited);
         view.set_space(View3dSpace::Srgb);
@@ -2417,7 +2458,11 @@ mod tests {
             &mut pane,
             Vec::new(),
         ));
-        let orbited = pane.view.camera.unwrap().orbited(Vec2::new(40.0, -25.0));
+        let orbited = pane
+            .view
+            .camera
+            .unwrap()
+            .orbited(Vec2::new(40.0, -25.0), View3dSpace::Srgb);
         pane.view.camera = Some(orbited);
         let point = screen_pos(&pane, rect, *points[1].val());
         let handle = screen_pos(&pane, rect, bezier_handle(&points[1], 1));
