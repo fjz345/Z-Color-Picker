@@ -531,21 +531,25 @@ impl ZApp {
         let grab_id = egui::Id::new("log_drawer_grab");
         let picker_min_height = picker_tile_min_size(&self.app_ctx.borrow()).y;
         let max_height = log_drawer_max_height(ctx, picker_min_height);
+        let shown_height = |stored: f32| stored.max(LOG_DRAWER_MIN_HEIGHT).min(max_height);
+        let bottom = ctx.available_rect().bottom();
         // Read before the panel is laid out, so the drag has no frame of lag.
-        let dragged_to = ctx
+        let grab = ctx
             .read_response(grab_id)
-            .filter(|grab| is_expanded && grab.dragged())
-            .and_then(|grab| grab.interact_pointer_pos());
-        if let Some(pointer) = dragged_to {
-            self.log_drawer_height = (ctx.available_rect().bottom() - pointer.y)
-                .min(max_height)
-                .max(LOG_DRAWER_MIN_HEIGHT);
+            .filter(|grab| is_expanded && grab.dragged());
+        let grab_offset_id = grab_id.with("grab_offset");
+        let pressed = grab.as_ref().filter(|grab| grab.drag_started());
+        if let Some(press) = pressed.and_then(|_| ctx.input(|i| i.pointer.press_origin())) {
+            let top = bottom - shown_height(self.log_drawer_height);
+            ctx.data_mut(|d| d.insert_temp(grab_offset_id, press.y - top));
+        }
+        if let Some(pointer) = grab.and_then(|grab| grab.interact_pointer_pos()) {
+            let grab_offset = ctx.data(|d| d.get_temp::<f32>(grab_offset_id));
+            let top = pointer.y - grab_offset.unwrap_or_default();
+            self.log_drawer_height = (bottom - top).min(max_height).max(LOG_DRAWER_MIN_HEIGHT);
         }
         let panel = if is_expanded {
-            let height = self
-                .log_drawer_height
-                .max(LOG_DRAWER_MIN_HEIGHT)
-                .min(max_height);
+            let height = shown_height(self.log_drawer_height);
             egui::TopBottomPanel::bottom("log_drawer")
                 .resizable(false)
                 .exact_height(height)
@@ -1532,8 +1536,17 @@ mod tests {
 
     fn drag_drawer_top(app: &mut ZApp, ctx: &egui::Context, screen: Rect, to_y: f32) {
         let top_y = screen.bottom() - drawer_height(app, ctx, screen);
-        let top = Pos2::new(0.5 * screen.width(), top_y);
-        let target = Pos2::new(top.x, to_y);
+        drag_drawer_grab(app, ctx, screen, [top_y, to_y]);
+    }
+
+    fn drag_drawer_grab(
+        app: &mut ZApp,
+        ctx: &egui::Context,
+        screen: Rect,
+        [from_y, to_y]: [f32; 2],
+    ) {
+        let from = Pos2::new(0.5 * screen.width(), from_y);
+        let target = Pos2::new(from.x, to_y);
         let button = |pos, pressed| egui::Event::PointerButton {
             pos,
             button: PointerButton::Primary,
@@ -1541,8 +1554,8 @@ mod tests {
             modifiers: egui::Modifiers::NONE,
         };
         for events in [
-            vec![egui::Event::PointerMoved(top)],
-            vec![button(top, true)],
+            vec![egui::Event::PointerMoved(from)],
+            vec![button(from, true)],
             vec![egui::Event::PointerMoved(target)],
             vec![egui::Event::PointerMoved(target)],
             vec![button(target, false)],
@@ -1673,6 +1686,22 @@ mod tests {
         let header_top = top + f32::from(theme::drawer_frame().inner_margin.top);
         click(&mut app, &ctx, Pos2::new(100.0, header_top + 0.5));
         assert!(!app.is_log_expanded);
+    }
+
+    #[test]
+    fn a_drawer_drag_pressed_off_its_top_edge_moves_the_top_by_the_pointer_motion() {
+        let ctx = egui::Context::default();
+        for press_offset in [-4.0, 3.0] {
+            let mut app = expanded_app_laid_out(&ctx);
+            let height = drawer_height(&app, &ctx, DEFAULT_SCREEN);
+            let press_y = DEFAULT_SCREEN.bottom() - height + press_offset;
+            drag_drawer_grab(&mut app, &ctx, DEFAULT_SCREEN, [press_y, press_y - 40.0]);
+            let dragged = app.log_drawer_height;
+            assert!(
+                (dragged - (height + 40.0)).abs() < 0.5,
+                "{press_offset}: {height} -> {dragged}"
+            );
+        }
     }
 
     #[test]
