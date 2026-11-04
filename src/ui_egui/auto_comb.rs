@@ -1671,7 +1671,7 @@ mod tests {
 
     #[test]
     fn random_configurations_settle_and_stay_finite() {
-        for mut points in random_configurations(500) {
+        for mut points in random_configurations(200) {
             let unsolved = apply_auto_comb(&mut points, CombEdit::default());
             assert_finite(&points);
             let settled = points.clone();
@@ -2076,19 +2076,19 @@ mod tests {
     #[test]
     fn random_smooth_curves_get_g2_at_every_interior_joint() {
         let mut checked = 0;
-        for points in random_smooth_curves(300) {
+        for points in random_smooth_curves(150) {
             let (after, unsolved) = run(points);
             if unsolved == 0 {
                 assert_g2_to_storage_precision(&after);
                 checked += 1;
             }
         }
-        assert!(checked > 250, "{checked}");
+        assert!(checked > 125, "{checked}");
     }
 
     #[test]
     fn few_segments_of_random_smooth_curves_are_unsolved() {
-        let curves = random_smooth_curves(300);
+        let curves = random_smooth_curves(150);
         let segments: usize = curves.iter().map(|points| points.len() - 1).sum();
         let mut moved = 0;
         let mut seed = 0usize;

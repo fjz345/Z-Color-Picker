@@ -2128,6 +2128,13 @@ mod tests {
     };
     const HELD_FRAMES: usize = 5;
 
+    fn view_rect_then_hide_gamut(egui_ctx: &egui::Context, pane: &mut View3dPane) -> Rect {
+        let rect = view_rect(&pane_frame(egui_ctx, pane, Vec::new()));
+        // The faces cost most of a debug frame and take no part in a drag.
+        pane.view.gamut_opacity = 0.0;
+        rect
+    }
+
     fn drag_hold_and_return<T>(
         egui_ctx: &egui::Context,
         pane: &mut View3dPane,
@@ -2172,7 +2179,7 @@ mod tests {
                 pane.ctx.borrow_mut().picker_space = OKLCH;
                 pane.view.space = space;
                 let egui_ctx = egui::Context::default();
-                let rect = view_rect(&pane_frame(&egui_ctx, &mut pane, Vec::new()));
+                let rect = view_rect_then_hide_gamut(&egui_ctx, &mut pane);
                 let start = screen_pos(&pane, rect, *points[index].val());
                 let path = [start, start + Vec2::new(12.0, -9.0)];
                 let bits = |points: &[ControlPoint]| points[index].val().val.map(f32::to_bits);
@@ -2199,7 +2206,7 @@ mod tests {
                 pane.ctx.borrow_mut().picker_space = picker_space;
                 pane.view.space = space;
                 let egui_ctx = egui::Context::default();
-                let rect = view_rect(&pane_frame(&egui_ctx, &mut pane, Vec::new()));
+                let rect = view_rect_then_hide_gamut(&egui_ctx, &mut pane);
                 let point = screen_pos(&pane, rect, *points[1].val());
                 let handle = screen_pos(&pane, rect, bezier_handle(&points[1], 1));
                 let start = handle_marker_pos(point, handle, 1);
@@ -2448,7 +2455,7 @@ mod tests {
                 pane.ctx.borrow_mut().picker_space = picker_space;
                 pane.view.space = space;
                 let egui_ctx = egui::Context::default();
-                let rect = view_rect(&pane_frame(&egui_ctx, &mut pane, Vec::new()));
+                let rect = view_rect_then_hide_gamut(&egui_ctx, &mut pane);
                 let start = screen_pos(&pane, rect, *points[1].val());
                 let end = start + Vec2::new(14.0, -10.0);
                 drag(&egui_ctx, &mut pane, start, end);

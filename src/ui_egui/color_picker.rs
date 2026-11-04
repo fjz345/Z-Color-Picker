@@ -1662,10 +1662,19 @@ mod tests {
     }
 
     fn lay_out_picker_selecting(pane_size: Vec2, selected: Option<usize>) -> LaidOutPicker {
+        lay_out_picker_in(&egui::Context::default(), pane_size, selected)
+    }
+
+    fn lay_out_picker_in(
+        ctx: &egui::Context,
+        pane_size: Vec2,
+        selected: Option<usize>,
+    ) -> LaidOutPicker {
         let screen = Rect::from_min_size(Pos2::ZERO, Vec2::splat(1600.0));
         let pane = Rect::from_min_size(pos2(30.0, 40.0), pane_size);
-        let ctx = egui::Context::default();
-        crate::ui_egui::theme::apply(&ctx);
+        // Forgets the last layout but keeps the fonts, the costly part of a first frame.
+        ctx.memory_mut(|memory| *memory = Default::default());
+        crate::ui_egui::theme::apply(ctx);
         let mut picker = ZColorPickerWrapper::default();
         picker.last_modifying_point_index = selected;
         let mut points = vec![
@@ -1722,7 +1731,10 @@ mod tests {
     }
 
     fn assert_square_inset(pane_size: Vec2) -> LaidOutPicker {
-        let picker = lay_out_picker(pane_size);
+        assert_inset(lay_out_picker(pane_size))
+    }
+
+    fn assert_inset(picker: LaidOutPicker) -> LaidOutPicker {
         let LaidOutPicker {
             square, pane, used, ..
         } = picker;
@@ -1768,8 +1780,9 @@ mod tests {
 
     #[test]
     fn picker_fits_option_rows_that_wrap_in_a_narrow_pane() {
+        let ctx = egui::Context::default();
         for height in (660..=860).step_by(4) {
-            assert_square_inset(vec2(340.0, height as f32));
+            assert_inset(lay_out_picker_in(&ctx, vec2(340.0, height as f32), None));
         }
     }
 
