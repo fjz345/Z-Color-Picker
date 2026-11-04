@@ -10,14 +10,14 @@ use crate::{
     },
     ui_egui::{
         app::ZColorPickerOptions,
-        auto_comb::{apply_auto_comb, drag_handle_to, CombEdit},
+        auto_comb::{apply_auto_comb, drag_handle_by, CombEdit},
         color_readout::{color_readout, color_readout_height},
         content_windows::{
             clip_to_srgb_checkbox, comb_row, curve_row, flip_control_points, picker_space_combo,
             points_row,
         },
         control_points::{
-            clip_points_to_srgb, clip_value_to_srgb, control_point_outline, control_point_pos,
+            clamped_handle_offset, clip_points_to_srgb, control_point_outline, control_point_pos,
             convert_picker_space, drag_grab_offset_x, drag_t, gradient_color_at, insert_point,
             normalize_t, remove_point, t_at_pointer, ui_ordered_control_points,
             ControlPointUiResult, CONTROL_POINT_FILL_RADIUS,
@@ -1188,14 +1188,13 @@ fn handle_control_points_ui(
             if let Some(index) = *ctx.last_modifying_point_index {
                 if let (Some(tang_idx), Some(offset)) = (selected_tangent, dragged_tangent_offset) {
                     let cp = &ctx.control_points[index];
-                    if let Some(tangent) = cp.tangents()[tang_idx] {
-                        let target = *cp.val() + HsvKeyValue::new(offset.x, offset.y, tangent.h());
-                        let target = clip_value_to_srgb(target, *ctx.picker_space);
-                        drag_handle_to(
+                    if cp.tangents()[tang_idx].is_some() {
+                        let offset = clamped_handle_offset(*cp.val(), offset, *ctx.picker_space);
+                        drag_handle_by(
                             ctx.control_points,
                             index,
                             tang_idx,
-                            target,
+                            offset,
                             is_auto_comb_running(*ctx.spline_mode, *ctx.blend_space, ctx.options),
                         );
                         *ctx.dragging_tangent = Some((index, tang_idx));
@@ -3145,6 +3144,69 @@ mod tests {
     }
 
     #[test]
+    fn clipped_handle_dragged_out_along_the_srgb_edge_and_back_returns_bit_for_bit() {
+        let mut space = OKLCH.with_clip_to_srgb(true);
+        let ctx = egui::Context::default();
+        let mut picker = ZColorPickerWrapper::default();
+        picker.last_modifying_point_index = Some(1);
+        let mut original = with_handles(
+            points_sv(&[(0.1, 0.3), (0.3, 0.5), (0.1, 0.8)]),
+            &[[[-0.15, 0.0], [0.15, 0.0]]; 3],
+        );
+        crate::ui_egui::control_points::space_t_evenly(&mut original);
+        let mut points = original.clone();
+        let mut run = |points: &mut Vec<ControlPoint>, event: egui::Event| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 700.0))),
+                events: vec![event],
+                ..Default::default()
+            };
+            let mut square = Rect::NOTHING;
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    square = picker
+                        .draw_ui(
+                            ui,
+                            points,
+                            &mut SplineMode::Bezier,
+                            &mut space,
+                            &mut BlendSpace::Picker,
+                            &ColorStringCopy::HexNoAlpha,
+                        )
+                        .rect;
+                });
+            });
+            square
+        };
+        let square = run(&mut points, egui::Event::WindowFocused(true));
+        let handle = square.lerp_inside(vec2(0.45, 0.5));
+        let out = pos2(square.right() - 2.0, handle.y);
+        let along = out - vec2(0.0, 0.2 * square.height());
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        run(&mut points, egui::Event::PointerMoved(handle));
+        run(&mut points, button(handle, true));
+        let mut at_edge = None;
+        for (from, to) in [(handle, out), (out, along), (along, handle)] {
+            for step in 1..=4 {
+                let pos = from.lerp(to, step as f32 / 4.0);
+                run(&mut points, egui::Event::PointerMoved(pos));
+            }
+            at_edge.get_or_insert(bezier_handle(&points[1], 1));
+        }
+        run(&mut points, button(handle, false));
+
+        let at_edge = at_edge.unwrap();
+        assert!(at_edge.is_in_srgb(space), "{at_edge:?}");
+        assert!(at_edge.s() < 0.9, "{at_edge:?}");
+        assert_eq!(points, original);
+    }
+
+    #[test]
     fn auto_comb_keeps_the_dragged_handle_direction() {
         let mut picker = auto_comb_picker();
         picker.dragging_tangent = Some((1, 0));
@@ -3596,10 +3658,19 @@ mod tests {
         apply_group_delta_sv(&mut moved, delta);
 
         let offset = |points: &[ControlPoint]| points[1].val().vec2() - points[0].val().vec2();
-        assert!((offset(&moved) - offset(&points)).length() < 1e-6, "{moved:?}");
-        assert!(moved.iter().all(|cp| cp.val().is_in_srgb(space)), "{moved:?}");
+        assert!(
+            (offset(&moved) - offset(&points)).length() < 1e-6,
+            "{moved:?}"
+        );
+        assert!(
+            moved.iter().all(|cp| cp.val().is_in_srgb(space)),
+            "{moved:?}"
+        );
         assert!(delta.x >= stop_at_edge.x, "{delta:?} vs {stop_at_edge:?}");
-        assert!(delta.y > stop_at_edge.y + 0.05, "{delta:?} vs {stop_at_edge:?}");
+        assert!(
+            delta.y > stop_at_edge.y + 0.05,
+            "{delta:?} vs {stop_at_edge:?}"
+        );
     }
 
     const DRAG_RECT: Rect = Rect {

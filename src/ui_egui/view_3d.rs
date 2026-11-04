@@ -1672,8 +1672,14 @@ mod tests {
         assert!(shape_change < 1e-5, "{points:?}");
         assert!(points.iter().all(|cp| cp.val().is_in_srgb(clipping)));
         let slid = points[0].val().vec2() - original[0].val().vec2();
-        assert!(slid.x >= stop_at_edge.x - 1e-5, "{slid:?} vs {stop_at_edge:?}");
-        assert!(slid.y > stop_at_edge.y + 0.05, "{slid:?} vs {stop_at_edge:?}");
+        assert!(
+            slid.x >= stop_at_edge.x - 1e-5,
+            "{slid:?} vs {stop_at_edge:?}"
+        );
+        assert!(
+            slid.y > stop_at_edge.y + 0.05,
+            "{slid:?} vs {stop_at_edge:?}"
+        );
     }
 
     #[test]
