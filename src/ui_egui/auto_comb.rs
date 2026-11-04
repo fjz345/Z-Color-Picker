@@ -21,11 +21,23 @@ const MIN_DAMPING: f64 = 1.0e-9;
 const INITIAL_DAMPING: f64 = 1.0e-3;
 const MAX_DAMPING: f64 = 1.0e12;
 const CONVERGED_DECREASE: f64 = 1.0e-14;
+// A stage ends once no log length would move further: far below f32 resolution, or coarse for a
+// stage that only warm-starts the next.
+const STEP_TOLERANCE: f64 = 1.0e-9;
+const WARM_START_STEP_TOLERANCE: f64 = 1.0e-3;
+const OPEN_JOINT_WINDOW: usize = 2;
+const OPEN_JOINT_RATIO: f64 = 0.1;
 const GAP_WEIGHTS: [f64; 3] = [1.0e2, 1.0e4, 1.0e6];
 const TARGET_WEIGHT: f64 = 1.0;
 const LENGTH_WEIGHT: f64 = 0.1;
 const DRAGGED_POINT_WEIGHT: f64 = 0.1;
 const DRAGGED_HANDLE_WEIGHT: f64 = 100.0;
+const UNBOUNDED: (f64, f64) = (f64::NEG_INFINITY, f64::INFINITY);
+
+#[cfg(test)]
+thread_local! {
+    static SOLVER_ITERATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct V2 {
@@ -84,6 +96,21 @@ impl Mul<f64> for V2 {
     fn mul(self, factor: f64) -> V2 {
         V2::new(self.x * factor, self.y * factor)
     }
+}
+
+fn quadratic_roots(a: f64, b: f64, c: f64) -> Vec<f64> {
+    if a == 0.0 {
+        return if b == 0.0 { Vec::new() } else { vec![-c / b] };
+    }
+    let discriminant = b * b - 4.0 * a * c;
+    if discriminant < 0.0 {
+        return Vec::new();
+    }
+    let q = -0.5 * (b + b.signum() * discriminant.sqrt());
+    if q == 0.0 {
+        return vec![0.0];
+    }
+    vec![q / a, c / q]
 }
 
 fn sv(value: ControlPointValue) -> V2 {
@@ -150,6 +177,56 @@ impl Segment {
             range(gamma0, boxes[0], boxes[1]),
             range(gamma1, boxes[1], boxes[0]),
         ]
+    }
+
+    // Exact over the lengths in `boxes` whose start curvature lies in `start` (widened by
+    // SOLVED_TOLERANCE); None if there are none. The end curvature is monotone along the box's edges
+    // and has no critical point inside, so it peaks at a corner, where a start bound K crosses an
+    // edge, or along a bound K, where -3 beta K a^2 + 4 K gamma1 a - beta gamma0 = 0.
+    fn end_range(&self, boxes: [(f64, f64); 2], start: (f64, f64)) -> Option<(f64, f64)> {
+        if start == UNBOUNDED {
+            return Some(self.curvature_ranges(boxes)[1]);
+        }
+        let (beta, gamma0, gamma1) = self.coefficients();
+        let [(a0, a1), (b0, b1)] = boxes;
+        let widened = |k: f64| SOLVED_TOLERANCE * k.abs().max(1.0);
+        let bounds = (start.0 - widened(start.0), start.1 + widened(start.1));
+        let mut candidates = vec![(a0, b0), (a0, b1), (a1, b0), (a1, b1)];
+        for k in [bounds.0, bounds.1] {
+            let on_bound = |a: f64| (a, (gamma0 - k * a * a) / beta);
+            candidates.extend([a0, a1].map(on_bound));
+            let peaks = quadratic_roots(-3.0 * beta * k, 4.0 * k * gamma1, -beta * gamma0);
+            candidates.extend(peaks.into_iter().map(on_bound));
+            for b in [b0, b1] {
+                let squared = (gamma0 - beta * b) / k;
+                if squared > 0.0 {
+                    candidates.push((squared.sqrt(), b));
+                }
+            }
+        }
+        // Candidates on a bound or an edge are off by rounding.
+        let is_inside = |x: f64, (low, high): (f64, f64), slack: f64| {
+            x >= low - slack * low.abs().max(1.0) && x <= high + slack * high.abs().max(1.0)
+        };
+        candidates
+            .into_iter()
+            .filter(|&(a, b)| is_inside(a, (a0, a1), 1.0e-12) && is_inside(b, (b0, b1), 1.0e-12))
+            .filter_map(|(a, b)| {
+                let (a, b) = (a.clamp(a0, a1), b.clamp(b0, b1));
+                let start = (gamma0 - beta * b) / (a * a);
+                is_inside(start, bounds, 1.0e-9).then(|| (gamma1 - beta * a) / (b * b))
+            })
+            .fold(None, |range, k| match range {
+                None => Some((k, k)),
+                Some((low, high)) => Some((k.min(low), k.max(high))),
+            })
+    }
+
+    fn start_range(&self, boxes: [(f64, f64); 2], end: (f64, f64)) -> Option<(f64, f64)> {
+        let (low, high) = self
+            .reversed()
+            .end_range([boxes[1], boxes[0]], (-end.1, -end.0))?;
+        Some((-high, -low))
     }
 
     // First-order change of each endpoint curvature when every point and handle moves by STORAGE_ROUNDING.
@@ -464,44 +541,74 @@ fn joint_side_ends(segment_count: usize, joint: usize) -> [Option<(usize, usize)
     ]
 }
 
-// Where the directions force the two sides of a joint apart (an inflection, say), no lengths give G2:
-// both its segments keep their lengths, which can leave a neighbouring joint stuck in turn.
+// Where no lengths inside the boxes give G2 along the chain (the directions force an inflection,
+// say), the joint missing it by the widest margin freezes both its segments, which keep their
+// lengths, until the rest can meet.
 fn freeze_infeasible_joints(layout: &Layout, frozen: &mut [bool]) {
-    let segment_count = layout.segments.len();
-    loop {
-        let range = |frozen: &[bool], (segment, end): (usize, usize)| {
-            let boxes = if frozen[segment] {
-                let (start, finish) = layout.current[segment];
-                if start.min(finish) < MIN_HANDLE_LENGTH {
-                    return None;
-                }
-                [(start, start), (finish, finish)]
-            } else {
-                layout.length_boxes(segment)
-            };
-            Some(layout.segments[segment].curvature_ranges(boxes)[end])
-        };
-        let infeasible = (1..segment_count).find(|&joint| {
-            let [arriving, leaving] = joint_side_ends(segment_count, joint).map(Option::unwrap);
-            if frozen[arriving.0] && frozen[leaving.0] {
-                return false;
-            }
-            match (range(frozen, arriving), range(frozen, leaving)) {
-                (Some(a), Some(b)) => {
-                    let (low, high) = (a.0.max(b.0), a.1.min(b.1));
-                    low > high && !is_within(low, high, SOLVED_TOLERANCE, 0.0)
-                }
-                _ => false,
-            }
-        });
-        match infeasible {
-            Some(joint) => {
-                frozen[joint - 1] = true;
-                frozen[joint] = true;
-            }
-            None => return,
-        }
+    while let Some(joint) = widest_conflict(layout, frozen) {
+        frozen[joint - 1] = true;
+        frozen[joint] = true;
     }
+}
+
+// Each side's curvature range at a joint is exact with G2 at every joint beyond it, propagated
+// along the chain; past a joint that conflicts, the side counts as unconstrained.
+fn widest_conflict(layout: &Layout, frozen: &[bool]) -> Option<usize> {
+    let segment_count = layout.segments.len();
+    let boxes: Vec<Option<[(f64, f64); 2]>> = (0..segment_count)
+        .map(|segment| {
+            if frozen[segment] {
+                let (start, end) = layout.current[segment];
+                (start.min(end) >= MIN_HANDLE_LENGTH).then_some([(start, start), (end, end)])
+            } else {
+                Some(layout.length_boxes(segment))
+            }
+        })
+        .collect();
+    let is_constrained = |joint: usize| {
+        (1..segment_count).contains(&joint)
+            && boxes[joint - 1].is_some()
+            && boxes[joint].is_some()
+            && !(frozen[joint - 1] && frozen[joint])
+    };
+    let mut arriving: Vec<Option<(f64, f64)>> = vec![None; segment_count + 1];
+    for segment in 0..segment_count {
+        let Some(lengths) = boxes[segment] else {
+            continue;
+        };
+        let geometry = &layout.segments[segment];
+        let start = match arriving[segment] {
+            Some(range) if is_constrained(segment) => range,
+            _ => UNBOUNDED,
+        };
+        arriving[segment + 1] = geometry
+            .end_range(lengths, start)
+            .or_else(|| geometry.end_range(lengths, UNBOUNDED));
+    }
+    let mut leaving: Vec<Option<(f64, f64)>> = vec![None; segment_count + 1];
+    for segment in (0..segment_count).rev() {
+        let Some(lengths) = boxes[segment] else {
+            continue;
+        };
+        let geometry = &layout.segments[segment];
+        let end = match leaving[segment + 1] {
+            Some(range) if is_constrained(segment + 1) => range,
+            _ => UNBOUNDED,
+        };
+        leaving[segment] = geometry
+            .start_range(lengths, end)
+            .or_else(|| geometry.start_range(lengths, UNBOUNDED));
+    }
+    (1..segment_count)
+        .filter(|&joint| is_constrained(joint))
+        .filter_map(|joint| {
+            let (a, b) = (arriving[joint]?, leaving[joint]?);
+            let (low, high) = (a.0.max(b.0), a.1.min(b.1));
+            (low > high && !is_within(low, high, SOLVED_TOLERANCE, 0.0))
+                .then(|| (joint, (low - high) / low.abs().max(high.abs()).max(1.0)))
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(joint, _)| joint)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -735,13 +842,20 @@ impl<'a> Chain<'a> {
         residuals
     }
 
-    // Levenberg-Marquardt inside the length bounds: a variable on a bound that the gradient pushes
-    // outwards is held for that step.
-    fn least_squares(&self, mut x: Vec<f64>, residuals: impl Fn(&[f64]) -> Residuals) -> Vec<f64> {
+    // Levenberg-Marquardt inside the length bounds: a variable on a bound that the gradient or the
+    // step pushes outwards is held for that step, else the step bounces off the bound for ever.
+    fn least_squares(
+        &self,
+        mut x: Vec<f64>,
+        tolerance: f64,
+        residuals: impl Fn(&[f64]) -> Residuals,
+    ) -> Vec<f64> {
         let count = x.len();
         let mut damping = INITIAL_DAMPING;
         let mut current = residuals(&x);
         for _ in 0..MAX_ITERATIONS {
+            #[cfg(test)]
+            SOLVER_ITERATIONS.with(|iterations| iterations.set(iterations.get() + 1));
             let cost = current.cost();
             if cost == 0.0 {
                 break;
@@ -758,13 +872,12 @@ impl<'a> Chain<'a> {
                     }
                 }
             }
-            let held: Vec<bool> = (0..count)
-                .map(|i| {
-                    let (low, high) = self.bounds[i];
-                    (x[i] <= low && gradient[i] > 0.0) || (x[i] >= high && gradient[i] < 0.0)
-                })
-                .collect();
-            let step = |damping: f64| {
+            let pushes_out = |i: usize, direction: f64| {
+                let (low, high) = self.bounds[i];
+                (x[i] <= low && direction < 0.0) || (x[i] >= high && direction > 0.0)
+            };
+            let held: Vec<bool> = (0..count).map(|i| pushes_out(i, -gradient[i])).collect();
+            let solve_step = |damping: f64, held: &[bool]| {
                 let mut matrix = normal.clone();
                 let mut rhs: Vec<f64> = gradient.iter().map(|g| -g).collect();
                 for i in 0..count {
@@ -781,6 +894,21 @@ impl<'a> Chain<'a> {
                 }
                 solve_band(matrix, width, rhs)
             };
+            let step = |damping: f64| {
+                let mut held = held.clone();
+                loop {
+                    let step = solve_step(damping, &held)?;
+                    let blocked: Vec<usize> = (0..count)
+                        .filter(|&i| !held[i] && pushes_out(i, step[i]))
+                        .collect();
+                    if blocked.is_empty() {
+                        return Some(step);
+                    }
+                    for i in blocked {
+                        held[i] = true;
+                    }
+                }
+            };
             let accepted = loop {
                 if damping > MAX_DAMPING {
                     break None;
@@ -790,6 +918,19 @@ impl<'a> Chain<'a> {
                         .map(|i| (x[i] + step[i]).clamp(self.bounds[i].0, self.bounds[i].1))
                         .collect()
                 });
+                let moved = |trial: &[f64]| {
+                    trial
+                        .iter()
+                        .zip(&x)
+                        .map(|(a, b)| (a - b).abs())
+                        .fold(0.0, f64::max)
+                };
+                if trial
+                    .as_ref()
+                    .is_some_and(|trial| moved(trial) <= tolerance)
+                {
+                    break None;
+                }
                 match trial.map(|trial| {
                     let at_trial = residuals(&trial);
                     (trial, at_trial)
@@ -816,10 +957,19 @@ impl<'a> Chain<'a> {
     // The G2 gaps enter as a penalty of rising weight, which keeps the solve well conditioned where
     // a gap can't close; the last solve closes the gaps alone.
     fn solve(&self) -> Vec<f64> {
-        let x = GAP_WEIGHTS.iter().fold(self.start.clone(), |x, &weight| {
-            self.least_squares(x, |x| self.residuals(x, true, weight))
-        });
-        self.least_squares(x, |x| self.residuals(x, false, 1.0))
+        let last = GAP_WEIGHTS.len() - 1;
+        let x = GAP_WEIGHTS
+            .iter()
+            .enumerate()
+            .fold(self.start.clone(), |x, (stage, &weight)| {
+                let tolerance = if stage == last {
+                    STEP_TOLERANCE
+                } else {
+                    WARM_START_STEP_TOLERANCE
+                };
+                self.least_squares(x, tolerance, |x| self.residuals(x, true, weight))
+            });
+        self.least_squares(x, STEP_TOLERANCE, |x| self.residuals(x, false, 1.0))
     }
 
     // A move below f32 resolution would only flip rounding bits of a handle that is already solved.
@@ -836,18 +986,32 @@ impl<'a> Chain<'a> {
             .collect()
     }
 
-    // Only the worst: a gap that can't close stalls the last solve short of closing the others.
-    fn worst_open_joint(&self, x: &[f64]) -> Option<usize> {
+    // Not every open joint: a gap that can't close holds its neighbours' gaps open too, so only the
+    // widest within OPEN_JOINT_WINDOW joints, and only where it is near the widest of all.
+    fn open_joints(&self, x: &[f64]) -> Vec<usize> {
         let sides = self.sides(x);
-        let gap = |joint: usize| {
-            let [arriving, leaving] = [sides[joint][0].k, sides[joint][1].k];
-            (arriving - leaving).abs() / arriving.abs().max(leaving.abs()).max(1.0)
-        };
-        self.constrained
+        let gaps: Vec<(usize, f64)> = self
+            .constrained
             .iter()
-            .copied()
-            .filter(|&joint| gap(joint) > SOLVED_TOLERANCE)
-            .max_by(|&a, &b| gap(a).total_cmp(&gap(b)))
+            .map(|&joint| {
+                let [arriving, leaving] = [sides[joint][0].k, sides[joint][1].k];
+                let gap = (arriving - leaving).abs() / arriving.abs().max(leaving.abs()).max(1.0);
+                (joint, gap)
+            })
+            .filter(|&(_, gap)| gap > SOLVED_TOLERANCE)
+            .collect();
+        let widest = gaps.iter().map(|&(_, gap)| gap).fold(0.0, f64::max);
+        let is_widest_near = |joint: usize, gap: f64| {
+            gaps.iter().all(|&(other, other_gap)| {
+                other.abs_diff(joint) > OPEN_JOINT_WINDOW
+                    || other_gap < gap
+                    || (other_gap == gap && other >= joint)
+            })
+        };
+        gaps.iter()
+            .filter(|&&(joint, gap)| gap >= OPEN_JOINT_RATIO * widest && is_widest_near(joint, gap))
+            .map(|&(joint, _)| joint)
+            .collect()
     }
 
     // The current handles already meet every constraint and target, so a solve would only move
@@ -1002,24 +1166,74 @@ fn kept_curvatures(points: &[ControlPoint], layout: &Layout, is_reseed: bool) ->
         .collect()
 }
 
+// Runs of free segments between frozen ones share no variable, so each is settled or solved on its
+// own, and a joint left open freezes and sends only the rest of its run back to be solved.
+fn settle_runs(
+    layout: &Layout,
+    targets: &[Option<f64>],
+    edit: CombEdit,
+    frozen: &mut [bool],
+) -> (Vec<(f64, f64)>, Vec<Option<f64>>) {
+    freeze_infeasible_joints(layout, frozen);
+    let mut lengths = layout.current.clone();
+    let mut curvatures = vec![None; targets.len()];
+    let mut runs = free_runs(frozen, 0..frozen.len());
+    while let Some(run) = runs.pop() {
+        let held: Vec<bool> = (0..frozen.len())
+            .map(|segment| frozen[segment] || !run.contains(&segment))
+            .collect();
+        let chain = Chain::new(layout, &held, targets, edit);
+        let (run_lengths, run_curvatures) = if chain.is_settled() {
+            (layout.current.clone(), chain.unstored_seeds())
+        } else {
+            let x = chain.solve();
+            let open = chain.open_joints(&x);
+            if !open.is_empty() {
+                for joint in open {
+                    frozen[joint - 1] = true;
+                    frozen[joint] = true;
+                }
+                freeze_infeasible_joints(layout, frozen);
+                runs.extend(free_runs(frozen, run));
+                continue;
+            }
+            let x = chain.without_rounding_moves(x);
+            (chain.lengths(&x), chain.achieved_curvatures(&x))
+        };
+        lengths[run.clone()].copy_from_slice(&run_lengths[run]);
+        for (curvature, k) in curvatures.iter_mut().zip(run_curvatures) {
+            if k.is_some() {
+                *curvature = k;
+            }
+        }
+    }
+    (lengths, curvatures)
+}
+
+fn free_runs(frozen: &[bool], within: std::ops::Range<usize>) -> Vec<std::ops::Range<usize>> {
+    let mut runs = Vec::new();
+    let mut start = None;
+    for segment in within.clone() {
+        match (frozen[segment], start) {
+            (false, None) => start = Some(segment),
+            (true, Some(first)) => {
+                runs.push(first..segment);
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(first) = start {
+        runs.push(first..within.end);
+    }
+    runs
+}
+
 fn comb_pass(points: &mut [ControlPoint], edit: CombEdit) -> CombPass {
     let layout = Layout::new(points, edit.dragged_handle);
     let targets = kept_curvatures(points, &layout, edit.is_reseed);
     let mut frozen = layout.unfit_segments();
-    let (lengths, curvatures) = loop {
-        freeze_infeasible_joints(&layout, &mut frozen);
-        let chain = Chain::new(&layout, &frozen, &targets, edit);
-        if chain.is_settled() {
-            break (layout.current.clone(), chain.unstored_seeds());
-        }
-        let x = chain.solve();
-        let Some(joint) = chain.worst_open_joint(&x) else {
-            let x = chain.without_rounding_moves(x);
-            break (chain.lengths(&x), chain.achieved_curvatures(&x));
-        };
-        frozen[joint - 1] = true;
-        frozen[joint] = true;
-    };
+    let (lengths, curvatures) = settle_runs(&layout, &targets, edit, &mut frozen);
     let mut is_changed = false;
     for (i, &(start_length, end_length)) in lengths.iter().enumerate() {
         is_changed |= set_handle(
@@ -1906,5 +2120,131 @@ mod tests {
             solve_band(vec![1.0, 2.0, 1.0, 0.0], 1, vec![1.0, 1.0]),
             None
         );
+    }
+
+    fn sampled_range(
+        segment: &Segment,
+        boxes: [(f64, f64); 2],
+        bounded_end: usize,
+        bounds: (f64, f64),
+    ) -> Option<(f64, f64)> {
+        let (beta, gamma0, gamma1) = segment.coefficients();
+        let gamma = [gamma0, gamma1][bounded_end];
+        let (near, far) = (boxes[bounded_end], boxes[1 - bounded_end]);
+        (0..=2000)
+            .map(|i| near.0 + (near.1 - near.0) * i as f64 / 2000.0)
+            .flat_map(|length| {
+                let least = (gamma - bounds.1 * length * length) / beta;
+                let most = (gamma - bounds.0 * length * length) / beta;
+                let (from, to) = (least.min(most).max(far.0), least.max(most).min(far.1));
+                let lengths = |other: f64| match bounded_end {
+                    0 => (length, other),
+                    _ => (other, length),
+                };
+                (from <= to).then(|| [lengths(from), lengths(to)])
+            })
+            .flatten()
+            .map(|lengths| {
+                let (k0, k1) = segment.curvatures(lengths).unwrap();
+                [k0, k1][1 - bounded_end]
+            })
+            .fold(None, |range, k| match range {
+                None => Some((k, k)),
+                Some((low, high)) => Some((k.min(low), k.max(high))),
+            })
+    }
+
+    #[test]
+    fn curvature_range_with_the_other_end_bounded_matches_sampling() {
+        let mut seed: u64 = 2024;
+        let mut next = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut checked = 0;
+        for case in 0..400 {
+            let [start, end] = [(); 2].map(|_| V2::new(next(), next()));
+            let [start_tangent, end_tangent] =
+                [(); 2].map(|_| rotated(V2::X, std::f64::consts::TAU * next()));
+            let segment = Segment {
+                start,
+                end,
+                start_tangent,
+                end_tangent,
+            };
+            let boxes = [(); 2].map(|_| {
+                let low = MIN_SOLVED_LENGTH + 0.2 * next();
+                (low, low + 0.3 * next())
+            });
+            let bounded_end = case % 2;
+            let full = segment.curvature_ranges(boxes)[bounded_end];
+            let [x, y] = [next(), next()].map(|t| full.0 + (full.1 - full.0) * t);
+            let bounds = (x.min(y), x.max(y));
+            let exact = match bounded_end {
+                0 => segment.end_range(boxes, bounds),
+                _ => segment.start_range(boxes, bounds),
+            };
+            let Some(sampled) = sampled_range(&segment, boxes, bounded_end, bounds) else {
+                continue;
+            };
+            let exact = exact.unwrap();
+            let rounding = 1.0e-9 * sampled.0.abs().max(sampled.1.abs()).max(1.0);
+            let width = (sampled.1 - sampled.0).max(1.0);
+            assert!(
+                exact.0 <= sampled.0 + rounding && exact.1 >= sampled.1 - rounding,
+                "{exact:?} {sampled:?} {segment:?} {boxes:?} {bounds:?}"
+            );
+            assert!(
+                sampled.0 - exact.0 < 1.0e-2 * width && exact.1 - sampled.1 < 1.0e-2 * width,
+                "{exact:?} {sampled:?} {segment:?} {boxes:?} {bounds:?}"
+            );
+            checked += 1;
+        }
+        assert!(checked > 350, "{checked}");
+    }
+
+    fn random_chain(mut seed: u64, len: usize) -> Vec<ControlPoint> {
+        let mut next = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 40) as f32 / (1u64 << 24) as f32
+        };
+        (0..len)
+            .map(|_| {
+                let position = [next(), next()];
+                let outgoing = [next() * 0.4 - 0.2, next() * 0.4 - 0.2];
+                let incoming_length = next() * 0.2;
+                if next() < 0.2 {
+                    untangented(position)
+                } else {
+                    mirrored(position, outgoing, incoming_length)
+                }
+            })
+            .collect()
+    }
+
+    fn solver_iterations(run: impl FnOnce()) -> usize {
+        SOLVER_ITERATIONS.with(|iterations| iterations.set(0));
+        run();
+        SOLVER_ITERATIONS.with(|iterations| iterations.get())
+    }
+
+    #[test]
+    fn a_long_chain_of_unsolvable_joints_settles_in_few_iterations_and_stays_settled() {
+        let mut points = random_chain(1, 40);
+        let mut unsolved = 0;
+        let first =
+            solver_iterations(|| unsolved = apply_auto_comb(&mut points, CombEdit::default()));
+        assert!(unsolved >= 10, "{unsolved}");
+        assert!(first <= 2000, "{first}");
+        let settled = points.clone();
+        let again = solver_iterations(|| {
+            apply_auto_comb(&mut points, CombEdit::default());
+        });
+        assert_eq!(again, 0);
+        assert_eq!(points, settled);
     }
 }
