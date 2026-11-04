@@ -52,6 +52,7 @@ Place control points on the square and hue bar; the gradient is interpolated thr
   - Hue
 - View multiple presets at the same time
 - Photoshop workflow, plugin integration?
-- Auto gradient button
+- "Auto gradient button"
+- "Random gradient button"
 - "Screen-mouse-drag" gradient picker
 - Undo feature
