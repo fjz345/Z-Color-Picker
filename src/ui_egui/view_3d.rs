@@ -723,29 +723,37 @@ fn picker_value_after_drag(
 pub fn move_point_by_linear(
     control_points: &mut [ControlPoint],
     index: usize,
-    start: ControlPointValue,
+    start_points: &[ControlPoint],
     shown_and_target: [[f32; 3]; 2],
     curve: CurveSettings,
 ) {
+    let start = *start_points[index].val();
     let moved = picker_value_after_drag(start, shown_and_target, curve.picker_space);
-    move_point_to(control_points, index, moved, curve);
+    move_point_to(control_points, index, start_points, moved, curve);
 }
 
 fn move_point_to(
     control_points: &mut [ControlPoint],
     index: usize,
+    start_points: &[ControlPoint],
     moved: ControlPointValue,
     curve: CurveSettings,
 ) {
     let picker_space = curve.picker_space;
-    let value = *control_points[index].val();
     if !curve.is_curve_locked {
         *control_points[index].val_mut() = moved;
         clip_points_to_srgb(&mut control_points[index..=index], picker_space);
         return;
     }
+    assert_eq!(control_points.len(), start_points.len());
+    let start = *start_points[index].val();
+    // The other hues stay current: the Auto hue constraint may have moved them since drag start.
+    for (cp, start_cp) in control_points.iter_mut().zip(start_points) {
+        cp.val_mut().val[..2].copy_from_slice(&start_cp.val().val[..2]);
+    }
+    *control_points[index].val_mut() = start;
     // Like the square and the inspector: Lock moves every point's S/V, z only the dragged point's.
-    let delta_sv = Vec2::new(moved.s() - value.s(), moved.v() - value.v());
+    let delta_sv = Vec2::new(moved.s() - start.s(), moved.v() - start.v());
     let delta_sv = if curve.is_window_lock {
         limit_group_delta(control_points, delta_sv)
     } else {
@@ -753,7 +761,7 @@ fn move_point_to(
     };
     let move_group = |points: &mut [ControlPoint], [x, y, z]: [f32; 3]| {
         apply_group_delta_sv(points, Vec2::new(x * delta_sv.x, y * delta_sv.y));
-        points[index].val_mut()[2] = lerp(value.h()..=moved.h(), z);
+        points[index].val_mut()[2] = lerp(start.h()..=moved.h(), z);
     };
     let fractions = srgb_slide_fractions(control_points, picker_space, move_group);
     move_group(control_points, fractions);
@@ -1121,7 +1129,7 @@ fn default_gamut_opacity() -> f32 {
 #[derive(Clone, Debug)]
 struct ItemDrag {
     item: View3dItem,
-    start: ControlPoint,
+    start_points: Vec<ControlPoint>,
     start_position: [f32; 3],
     press: Pos2,
 }
@@ -1303,7 +1311,7 @@ impl View3d {
                 let pressed = items.iter().find(|scene_item| scene_item.item == item)?;
                 Some(ItemDrag {
                     item,
-                    start: control_points[item.point_index()].clone(),
+                    start_points: control_points.to_vec(),
                     start_position: space.position(pressed.linear),
                     press,
                 })
@@ -1323,14 +1331,16 @@ impl View3d {
 
         let drag = self.drag.clone()?;
         *selected_index = Some(drag.item.point_index());
-        if !items.iter().any(|scene_item| scene_item.item == drag.item) {
+        let is_shown = items.iter().any(|scene_item| scene_item.item == drag.item);
+        if !is_shown || drag.start_points.len() != control_points.len() {
             return None;
         }
         let pointer = response.interact_pointer_pos()?;
         let (camera, rect) = (self.camera(), response.rect);
         let moved = camera.dragged_on_view_plane(drag.start_position, [drag.press, pointer], rect);
         let shown_and_target = [drag.start_position, moved].map(|p| space.linear_at(p));
-        let start_value = drag.item.value(&drag.start);
+        let start = &drag.start_points[drag.item.point_index()];
+        let start_value = drag.item.value(start);
         let is_middle = |index: usize| 0 < index && index + 1 < control_points.len();
         match drag.item {
             View3dItem::Point(index) if curve.is_auto_hue && is_middle(index) => {
@@ -1343,16 +1353,20 @@ impl View3d {
                         Some(camera.project(space.position(linear), rect)?.pos)
                     },
                 );
-                move_point_to(control_points, index, value, curve)
+                move_point_to(control_points, index, &drag.start_points, value, curve)
             }
-            View3dItem::Point(index) => {
-                move_point_by_linear(control_points, index, start_value, shown_and_target, curve)
-            }
+            View3dItem::Point(index) => move_point_by_linear(
+                control_points,
+                index,
+                &drag.start_points,
+                shown_and_target,
+                curve,
+            ),
             View3dItem::Handle(index, side) => move_handle_to_linear(
                 control_points,
                 index,
                 side,
-                &drag.start,
+                start,
                 shown_and_target,
                 curve.picker_space,
                 curve.is_auto_comb_running,
@@ -1588,9 +1602,9 @@ mod tests {
         target: [f32; 3],
         curve: CurveSettings,
     ) {
-        let start = *points[index].val();
-        let shown = start.linear(curve.picker_space);
-        move_point_by_linear(points, index, start, [shown, target], curve);
+        let start = points.to_vec();
+        let shown = start[index].val().linear(curve.picker_space);
+        move_point_by_linear(points, index, &start, [shown, target], curve);
     }
 
     #[test]
@@ -1665,11 +1679,12 @@ mod tests {
         };
         let value = ControlPointValue::new(0.9, 0.6, 0.4);
         assert!(!value.is_in_srgb(oklch));
-        let mut points = vec![point_with_tangents(value.val, 0.0)];
+        let start = vec![point_with_tangents(value.val, 0.0)];
+        let mut points = start.clone();
         let shown = value.linear(oklch);
         let [l, a, b] = linear_to_oklab(shown);
         let lighter = oklab_to_linear([l + 0.05, a, b]);
-        move_point_by_linear(&mut points, 0, value, [shown, lighter], unlocked(oklch));
+        move_point_by_linear(&mut points, 0, &start, [shown, lighter], unlocked(oklch));
         let moved = *points[0].val();
         assert!(!moved.is_in_srgb(oklch), "{moved:?}");
         assert_close([moved.s(), moved.v(), moved.h()], [0.9, 0.65, 0.4]);
@@ -2466,11 +2481,10 @@ mod tests {
         let depth = camera.project(space.position(shown), rect).unwrap().depth;
         let target = space.linear_at(camera.unproject(end, depth, rect));
         let mut snapped = points.to_vec();
-        let start = *points[index].val();
         move_point_by_linear(
             &mut snapped,
             index,
-            start,
+            points,
             [shown, target],
             unlocked(picker_space),
         );
@@ -2599,5 +2613,46 @@ mod tests {
             !ControlPointValue::new(s + 1e-3, v, h).is_in_srgb(clipping)
         };
         assert!(points.iter().any(is_at_edge), "{points:?}");
+    }
+
+    #[test]
+    fn a_locked_group_stays_put_while_held_and_comes_back_bit_for_bit() {
+        let [first_hue, last_hue] = [0.1, 0.6];
+        let middle_hue = crate::math::hue_lerp(first_hue, last_hue, 0.5);
+        let points: Vec<ControlPoint> = [
+            (0.3, 0.7, first_hue, 0.0),
+            (0.25, 0.5, middle_hue, 0.5),
+            (0.2, 0.4, last_hue, 1.0),
+        ]
+        .map(|(s, v, h, t)| ControlPoint::new_simple(ControlPointValue::new(s, v, h), t))
+        .to_vec();
+        let clipping = PickerSpace::Oklch { clip_to_srgb: true };
+        assert!(points.iter().all(|cp| cp.val().is_in_srgb(clipping)));
+        let bits = |points: &[ControlPoint]| {
+            let values = points.iter().map(|cp| cp.val().val.map(f32::to_bits));
+            values.collect::<Vec<_>>()
+        };
+        for picker_space in [PickerSpace::Hsv, clipping] {
+            for index in [0, 1] {
+                let mut pane = pane_with(&points, SplineMode::Linear, None);
+                pane.ctx.borrow_mut().picker_space = picker_space;
+                pane.ctx
+                    .borrow()
+                    .z_color_picker
+                    .borrow_mut()
+                    .options
+                    .is_curve_locked = true;
+                let egui_ctx = egui::Context::default();
+                let rect = view_rect_then_hide_gamut(&egui_ctx, &mut pane);
+                let start = screen_pos(&pane, rect, *points[index].val());
+                let path = [start, start + Vec2::new(25.0, -18.0)];
+                let [moved, held, returned] =
+                    drag_hold_and_return(&egui_ctx, &mut pane, path, bits);
+                let label = format!("point {index} in {picker_space:?}");
+                assert_ne!(moved, bits(&points), "{label}");
+                assert_eq!(held, moved, "{label}");
+                assert_eq!(returned, bits(&points), "{label}");
+            }
+        }
     }
 }
