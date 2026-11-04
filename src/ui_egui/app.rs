@@ -776,9 +776,12 @@ fn log_drawer_max_height(ctx: &egui::Context, tile_area_min_height: f32) -> f32 
 }
 
 fn log_drawer_grab(ctx: &egui::Context, grab_id: egui::Id, drawer: Rect) {
-    let edge = Rect::from_x_y_ranges(drawer.x_range(), drawer.top()..=drawer.top());
     let radius = ctx.style().interaction.resize_grab_radius_side;
-    let rect = edge.expand2(Vec2::new(0.0, radius));
+    let down_to_header = f32::from(theme::drawer_frame().inner_margin.top).min(radius);
+    let rect = Rect::from_x_y_ranges(
+        drawer.x_range(),
+        drawer.top() - radius..=drawer.top() + down_to_header,
+    );
     let ui = Ui::new(
         ctx.clone(),
         grab_id.with("ui"),
@@ -1660,6 +1663,16 @@ mod tests {
             "{} vs {capped}",
             app.log_drawer_height
         );
+    }
+
+    #[test]
+    fn a_click_on_the_top_edge_of_the_log_header_collapses_the_drawer() {
+        let ctx = egui::Context::default();
+        let mut app = expanded_app_laid_out(&ctx);
+        let top = DEFAULT_SCREEN.bottom() - drawer_height(&app, &ctx, DEFAULT_SCREEN);
+        let header_top = top + f32::from(theme::drawer_frame().inner_margin.top);
+        click(&mut app, &ctx, Pos2::new(100.0, header_top + 0.5));
+        assert!(!app.is_log_expanded);
     }
 
     #[test]
