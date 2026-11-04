@@ -1,6 +1,6 @@
 # Z-Color-Picker
 
-![alt text](img/new_egui_tiles.png)
+![alt text](img/preview_newest.png)
 
 # MAIN FEATURES
 
