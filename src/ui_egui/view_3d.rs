@@ -1,4 +1,7 @@
-use std::f32::consts::TAU;
+use std::{
+    f32::consts::{FRAC_PI_2, TAU},
+    ops::RangeInclusive,
+};
 
 use eframe::{
     egui::{
@@ -19,18 +22,22 @@ use crate::{
     datatypes::control_point::{ControlPoint, ControlPointValue},
     math::shortest_hue_delta,
     ui_egui::{
-        auto_comb::drag_handle_to,
         blend::Gradient,
         color_picker::{
             apply_group_delta_sv, format_color_as, limit_group_delta, srgb_slide_fractions,
         },
         control_points::{
-            bezier_handle, clip_points_to_srgb, clip_value_to_srgb, control_point_outline,
+            add_point_on_gradient, bezier_handle, clip_points_to_srgb, clip_value_to_srgb,
+            control_point_outline, drag_handle_to,
         },
     },
 };
 
 const CURVE_SAMPLES: usize = 128;
+
+fn curve_sample_t(i: usize) -> f32 {
+    i as f32 / (CURVE_SAMPLES - 1) as f32
+}
 
 fn gradient_linear_samples(
     control_points: &[ControlPoint],
@@ -40,8 +47,25 @@ fn gradient_linear_samples(
 ) -> Vec<[f32; 3]> {
     let gradient = Gradient::new(control_points, spline_mode, picker_space, blend_space);
     (0..CURVE_SAMPLES)
-        .filter_map(|i| gradient.linear_at(i as f32 / (CURVE_SAMPLES - 1) as f32))
+        .filter_map(|i| gradient.linear_at(curve_sample_t(i)))
         .collect()
+}
+
+fn curve_t_at(
+    camera: OrbitCamera,
+    rect: Rect,
+    space: View3dSpace,
+    gradient: &Gradient,
+    pointer: Pos2,
+) -> Option<f32> {
+    let targets: Vec<(Pos2, f32)> = (0..CURVE_SAMPLES)
+        .filter_map(|i| {
+            let t = curve_sample_t(i);
+            let projected = camera.project(space.position(gradient.linear_at(t)?), rect)?;
+            Some((projected.pos, t))
+        })
+        .collect();
+    nearest(pointer, &targets).map(|(_, t)| t)
 }
 
 fn midpoint(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
@@ -150,9 +174,25 @@ struct OrbitCamera {
     scene_radius: f32,
 }
 
-const MAX_PITCH: f32 = 1.48;
-const MIN_DISTANCE: f32 = 1.2;
-const MAX_DISTANCE: f32 = 8.0;
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct ZoomLimits {
+    zoom_in: f32,
+    zoom_out: f32,
+}
+
+impl Default for ZoomLimits {
+    fn default() -> Self {
+        Self {
+            zoom_in: 3.0,
+            zoom_out: 0.5,
+        }
+    }
+}
+
+const ZOOM_IN_LIMITS: RangeInclusive<f32> = 1.0..=10.0;
+const ZOOM_OUT_LIMITS: RangeInclusive<f32> = 0.1..=1.0;
+const MAX_PITCH: f32 = FRAC_PI_2;
 const ORBIT_RADIANS_PER_POINT: f32 = 0.01;
 const ZOOM_PER_SCROLL_POINT: f32 = 0.002;
 const FOCAL_LENGTH_PER_SIZE: f32 = 1.2;
@@ -229,15 +269,16 @@ impl OrbitCamera {
         };
         let zoom = self.distance / self.fitted_distance(space);
         Self {
-            distance: (zoom * turned.fitted_distance(space)).clamp(MIN_DISTANCE, MAX_DISTANCE),
+            distance: zoom * turned.fitted_distance(space),
             ..turned
         }
     }
 
-    fn zoomed(self, scroll: f32) -> Self {
+    fn zoomed(self, scroll: f32, space: View3dSpace, limits: ZoomLimits) -> Self {
+        let fitted = self.fitted_distance(space);
         let distance = self.distance * (-scroll * ZOOM_PER_SCROLL_POINT).exp();
         Self {
-            distance: distance.clamp(MIN_DISTANCE, MAX_DISTANCE),
+            distance: distance.clamp(fitted / limits.zoom_in, fitted / limits.zoom_out),
             ..self
         }
     }
@@ -468,8 +509,8 @@ const HOVER_RADIUS: f32 = 10.0;
 const HANDLE_RADIUS: f32 = 4.5;
 const HANDLE_LINE_WIDTH: f32 = 1.5;
 const HANDLE_MIN_SCREEN_LENGTH: f32 = 2.0 * SELECTED_POINT_RADIUS;
-const VIEW_3D_HINT: &str =
-    "Drag a point or handle: move it. Drag elsewhere: orbit. Scroll: zoom. Double-click elsewhere: reset";
+const VIEW_3D_HINT: &str = "Drag a point or handle: move it. Drag elsewhere: orbit. Scroll: zoom. \
+     Double-click the curve: add a point. Right-click a point: remove it. Double-click elsewhere: reset";
 
 fn segment_shape(camera: OrbitCamera, rect: Rect, segment: &WorldSegment) -> Option<(f32, Shape)> {
     let [Some(a), Some(b)] = segment.ends.map(|p| camera.project(p, rect)) else {
@@ -952,7 +993,6 @@ pub fn move_handle_to_linear(
     start: &ControlPoint,
     shown_and_target: [[f32; 3]; 2],
     picker_space: PickerSpace,
-    is_auto_comb_running: bool,
 ) {
     let start_handle = bezier_handle(start, side);
     let handle = picker_value_after_drag(start_handle, shown_and_target, picker_space);
@@ -961,7 +1001,7 @@ pub fn move_handle_to_linear(
         // handle - point is not the stored tangent bit for bit, nor a runaway one bezier_handle clamped.
         control_points[index].tangents_mut()[side] = start.tangents()[side];
     } else {
-        drag_handle_to(control_points, index, side, handle, is_auto_comb_running);
+        drag_handle_to(control_points, index, side, handle);
     }
 }
 
@@ -1111,24 +1151,23 @@ fn camera_after_input(
     space: View3dSpace,
     ui: &Ui,
     response: &egui::Response,
-    items: &[SceneItem],
+    is_reset: bool,
     is_editing: bool,
+    zoom_limits: ZoomLimits,
 ) -> OrbitCamera {
-    let is_on_item = response
-        .interact_pointer_pos()
-        .and_then(|pointer| item_at(items, pointer))
-        .is_some();
-    if response.double_clicked() && !is_on_item {
+    if is_reset {
         return OrbitCamera::fitted(space);
     }
     let mut camera = camera;
     if response.dragged_by(PointerButton::Primary) && !is_editing {
         camera = camera.orbited(response.drag_delta(), space);
     }
-    if response.hovered() {
-        camera = camera.zoomed(ui.input(|i| i.smooth_scroll_delta.y));
-    }
-    camera
+    let scroll = if response.hovered() {
+        ui.input(|i| i.smooth_scroll_delta.y)
+    } else {
+        0.0
+    };
+    camera.zoomed(scroll, space, zoom_limits)
 }
 
 const DEFAULT_GAMUT_OPACITY: f32 = 0.2;
@@ -1151,6 +1190,8 @@ pub struct View3d {
     space: View3dSpace,
     #[serde(default = "default_gamut_opacity")]
     gamut_opacity: f32,
+    #[serde(default)]
+    zoom_limits: ZoomLimits,
     #[serde(skip)]
     camera: Option<OrbitCamera>,
     #[serde(skip)]
@@ -1162,10 +1203,16 @@ impl Default for View3d {
         Self {
             space: View3dSpace::default(),
             gamut_opacity: DEFAULT_GAMUT_OPACITY,
+            zoom_limits: ZoomLimits::default(),
             camera: None,
             drag: None,
         }
     }
+}
+
+pub struct View3dEdit {
+    pub dragged: Option<View3dItem>,
+    pub removed: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -1176,7 +1223,7 @@ pub struct CurveSettings {
     pub is_auto_comb_running: bool,
     pub is_curve_locked: bool,
     pub is_window_lock: bool,
-    pub is_auto_hue: bool,
+    pub is_middle_z_interpolated: bool,
 }
 
 impl View3d {
@@ -1197,10 +1244,10 @@ impl View3d {
     pub fn draw_ui(
         &mut self,
         ui: &mut Ui,
-        control_points: &mut [ControlPoint],
+        control_points: &mut Vec<ControlPoint>,
         curve: CurveSettings,
         selected_index: &mut Option<usize>,
-    ) -> Option<View3dItem> {
+    ) -> View3dEdit {
         let CurveSettings {
             spline_mode,
             picker_space,
@@ -1219,6 +1266,16 @@ impl View3d {
             self.set_space(space);
             ui.add(egui::Slider::new(&mut self.gamut_opacity, 0.0..=1.0).text("Gamut"))
                 .on_hover_text("Opacity of the shaded gamut faces");
+            let zoom_slider = |value, range| {
+                egui::Slider::new(value, range)
+                    .logarithmic(true)
+                    .max_decimals(2)
+                    .suffix("x")
+            };
+            ui.add(zoom_slider(&mut self.zoom_limits.zoom_in, ZOOM_IN_LIMITS).text("Zoom in"))
+                .on_hover_text("Furthest scroll zoom in, relative to the fitted view");
+            ui.add(zoom_slider(&mut self.zoom_limits.zoom_out, ZOOM_OUT_LIMITS).text("Zoom out"))
+                .on_hover_text("Furthest scroll zoom out, relative to the fitted view");
             ui.weak(VIEW_3D_HINT);
         });
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
@@ -1234,13 +1291,27 @@ impl View3d {
             handles_of(*selected_index),
         );
         let dragged = self.edit_items(ui, &response, &items, control_points, curve, selected_index);
+        let removed = response
+            .interact_pointer_pos()
+            .filter(|_| response.clicked_by(PointerButton::Secondary))
+            .and_then(|pointer| match item_at(&items, pointer)? {
+                (_, View3dItem::Point(index)) => Some(index),
+                (_, View3dItem::Handle(..)) => None,
+            });
+        let double_clicked_off_items = response
+            .interact_pointer_pos()
+            .filter(|&pointer| response.double_clicked() && item_at(&items, pointer).is_none());
+        let is_on_curve = double_clicked_off_items.is_some_and(|pointer| {
+            self.add_point_on_curve(pointer, rect, control_points, curve, selected_index)
+        });
         let camera = camera_after_input(
             self.camera(),
             space,
             ui,
             &response,
-            &items,
+            double_clicked_off_items.is_some() && !is_on_curve,
             self.drag.is_some(),
+            self.zoom_limits,
         );
         self.camera = Some(camera);
         let items = scene_items(
@@ -1303,7 +1374,37 @@ impl View3d {
             let hex = format_color_as(color, ColorStringCopy::HexNoAlpha, None);
             response.on_hover_text_at_pointer(format!("#{hex}"));
         }
-        dragged
+        View3dEdit { dragged, removed }
+    }
+
+    fn add_point_on_curve(
+        &mut self,
+        pointer: Pos2,
+        rect: Rect,
+        control_points: &mut Vec<ControlPoint>,
+        curve: CurveSettings,
+        selected_index: &mut Option<usize>,
+    ) -> bool {
+        let gradient = Gradient::new(
+            control_points,
+            curve.spline_mode,
+            curve.picker_space,
+            curve.blend_space,
+        );
+        let Some(t) = curve_t_at(self.camera(), rect, self.space, &gradient, pointer) else {
+            return false;
+        };
+        let added = add_point_on_gradient(
+            control_points,
+            curve.spline_mode,
+            curve.picker_space,
+            curve.blend_space,
+            t,
+        );
+        if let Some(index) = added {
+            *selected_index = Some(index);
+        }
+        true
     }
 
     fn edit_items(
@@ -1319,6 +1420,10 @@ impl View3d {
         if response.drag_started_by(PointerButton::Primary) {
             self.drag = ui.input(|i| i.pointer.press_origin()).and_then(|press| {
                 let (_, item) = item_at(items, press)?;
+                let is_set_by_auto_comb = matches!(item, View3dItem::Handle(..));
+                if is_set_by_auto_comb && curve.is_auto_comb_running {
+                    return None;
+                }
                 let pressed = items.iter().find(|scene_item| scene_item.item == item)?;
                 Some(ItemDrag {
                     item,
@@ -1354,7 +1459,7 @@ impl View3d {
         let start_value = drag.item.value(start);
         let is_middle = |index: usize| 0 < index && index + 1 < control_points.len();
         match drag.item {
-            View3dItem::Point(index) if curve.is_auto_hue && is_middle(index) => {
+            View3dItem::Point(index) if curve.is_middle_z_interpolated && is_middle(index) => {
                 let value = auto_hue_drag_value(
                     start_value,
                     camera.project(moved, rect)?.pos,
@@ -1380,7 +1485,6 @@ impl View3d {
                 start,
                 shown_and_target,
                 curve.picker_space,
-                curve.is_auto_comb_running,
             ),
         }
         Some(drag.item)
@@ -1390,15 +1494,15 @@ impl View3d {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{cell::RefCell, f32::consts::FRAC_PI_2, rc::Rc};
+    use std::{cell::RefCell, rc::Rc};
 
     use crate::{
         color_space::{is_in_srgb_gamut, oklab_to_oklch, BlendSpace},
         datatypes::control_point::ControlPointValue,
         ui_egui::{
             app::ZColorPickerAppContext,
-            auto_comb::{apply_auto_comb, CombEdit},
             color_picker::srgb_move_fraction,
+            control_points::remove_point,
             panes::{View3dPane, ZAppPane},
         },
     };
@@ -1483,11 +1587,59 @@ mod tests {
     }
 
     #[test]
-    fn zoom_clamps_distance() {
+    fn orbit_reaches_the_straight_top_down_and_bottom_up_views() {
         let camera = OrbitCamera::fitted(View3dSpace::Srgb);
-        assert!(camera.zoomed(50.0).distance < camera.distance);
-        assert_eq!(camera.zoomed(1e6).distance, MIN_DISTANCE);
-        assert_eq!(camera.zoomed(-1e6).distance, MAX_DISTANCE);
+        for drag_y in [1e6, -1e6] {
+            let orbited = camera.orbited(Vec2::new(0.0, drag_y), View3dSpace::Srgb);
+            for y in [-0.5, 0.5] {
+                let projected = orbited.project([0.0, y, 0.0], RECT).unwrap();
+                assert_pos_close(projected.pos, RECT.center());
+            }
+        }
+    }
+
+    #[test]
+    fn zoom_is_limited_relative_to_the_fitted_distance() {
+        let limits = ZoomLimits {
+            zoom_in: 4.0,
+            zoom_out: 0.25,
+        };
+        for space in View3dSpace::ALL {
+            let camera = OrbitCamera::fitted(space);
+            assert!(camera.zoomed(50.0, space, limits).distance < camera.distance);
+            let [zoomed_in, zoomed_out] =
+                [1e6, -1e6].map(|scroll| camera.zoomed(scroll, space, limits).distance);
+            assert_eq!(zoomed_in, camera.distance / 4.0, "{space:?}");
+            assert_eq!(zoomed_out, camera.distance / 0.25, "{space:?}");
+        }
+    }
+
+    #[test]
+    fn lowering_the_zoom_in_limit_pulls_the_camera_back_to_it() {
+        let mut pane = pane_with(&three_points(), SplineMode::Linear, None);
+        let egui_ctx = egui::Context::default();
+        pane_frame(&egui_ctx, &mut pane, Vec::new());
+        let fitted = pane.view.camera.unwrap();
+        let space = pane.view.space;
+        pane.view.camera = Some(fitted.zoomed(1e6, space, ZoomLimits::default()));
+        pane.view.zoom_limits.zoom_in = 2.0;
+        pane_frame(&egui_ctx, &mut pane, Vec::new());
+        assert_eq!(pane.view.camera.unwrap().distance, fitted.distance / 2.0);
+    }
+
+    #[test]
+    fn view_json_without_zoom_limits_loads_the_defaults() {
+        let view: View3d = serde_json::from_str(r#"{"space":"Hsv"}"#).unwrap();
+        assert_eq!(view.zoom_limits, ZoomLimits::default());
+        let view: View3d =
+            serde_json::from_str(r#"{"space":"Hsv","zoom_limits":{"zoom_in":5.0}}"#).unwrap();
+        assert_eq!(
+            view.zoom_limits,
+            ZoomLimits {
+                zoom_in: 5.0,
+                ..ZoomLimits::default()
+            }
+        );
     }
 
     #[test]
@@ -1611,7 +1763,7 @@ mod tests {
             is_auto_comb_running: false,
             is_curve_locked: false,
             is_window_lock: false,
-            is_auto_hue: false,
+            is_middle_z_interpolated: false,
         }
     }
 
@@ -1722,7 +1874,6 @@ mod tests {
             &original,
             [shown, target],
             PickerSpace::Hsl,
-            false,
         );
         assert_close(
             bezier_handle(&points[0], 1).linear(PickerSpace::Hsl),
@@ -1849,7 +2000,7 @@ mod tests {
             let [l, a, b] = linear_to_oklab(shown);
             let lighter = oklab_to_linear([l + 0.02, a, b]);
             let start = points[0].clone();
-            move_handle_to_linear(&mut points, 0, 1, &start, [shown, lighter], clipping, false);
+            move_handle_to_linear(&mut points, 0, 1, &start, [shown, lighter], clipping);
             let handle = bezier_handle(&points[0], 1);
             assert!(handle.is_in_srgb(clipping), "{space:?}: {handle:?}");
         }
@@ -2095,7 +2246,6 @@ mod tests {
         let color_picker = ctx.z_color_picker.borrow();
         assert_eq!(color_picker.last_modifying_point_index, Some(0));
         assert_eq!(color_picker.dragging_index, Some(0));
-        assert_eq!(color_picker.dragging_tangent, None);
         assert_eq!(
             pane.view.camera,
             Some(OrbitCamera::fitted(View3dSpace::Srgb))
@@ -2113,7 +2263,7 @@ mod tests {
     }
 
     #[test]
-    fn dragging_a_handle_changes_only_its_tangent_and_marks_it_dragged() {
+    fn dragging_a_handle_changes_only_its_tangent() {
         let points: Vec<ControlPoint> = [(0.3, 0.6, 0.0), (0.5, 0.5, 0.5), (0.7, 0.4, 1.0)]
             .map(|(s, v, t)| point_with_tangents([s, v, 0.3], t))
             .to_vec();
@@ -2136,16 +2286,15 @@ mod tests {
                 assert_eq!(after.tangents()[1], before.tangents()[1]);
             }
         }
-        assert_eq!(ctx.z_color_picker.borrow().dragging_tangent, Some((1, 1)));
     }
 
-    fn seeded_arc() -> Vec<ControlPoint> {
+    fn arc_with_handles() -> Vec<ControlPoint> {
         let handles = [
             [[0.0, 0.15], [0.0, -0.15]],
             [[-0.15, 0.0], [0.15, 0.0]],
             [[0.0, -0.15], [0.0, 0.15]],
         ];
-        let mut points: Vec<ControlPoint> = [(0.2, 0.8, 0.0), (0.5, 0.5, 0.5), (0.8, 0.8, 1.0)]
+        [(0.2, 0.8, 0.0), (0.5, 0.5, 0.5), (0.8, 0.8, 1.0)]
             .iter()
             .zip(handles)
             .map(|(&(s, v, t), handles)| {
@@ -2153,14 +2302,7 @@ mod tests {
                 *cp.tangents_mut() = handles.map(|[ds, dv]| Some([ds, dv, 0.0].into()));
                 cp
             })
-            .collect();
-        let reseed = CombEdit {
-            is_reseed: true,
-            ..Default::default()
-        };
-        assert_eq!(apply_auto_comb(&mut points, reseed), 0);
-        assert!(points.iter().all(|cp| cp.curvature().is_some()));
-        points
+            .collect()
     }
 
     fn stretch_handle(pane: &mut View3dPane, index: usize, side: usize) {
@@ -2175,9 +2317,9 @@ mod tests {
     }
 
     #[test]
-    fn dragging_a_handle_with_auto_comb_on_sets_its_point_curvature() {
+    fn a_handle_cannot_be_dragged_while_auto_comb_sets_it() {
         for is_auto_comb in [false, true] {
-            let points = seeded_arc();
+            let points = arc_with_handles();
             let mut pane = pane_with(&points, SplineMode::Bezier, Some(1));
             pane.ctx
                 .borrow()
@@ -2189,14 +2331,8 @@ mod tests {
 
             let ctx = pane.ctx.borrow();
             let moved = &ctx.control_points;
-            assert_ne!(moved[1].tangents()[1], points[1].tangents()[1]);
-            assert_eq!(
-                moved[1].curvature() != points[1].curvature(),
-                is_auto_comb,
-                "auto comb {is_auto_comb}: {:?} -> {:?}",
-                points[1].curvature(),
-                moved[1].curvature()
-            );
+            let is_moved = moved[1].tangents()[1] != points[1].tangents()[1];
+            assert_eq!(is_moved, !is_auto_comb, "auto comb {is_auto_comb}");
         }
     }
 
@@ -2309,7 +2445,7 @@ mod tests {
         let yaw_turns = (0..12).map(|step| step as f32 * TAU / 12.0);
         let orbits: Vec<Vec2> = yaw_turns
             .flat_map(|yaw_turn| {
-                [-1.4, -0.7, 0.0, 0.7, 1.4].map(|pitch| {
+                [-FRAC_PI_2, -1.4, -0.7, 0.0, 0.7, 1.4, FRAC_PI_2].map(|pitch| {
                     Vec2::new(-yaw_turn, pitch - fitted_pitch) / ORBIT_RADIANS_PER_POINT
                 })
             })
@@ -2340,7 +2476,7 @@ mod tests {
     fn orbiting_refits_the_distance_to_the_new_orientation_and_keeps_the_zoom() {
         let space = View3dSpace::Oklab;
         let fitted = OrbitCamera::fitted(space);
-        let zoomed = fitted.zoomed(80.0);
+        let zoomed = fitted.zoomed(80.0, space, ZoomLimits::default());
         let orbit = Vec2::new(0.0, -150.0);
         let [orbited, zoomed_orbited] = [fitted, zoomed].map(|camera| camera.orbited(orbit, space));
         assert_eq!(orbited, orbited.refitted(space));
@@ -2358,7 +2494,7 @@ mod tests {
         let mut view = View3d::default();
         let orbited = OrbitCamera::fitted(View3dSpace::Srgb)
             .orbited(Vec2::new(40.0, -25.0), View3dSpace::Srgb)
-            .zoomed(80.0);
+            .zoomed(80.0, View3dSpace::Srgb, ZoomLimits::default());
         view.camera = Some(orbited);
         view.set_space(View3dSpace::Srgb);
         assert_eq!(view.camera, Some(orbited));
@@ -2374,7 +2510,7 @@ mod tests {
     #[test]
     fn depth_fade_spans_the_depths_of_the_spaces_own_gamut_sphere() {
         for space in View3dSpace::ALL {
-            let camera = OrbitCamera::fitted(space).zoomed(-120.0);
+            let camera = OrbitCamera::fitted(space).zoomed(-120.0, space, ZoomLimits::default());
             let radius = gamut_radius(space);
             let [near, far] = [-radius, radius].map(|r| camera.depth_fade(camera.distance + r));
             assert_eq!(near, 1.0, "{space:?}");
@@ -2448,6 +2584,75 @@ mod tests {
     }
 
     #[test]
+    fn double_clicking_the_curve_adds_its_color_there_and_keeps_the_camera() {
+        let points = three_points();
+        let mut pane = pane_with(&points, SplineMode::Linear, None);
+        pane.ctx
+            .borrow()
+            .z_color_picker
+            .borrow_mut()
+            .options
+            .is_hue_middle_interpolated = false;
+        let rect = view_rect(&pane_frame(
+            &egui::Context::default(),
+            &mut pane,
+            Vec::new(),
+        ));
+        let camera = (pane.view.camera.unwrap()).orbited(Vec2::new(40.0, -25.0), pane.view.space);
+        pane.view.camera = Some(camera);
+        let (picker_space, blend_space) = (PickerSpace::Hsv, BlendSpace::Picker);
+        let gradient = Gradient::new(&points, SplineMode::Linear, picker_space, blend_space);
+        let on_curve = |t: f32| {
+            let position = pane.view.space.position(gradient.linear_at(t).unwrap());
+            camera.project(position, rect).unwrap().pos
+        };
+        let pos = on_curve(0.25);
+        for cp in &points {
+            assert!(screen_pos(&pane, rect, *cp.val()).distance(pos) > HOVER_RADIUS);
+        }
+        double_click(&mut pane, pos);
+
+        assert_eq!(pane.view.camera, Some(camera));
+        let ctx = pane.ctx.borrow();
+        let added = &ctx.control_points;
+        assert_eq!(added.len(), 4, "{added:?}");
+        let t = *added[1].t();
+        assert!((t - 0.25).abs() <= 1.0 / (CURVE_SAMPLES - 1) as f32, "{t}");
+        let expected = gradient.color_at(t).unwrap().to_array();
+        let color = added[1].val().color(picker_space).to_array();
+        let off_by = (0..4).map(|i| color[i].abs_diff(expected[i])).max();
+        assert!(off_by <= Some(1), "{color:?} vs {expected:?}");
+        let selected = ctx.z_color_picker.borrow().last_modifying_point_index;
+        assert_eq!(selected, Some(1));
+    }
+
+    #[test]
+    fn right_clicking_a_point_removes_it_and_keeps_the_selection_on_its_point() {
+        let points = three_points();
+        let mut pane = pane_with(&points, SplineMode::Linear, Some(2));
+        let egui_ctx = egui::Context::default();
+        let rect = view_rect(&pane_frame(&egui_ctx, &mut pane, Vec::new()));
+        let pos = screen_pos(&pane, rect, *points[1].val());
+        pane_frame(&egui_ctx, &mut pane, vec![egui::Event::PointerMoved(pos)]);
+        for pressed in [true, false] {
+            let event = egui::Event::PointerButton {
+                pos,
+                button: PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            };
+            pane_frame(&egui_ctx, &mut pane, vec![event]);
+        }
+
+        let mut expected = points.clone();
+        remove_point(&mut expected, 1);
+        let ctx = pane.ctx.borrow();
+        assert_eq!(ctx.control_points, expected);
+        let selected = ctx.z_color_picker.borrow().last_modifying_point_index;
+        assert_eq!(selected, Some(1));
+    }
+
+    #[test]
     fn double_clicking_a_point_or_handle_keeps_the_camera_and_empty_space_resets_it() {
         let points: Vec<ControlPoint> = [(0.3, 0.6, 0.0), (0.5, 0.5, 0.5), (0.7, 0.4, 1.0)]
             .map(|(s, v, t)| point_with_tangents([s, v, 0.3], t))
@@ -2495,10 +2700,6 @@ mod tests {
         let tall = Rect::from_min_size(Pos2::ZERO, Vec2::new(200.0, 400.0));
         for space in View3dSpace::ALL {
             let camera = OrbitCamera::fitted(space);
-            assert!(
-                (MIN_DISTANCE..=MAX_DISTANCE).contains(&camera.distance),
-                "{space:?}: {camera:?}"
-            );
             for rect in [wide, tall] {
                 let corners: Vec<Pos2> = gamut_quads(space)
                     .iter()

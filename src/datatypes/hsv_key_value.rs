@@ -3,8 +3,8 @@ use eframe::egui::{Pos2, Vec2};
 use serde::{Deserialize, Serialize};
 
 use crate::color_space::{
-    is_in_srgb_gamut, largest_scale_in_srgb, linear_to_color32, map_into_srgb_gamut,
-    picker_to_linear, PickerSpace,
+    is_in_srgb_gamut, largest_fraction_where, largest_scale_in_srgb, linear_to_color32,
+    linear_to_oklab, map_into_srgb_gamut, picker_to_linear, PickerSpace,
 };
 use crate::math::hue_lerp;
 
@@ -68,6 +68,31 @@ impl HsvKeyValue {
 
     pub fn is_in_srgb(&self, space: PickerSpace) -> bool {
         is_in_srgb_gamut(self.unmapped_linear(space))
+    }
+
+    pub fn oklab_lightness(&self, space: PickerSpace) -> f32 {
+        match space {
+            PickerSpace::Oklch { .. } => self[1].clamp(0.0, 1.0),
+            PickerSpace::Oklab { .. } => space.z_on_bar(self[2]),
+            _ => linear_to_oklab(self.unmapped_linear(space))[0],
+        }
+    }
+
+    pub fn with_oklab_lightness(self, space: PickerSpace, lightness: f32) -> Self {
+        let mut value = self;
+        match space {
+            PickerSpace::Oklch { .. } => value[1] = lightness,
+            PickerSpace::Oklab { .. } => value[2] = lightness,
+            _ => {
+                let lightness_at = |y: f32| Self::new(self[0], y, self[2]).oklab_lightness(space);
+                value[1] = if lightness_at(1.0) <= lightness {
+                    1.0
+                } else {
+                    largest_fraction_where(|y| lightness_at(y) <= lightness)
+                };
+            }
+        }
+        value
     }
 
     pub fn clipped_to_srgb(&self, space: PickerSpace) -> Self {
@@ -509,6 +534,51 @@ mod tests {
     const OKLAB: PickerSpace = PickerSpace::Oklab {
         clip_to_srgb: false,
     };
+
+    #[test]
+    fn with_oklab_lightness_reaches_the_target_keeping_x_and_z() {
+        for space in PickerSpace::ALL {
+            for (x, z) in [(0.0, 0.3), (0.25, 0.6), (0.25, 0.95)] {
+                let value = HsvKeyValue::new(x, 0.9, z);
+                for target in [0.1, 0.45, 0.8] {
+                    let moved = value.with_oklab_lightness(space, target);
+                    let lightness = moved.oklab_lightness(space);
+                    assert!(
+                        (lightness - target).abs() < 1e-5,
+                        "{space:?} {value:?} -> {moved:?}: L {lightness}, wanted {target}"
+                    );
+                    let kept = if space.is_z_hue() { [0, 2] } else { [0, 1] };
+                    for axis in kept {
+                        assert_eq!(moved[axis], value[axis], "{space:?} {value:?} -> {moved:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn with_oklab_lightness_ignores_the_current_lightness_coordinate() {
+        for space in PickerSpace::ALL {
+            let axis = if space.is_z_hue() { 1 } else { 2 };
+            let moved_from = |start: f32| {
+                let mut value = HsvKeyValue::new(0.3, 0.4, 0.55);
+                value[axis] = start;
+                value.with_oklab_lightness(space, 0.6)
+            };
+            for start in [0.0, 0.2, 0.7, 1.0] {
+                assert_eq!(moved_from(start), moved_from(0.5), "{space:?} from {start}");
+            }
+        }
+    }
+
+    #[test]
+    fn with_oklab_lightness_stops_at_the_square_edge_out_of_reach() {
+        let blue = HsvKeyValue::new(1.0, 0.5, 2.0 / 3.0);
+        for space in [PickerSpace::Hsv, PickerSpace::Okhsv] {
+            assert_eq!(blue.with_oklab_lightness(space, 0.95).v(), 1.0, "{space:?}");
+            assert_eq!(blue.with_oklab_lightness(space, 0.0).v(), 0.0, "{space:?}");
+        }
+    }
 
     #[test]
     fn color_wraps_hue() {

@@ -7,10 +7,13 @@ use splines::{Interpolate, Interpolation, Key, Spline};
 use std::ops::{Add, Mul, Sub};
 
 use crate::{
-    color_space::{linear_to_picker, BlendSpace, PickerSpace},
+    color_space::{
+        ab_to_square, linear_to_picker, oklab_to_oklch, oklch_to_oklab, square_to_ab, BlendSpace,
+        PickerSpace, ACHROMATIC_CHROMA, OK_SQUARE_CHROMA,
+    },
     common::SplineMode,
     datatypes::control_point::{ControlPoint, ControlPointValue},
-    math::shortest_hue_delta,
+    math::{hue_lerp, shortest_hue_delta},
     ui_egui::{
         blend::Gradient, tangents::ui_control_point_tangents, ui_common::black_or_white_against,
     },
@@ -66,9 +69,9 @@ pub fn ui_ordered_control_points(
     ui: &mut Ui,
     control_points: &[ControlPoint],
     marked_control_point_index: Option<usize>,
-    _is_middle_interpolated: bool,
     parent_response: &egui::Response,
     show_bezier_tangents: bool,
+    are_handles_draggable: bool,
     picker_space: PickerSpace,
 ) -> ControlPointUiResult {
     use egui::PointerButton::Primary;
@@ -100,6 +103,7 @@ pub fn ui_ordered_control_points(
                 i == 0,
                 i == control_points.len() - 1,
                 marked_control_point_index == Some(i),
+                are_handles_draggable,
                 square,
                 parent_response,
                 hit_size,
@@ -303,6 +307,49 @@ pub fn insert_point(points: &mut Vec<ControlPoint>, index: usize, mut cp: Contro
     keep_min_t_gap(points);
 }
 
+pub fn insert_point_at_t(
+    points: &mut Vec<ControlPoint>,
+    mut cp: ControlPoint,
+    t: f32,
+) -> Option<usize> {
+    debug_assert!(has_valid_t(points));
+    let count = points.len();
+    if count < 2 {
+        insert_point(points, count, cp);
+        return Some(count);
+    }
+    let index = points
+        .iter()
+        .position(|p| *p.t() > t)
+        .unwrap_or(count - 1)
+        .max(1);
+    let lo = points[index - 1].t() + MIN_T_GAP;
+    let hi = points[index].t() - MIN_T_GAP;
+    if lo > hi {
+        return None;
+    }
+    *cp.t_mut() = t.clamp(lo, hi);
+    points.insert(index, cp);
+    Some(index)
+}
+
+pub fn add_point_on_gradient(
+    points: &mut Vec<ControlPoint>,
+    spline_mode: SplineMode,
+    picker_space: PickerSpace,
+    blend_space: BlendSpace,
+    t: f32,
+) -> Option<usize> {
+    let gradient = Gradient::new(points, spline_mode, picker_space, blend_space);
+    let mut value = gradient.picker_value_at(t)?;
+    value[0] = value[0].clamp(0.0, 1.0);
+    value[1] = value[1].clamp(0.0, 1.0);
+    value[2] = picker_space.z_on_bar(value[2]);
+    let mut cp = ControlPoint::new_simple(value, t);
+    clip_points_to_srgb(std::slice::from_mut(&mut cp), picker_space);
+    insert_point_at_t(points, cp, t)
+}
+
 fn keep_min_t_gap(points: &mut [ControlPoint]) {
     let count = points.len();
     if count < 3
@@ -427,6 +474,93 @@ pub fn bezier_handle(cp: &ControlPoint, slot: usize) -> ControlPointValue {
     handle
 }
 
+pub fn drag_handle_by(
+    points: &mut [ControlPoint],
+    index: usize,
+    slot: usize,
+    offset: ControlPointValue,
+) {
+    if points[index].tangents()[slot].is_some() {
+        points[index].tangents_mut()[slot] = Some(offset);
+    }
+}
+
+pub fn drag_handle_to(
+    points: &mut [ControlPoint],
+    index: usize,
+    slot: usize,
+    target: ControlPointValue,
+) {
+    let offset = target - *points[index].val();
+    drag_handle_by(points, index, slot, offset);
+}
+
+pub fn interpolate_middle_hues(points: &mut [ControlPoint], space: PickerSpace) {
+    let count = points.len();
+    if count < 3 {
+        return;
+    }
+    let [first, last] = [0, count - 1].map(|i| *points[i].val());
+    let middle = &mut points[1..count - 1];
+    if space.is_z_hue() {
+        for cp in middle {
+            cp.val_mut()[2] = hue_lerp(first.h(), last.h(), *cp.t());
+        }
+        return;
+    }
+    let (first_hue, last_hue) = match [first, last].map(|value| oklab_hue(&value)) {
+        [Some(first), Some(last)] => (first, last),
+        [Some(hue), None] | [None, Some(hue)] => (hue, hue),
+        [None, None] => return,
+    };
+    for cp in middle {
+        let value = *cp.val();
+        if oklab_hue(&value).is_none() {
+            continue;
+        }
+        let turned = turned_to_oklab_hue(value, hue_lerp(first_hue, last_hue, *cp.t()));
+        // Rewriting a point already on its hue would drift its chroma by rounding every frame.
+        let is_on_hue =
+            (0..2).all(|axis| (turned[axis] - value[axis]).abs() <= OKLAB_AUTO_HUE_SLACK);
+        if !is_on_hue {
+            *cp.val_mut() = turned;
+        }
+    }
+}
+
+const OKLAB_AUTO_HUE_SLACK: f32 = 1e-6;
+
+fn oklab_chroma_and_hue(value: &ControlPointValue) -> (f32, f32) {
+    let [_, chroma, hue] = oklab_to_oklch([0.0, square_to_ab(value[0]), square_to_ab(value[1])]);
+    (chroma, hue)
+}
+
+fn oklab_hue(value: &ControlPointValue) -> Option<f32> {
+    let (chroma, hue) = oklab_chroma_and_hue(value);
+    (chroma >= ACHROMATIC_CHROMA).then_some(hue)
+}
+
+fn turned_to_oklab_hue(value: ControlPointValue, hue: f32) -> ControlPointValue {
+    let (chroma, _) = oklab_chroma_and_hue(&value);
+    let [_, a, b] = oklch_to_oklab([0.0, 1.0, hue]);
+    let chroma_on_square_edge = OK_SQUARE_CHROMA / a.abs().max(b.abs());
+    let chroma = chroma.min(chroma_on_square_edge);
+    let [x, y] = [a, b].map(|axis| ab_to_square(chroma * axis).clamp(0.0, 1.0));
+    ControlPointValue::new(x, y, value[2])
+}
+
+pub fn interpolate_middle_lightness(points: &mut [ControlPoint], space: PickerSpace) {
+    let count = points.len();
+    if count < 3 {
+        return;
+    }
+    let [first, last] = [0, count - 1].map(|i| points[i].val().oklab_lightness(space));
+    for cp in &mut points[1..count - 1] {
+        let lightness = first + *cp.t() * (last - first);
+        *cp.val_mut() = cp.val().with_oklab_lightness(space, lightness);
+    }
+}
+
 pub fn convert_picker_space(points: &mut [ControlPoint], from: PickerSpace, to: PickerSpace) {
     if from == to {
         return;
@@ -494,7 +628,6 @@ fn convert_point(cp: &mut ControlPoint, from: PickerSpace, to: PickerSpace) {
     let handles = [0, 1].map(|slot| bezier_handle(cp, slot));
     let new = value_in_picker_space(old, from, to);
     *cp.val_mut() = new;
-    *cp.curvature_mut() = None;
     let value_hue_shift = shortest_hue_delta(old.h(), new.h());
     for (tangent, handle) in cp.tangents_mut().iter_mut().zip(handles) {
         let Some(tangent) = tangent else {
@@ -549,18 +682,24 @@ pub fn control_points_to_spline(
     spline_through_keys(&key_ts(control_points), &keys, spline_mode)
 }
 
-fn polynomial_through<V>(keys: &[Key<f32, V>], t: f32) -> V
+fn natural_phantom<V>(
+    end: &Key<f32, V>,
+    next: &Key<f32, V>,
+    after_next: Option<&Key<f32, V>>,
+) -> Key<f32, V>
 where
     V: Copy + Add<Output = V> + Sub<Output = V> + Mul<f32, Output = V>,
 {
-    let mut values: Vec<V> = keys.iter().map(|key| key.value).collect();
-    for width in 1..keys.len() {
-        for i in 0..keys.len() - width {
-            let s = (t - keys[i].t) / (keys[i + width].t - keys[i].t);
-            values[i] = values[i] + (values[i + 1] - values[i]) * s;
+    let t = 2.0 * end.t - next.t;
+    let value = match after_next {
+        None => end.value * 2.0 - next.value,
+        Some(after_next) => {
+            let next_tangent = (after_next.value - end.value) * (1.0 / (after_next.t - end.t));
+            // The end tangent (3 * chord slope - next tangent) / 2 zeroes the second derivative.
+            end.value * 3.0 - next.value * 2.0 + next_tangent * (next.t - end.t)
         }
-    }
-    values[0]
+    };
+    Key::new(t, value, Interpolation::CatmullRom)
 }
 
 pub fn spline_through_keys<V>(
@@ -591,22 +730,26 @@ where
             if n == 0 {
                 return Spline::from_vec(Vec::new());
             }
-            let (before, after) = if n >= 2 {
-                (2.0 * ts[0] - ts[1], 2.0 * ts[n - 1] - ts[n - 2])
-            } else {
-                (ts[0] - 1.0, ts[0] + 1.0)
-            };
             let catmull_rom_key = |t, value: V| Key::new(t, value, Interpolation::CatmullRom);
             let keys: Vec<Key<f32, V>> = keys_at_t
                 .map(|([value, ..], t)| catmull_rom_key(t, *value))
                 .collect();
-            let end_count = n.min(3);
-            let phantom_before = polynomial_through(&keys[..end_count], before);
-            let phantom_after = polynomial_through(&keys[n - end_count..], after);
+            let [phantom_before, phantom_after] = if n == 1 {
+                [-1.0, 1.0].map(|offset| catmull_rom_key(ts[0] + offset, keys[0].value))
+            } else {
+                [
+                    natural_phantom(&keys[0], &keys[1], keys.get(2)),
+                    natural_phantom(
+                        &keys[n - 1],
+                        &keys[n - 2],
+                        n.checked_sub(3).map(|i| &keys[i]),
+                    ),
+                ]
+            };
             Spline::from_vec(
-                std::iter::once(catmull_rom_key(before, phantom_before))
+                std::iter::once(phantom_before)
                     .chain(keys)
-                    .chain(std::iter::once(catmull_rom_key(after, phantom_after)))
+                    .chain(std::iter::once(phantom_after))
                     .collect(),
             )
         }
@@ -628,6 +771,117 @@ mod tests {
             ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 0.2), 0.5),
             ControlPoint::new_simple(ControlPointValue::new(1.0, 1.0, 0.2), 1.0),
         ]
+    }
+
+    fn oklab_points(values: &[[f32; 3]], ts: &[f32]) -> Vec<ControlPoint> {
+        values
+            .iter()
+            .zip(ts)
+            .map(|(&val, &t)| ControlPoint::new_simple(val.into(), t))
+            .collect()
+    }
+
+    fn oklch_of(value: &ControlPointValue) -> [f32; 3] {
+        oklab_to_oklch([value[2], square_to_ab(value[0]), square_to_ab(value[1])])
+    }
+
+    #[test]
+    fn oklab_auto_hue_turns_middle_points_to_the_lerped_hue_keeping_chroma_and_l() {
+        let first = oklch_to_oklab([0.4, 0.1, 0.1]);
+        let last = oklch_to_oklab([0.7, 0.2, 0.3]);
+        let middle = oklch_to_oklab([0.55, 0.15, 0.8]);
+        let square = |[l, a, b]: [f32; 3]| [ab_to_square(a), ab_to_square(b), l];
+        let mut points = oklab_points(
+            &[square(first), square(middle), square(last)],
+            &[0.0, 0.25, 1.0],
+        );
+        let original = points.clone();
+
+        interpolate_middle_hues(&mut points, OKLAB);
+
+        let before = oklch_of(original[1].val());
+        let [l, chroma, hue] = oklch_of(points[1].val());
+        assert_eq!(l, before[0]);
+        assert!(
+            (chroma - before[1]).abs() < 1e-6,
+            "{chroma} vs {}",
+            before[1]
+        );
+        assert!((hue - 0.15).abs() < 1e-5, "{hue}");
+        for end in [0, 2] {
+            assert_eq!(points[end], original[end]);
+        }
+    }
+
+    #[test]
+    fn oklab_auto_hue_takes_a_gray_end_hue_from_the_other_end() {
+        let colored_end = oklch_to_oklab([0.6, 0.2, 0.3]);
+        let colored = [
+            ab_to_square(colored_end[1]),
+            ab_to_square(colored_end[2]),
+            0.6,
+        ];
+        for ends in [[[0.5, 0.5, 0.2], colored], [colored, [0.5, 0.5, 0.9]]] {
+            let mut points = oklab_points(&[ends[0], [0.7, 0.5, 0.5], ends[1]], &[0.0, 0.5, 1.0]);
+            interpolate_middle_hues(&mut points, OKLAB);
+            let hue = oklch_of(points[1].val())[2];
+            assert!((hue - 0.3).abs() < 1e-5, "{ends:?}: {hue}");
+        }
+    }
+
+    #[test]
+    fn oklab_auto_hue_leaves_points_alone_between_gray_ends() {
+        let values = [[0.5, 0.5, 0.2], [0.7, 0.4, 0.5], [0.5, 0.5, 0.9]];
+        let mut points = oklab_points(&values, &[0.0, 0.5, 1.0]);
+        interpolate_middle_hues(&mut points, OKLAB);
+        assert_eq!(points, oklab_points(&values, &[0.0, 0.5, 1.0]));
+    }
+
+    #[test]
+    fn oklab_auto_hue_keeps_middle_points_in_the_square_and_is_a_fixed_point() {
+        for middle in [
+            [0.98, 0.97, 0.5],
+            [0.5 + 1e-5, 0.5, 0.5],
+            [0.3, 0.8, 0.5],
+            [0.0, 1.0, 0.4],
+        ] {
+            for hue_end in [[0.95, 0.5, 0.5], [0.5, 0.05, 0.5], [0.9, 0.9, 0.5]] {
+                let ts = [0.0, 0.3, 1.0];
+                let mut points = oklab_points(&[[0.9, 0.6, 0.3], middle, hue_end], &ts);
+                interpolate_middle_hues(&mut points, OKLAB);
+                let [x, y] = [points[1].val()[0], points[1].val()[1]];
+                assert!(
+                    (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y),
+                    "{points:?}"
+                );
+                let once = points.clone();
+                interpolate_middle_hues(&mut points, OKLAB);
+                assert_eq!(points, once, "{middle:?} {hue_end:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn auto_lightness_interpolates_middle_oklab_l_by_t_in_every_space() {
+        for space in PickerSpace::ALL {
+            let mut points = vec![
+                ControlPoint::new_simple(ControlPointValue::new(0.2, 0.2, 0.1), 0.0),
+                ControlPoint::new_simple(ControlPointValue::new(0.3, 0.9, 0.5), 0.25),
+                ControlPoint::new_simple(ControlPointValue::new(0.1, 0.9, 0.6), 1.0),
+            ];
+            let [first, last] = [0, 2].map(|i| points[i].val().oklab_lightness(space));
+            let ends = [*points[0].val(), *points[2].val()];
+
+            interpolate_middle_lightness(&mut points, space);
+
+            let wanted = first + 0.25 * (last - first);
+            let lightness = points[1].val().oklab_lightness(space);
+            assert!(
+                (lightness - wanted).abs() < 1e-5,
+                "{space:?}: {lightness} vs {wanted}"
+            );
+            assert_eq!([*points[0].val(), *points[2].val()], ends, "{space:?}");
+        }
     }
 
     #[test]
@@ -871,6 +1125,67 @@ mod tests {
         spline.keys().iter().map(|k| k.t).collect()
     }
 
+    fn new_point() -> ControlPoint {
+        ControlPoint::new_simple(ControlPointValue::new(0.5, 0.5, 0.1), 0.0)
+    }
+
+    #[test]
+    fn insert_point_at_t_lands_between_its_neighbours_and_keeps_the_others() {
+        let mut points = points_with_t(&[0.0, 0.4, 1.0]);
+        let before = points.clone();
+        assert_eq!(insert_point_at_t(&mut points, new_point(), 0.7), Some(2));
+        assert_eq!(ts_of(&points), [0.0, 0.4, 0.7, 1.0]);
+        assert_eq!(points[2].val(), new_point().val());
+        assert_eq!([&points[..2], &points[3..]].concat(), before);
+    }
+
+    #[test]
+    fn insert_point_at_t_keeps_the_min_gap_from_the_ends() {
+        for (t, index, expected) in [(0.0, 1, MIN_T_GAP), (1.0, 2, 1.0 - MIN_T_GAP)] {
+            let mut points = points_with_t(&[0.0, 0.5, 1.0]);
+            assert_eq!(insert_point_at_t(&mut points, new_point(), t), Some(index));
+            assert_eq!(*points[index].t(), expected, "{t}");
+            assert!(has_valid_t(&points), "{t}");
+        }
+    }
+
+    #[test]
+    fn insert_point_at_t_refuses_a_gap_too_narrow_for_a_point() {
+        let mut points = points_with_t(&[0.0, 1.5 * MIN_T_GAP, 1.0]);
+        let before = points.clone();
+        assert_eq!(insert_point_at_t(&mut points, new_point(), MIN_T_GAP), None);
+        assert_eq!(points, before);
+    }
+
+    #[test]
+    fn insert_point_at_t_appends_to_fewer_than_two_points() {
+        let mut points = Vec::new();
+        assert_eq!(insert_point_at_t(&mut points, new_point(), 0.6), Some(0));
+        assert_eq!(insert_point_at_t(&mut points, new_point(), 0.6), Some(1));
+        assert_eq!(ts_of(&points), [0.0, 1.0]);
+    }
+
+    #[test]
+    fn a_point_added_on_the_gradient_has_the_gradient_color_at_its_t() {
+        let points = points_with_t(&[0.0, 0.3, 1.0]);
+        for space in PickerSpace::ALL {
+            for blend in [BlendSpace::Picker, BlendSpace::Oklab] {
+                for mode in SplineMode::ALL {
+                    let gradient = Gradient::new(&points, mode, space, blend);
+                    let expected = gradient.color_at(0.6).unwrap().to_array();
+                    let mut added = points.clone();
+                    let index = add_point_on_gradient(&mut added, mode, space, blend, 0.6);
+                    let label = format!("{space:?} {blend:?} {mode:?}");
+                    assert_eq!(index, Some(2), "{label}");
+                    assert_eq!(*added[2].t(), 0.6, "{label}");
+                    let color = added[2].val().color(space).to_array();
+                    let off_by = (0..4).map(|i| color[i].abs_diff(expected[i])).max();
+                    assert!(off_by <= Some(1), "{label}: {color:?} vs {expected:?}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn has_valid_t_needs_pinned_ends_and_strictly_increasing_t() {
         let valid: [&[f32]; 4] = [&[], &[0.0], &[0.0, 1.0], &[0.0, 0.2, 0.9, 1.0]];
@@ -1090,26 +1405,14 @@ mod tests {
     }
 
     #[test]
-    fn hermite_phantoms_extend_the_polynomial_through_the_end_keys() {
+    fn hermite_phantoms_extend_a_line_through_the_keys() {
         let line = |t: f32| ControlPointValue::new(0.2 + 0.5 * t, 0.7 - 0.4 * t, 0.95 + 0.2 * t);
-        let quadratic = |t: f32| {
-            ControlPointValue::new(
-                0.2 + 0.9 * t - 0.6 * t * t,
-                0.8 - 0.3 * t * t,
-                0.9 + 0.3 * t - 0.1 * t * t,
-            )
-        };
-        type Polynomial = fn(f32) -> ControlPointValue;
-        let cases: [(&[f32], Polynomial); 3] = [
-            (&[0.0, 1.0], line),
-            (&[0.0, 0.3, 1.0], quadratic),
-            (&[0.0, 0.25, 0.4, 1.0], quadratic),
-        ];
-        for (ts, polynomial) in cases {
-            let keys: Vec<_> = ts.iter().map(|&t| [polynomial(t); 3]).collect();
+        let cases: [&[f32]; 3] = [&[0.0, 1.0], &[0.0, 0.3, 1.0], &[0.0, 0.25, 0.4, 1.0]];
+        for ts in cases {
+            let keys: Vec<_> = ts.iter().map(|&t| [line(t); 3]).collect();
             let spline = spline_through_keys(ts, &keys, SplineMode::HermiteBezier);
             for phantom in [&spline.keys()[0], &spline.keys()[spline.len() - 1]] {
-                assert_close(phantom.value, polynomial(phantom.t));
+                assert_close(phantom.value, line(phantom.t));
             }
         }
     }
@@ -1203,18 +1506,6 @@ mod tests {
                 assert_eq!(after, before, "{from:?} -> {to:?}");
             }
         }
-    }
-
-    #[test]
-    fn switching_space_drops_stored_curvature() {
-        let mut points = space_switch_points();
-        for cp in points.iter_mut() {
-            *cp.curvature_mut() = Some(2.0);
-        }
-        convert_picker_space(&mut points, PickerSpace::Hsv, PickerSpace::Hsv);
-        assert!(points.iter().all(|cp| cp.curvature() == Some(2.0)));
-        convert_picker_space(&mut points, PickerSpace::Hsv, PickerSpace::Okhsl);
-        assert!(points.iter().all(|cp| cp.curvature().is_none()));
     }
 
     #[test]
@@ -1532,6 +1823,13 @@ mod tests {
     fn run_frames_with_output(
         frames: Vec<Vec<egui::Event>>,
     ) -> (ControlPointUiResult, egui::FullOutput) {
+        run_frames_with_handles(frames, true)
+    }
+
+    fn run_frames_with_handles(
+        frames: Vec<Vec<egui::Event>>,
+        are_handles_draggable: bool,
+    ) -> (ControlPointUiResult, egui::FullOutput) {
         let ctx = egui::Context::default();
         let points = three_points_with_zero_middle_tangents();
         let mut result = ControlPointUiResult::default();
@@ -1549,9 +1847,9 @@ mod tests {
                         ui,
                         &points,
                         Some(1),
-                        false,
                         &parent,
                         true,
+                        are_handles_draggable,
                         PickerSpace::Hsv,
                     );
                 });
@@ -1601,6 +1899,14 @@ mod tests {
             offset.s() < -min_length_sv && offset.v().abs() < 1e-6,
             "{offset:?}"
         );
+    }
+
+    #[test]
+    fn handles_are_not_dragged_while_auto_comb_sets_them() {
+        let drawn_handle = MIDDLE_CENTER - Vec2::new(2.0 * CONTROL_POINT_RADIUS, 0.0);
+        let (result, _) = run_frames_with_handles(primary_drag(drawn_handle, -21.0), false);
+        assert!(result.dragged_tangent.is_none());
+        assert!(result.dragged_tangent_offset.is_none());
     }
 
     #[test]

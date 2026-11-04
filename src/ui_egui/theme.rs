@@ -165,6 +165,24 @@ pub fn unbroken_group(ui: &mut Ui, id_salt: &str, add_contents: impl FnOnce(&mut
     }
 }
 
+const OUT_OF_EFFECT_OPACITY: f32 = 0.45;
+
+pub fn setting_checkbox(
+    ui: &mut Ui,
+    checked: &mut bool,
+    text: &str,
+    is_in_effect: bool,
+) -> Response {
+    // Not a child Ui: a wrapping row only wraps an item whose width it knows up front.
+    let opacity = ui.opacity();
+    if !is_in_effect {
+        ui.multiply_opacity(OUT_OF_EFFECT_OPACITY);
+    }
+    let response = ui.checkbox(checked, text);
+    ui.set_opacity(opacity);
+    response
+}
+
 pub fn group_separator(ui: &mut Ui) {
     ui.add(egui::Separator::default().spacing(GROUP_GAP));
 }

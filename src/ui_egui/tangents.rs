@@ -25,6 +25,7 @@ pub fn ui_control_point_tangents(
     is_first: bool,
     is_last: bool,
     is_selected: bool,
+    are_handles_draggable: bool,
     square: Rect,
     parent_response: &egui::Response,
     hit_size: Vec2,
@@ -71,14 +72,16 @@ pub fn ui_control_point_tangents(
 
         let tang_screen =
             with_min_handle_length(cp_screen, handle_screen, tangent_index, 2.0 * point_radius);
-        let response = ui
-            .interact(
-                Rect::from_center_size(tang_screen, hit_size),
-                parent_response.id.with((cp_index, tangent_index)),
-                Sense::drag(),
-            )
-            .on_hover_and_drag_cursor(CursorIcon::Grab)
-            .on_hover_text("Drag: shape the curve");
+        let hit = Rect::from_center_size(tang_screen, hit_size);
+        let id = parent_response.id.with((cp_index, tangent_index));
+        let response = if are_handles_draggable {
+            ui.interact(hit, id, Sense::drag())
+                .on_hover_and_drag_cursor(CursorIcon::Grab)
+                .on_hover_text("Drag: shape the curve")
+        } else {
+            ui.interact(hit, id, Sense::hover())
+                .on_hover_text("Auto comb sets this handle; turn Auto comb off to drag it")
+        };
         if response.dragged_by(Primary) {
             ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
         }
@@ -168,6 +171,7 @@ mod tests {
                     false,
                     false,
                     false,
+                    true,
                     picker_rect,
                     &parent,
                     Vec2::splat(16.0),

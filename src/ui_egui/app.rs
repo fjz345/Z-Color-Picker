@@ -71,15 +71,27 @@ pub struct ZColorPickerOptions {
     pub curvature_comb_scale: f32,
     #[serde(default)]
     pub is_auto_comb: bool,
+    #[serde(default)]
+    pub is_lightness_middle_interpolated: bool,
+    #[serde(default = "default_wants_clip_to_srgb")]
+    pub wants_clip_to_srgb: bool,
 }
 
 fn default_curvature_comb_scale() -> f32 {
     1.0
 }
 
+fn default_wants_clip_to_srgb() -> bool {
+    true
+}
+
 impl ZColorPickerOptions {
-    pub fn is_auto_hue(&self, picker_space: PickerSpace) -> bool {
-        self.is_hue_middle_interpolated && picker_space.is_z_hue()
+    pub fn is_middle_z_interpolated(&self, picker_space: PickerSpace) -> bool {
+        if picker_space.is_z_hue() {
+            self.is_hue_middle_interpolated
+        } else {
+            self.is_lightness_middle_interpolated
+        }
     }
 }
 
@@ -93,6 +105,8 @@ impl Default for ZColorPickerOptions {
             is_show_curvature_comb: true,
             curvature_comb_scale: default_curvature_comb_scale(),
             is_auto_comb: false,
+            is_lightness_middle_interpolated: false,
+            wants_clip_to_srgb: default_wants_clip_to_srgb(),
         }
     }
 }
@@ -143,7 +157,6 @@ impl ZColorPickerAppContext {
                     val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
                 }),
             ],
-            curvature: None,
         }),
         ControlPoint::ControlPointSimple(ControlPointStorage {
             val: ControlPointValue {
@@ -158,7 +171,6 @@ impl ZColorPickerAppContext {
                     val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
                 }),
             ],
-            curvature: None,
         }),
         ControlPoint::ControlPointSimple(ControlPointStorage {
             val: ControlPointValue {
@@ -173,7 +185,6 @@ impl ZColorPickerAppContext {
                     val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
                 }),
             ],
-            curvature: None,
         }),
         ControlPoint::ControlPointSimple(ControlPointStorage {
             val: ControlPointValue {
@@ -188,7 +199,6 @@ impl ZColorPickerAppContext {
                     val: [LAZY_TANGENT_DELTA, 0.0, 0.0],
                 }),
             ],
-            curvature: None,
         }),
     ];
 
@@ -1073,6 +1083,38 @@ mod tests {
 
         assert_eq!(options.curvature_comb_scale, 1.0);
         assert!(!options.is_auto_comb);
+        assert!(!options.is_lightness_middle_interpolated);
+        assert!(options.wants_clip_to_srgb);
+    }
+
+    #[test]
+    fn default_options_want_clip_to_srgb() {
+        assert!(ZColorPickerOptions::default().wants_clip_to_srgb);
+    }
+
+    #[test]
+    fn middle_z_follows_auto_hue_in_hue_spaces_and_auto_lightness_in_oklab() {
+        let oklab = PickerSpace::Oklab {
+            clip_to_srgb: false,
+        };
+        let cases = [
+            (PickerSpace::Hsv, true, false, true),
+            (PickerSpace::Hsv, false, true, false),
+            (oklab, true, false, false),
+            (oklab, false, true, true),
+        ];
+        for (space, auto_hue, auto_lightness, expected) in cases {
+            let options = ZColorPickerOptions {
+                is_hue_middle_interpolated: auto_hue,
+                is_lightness_middle_interpolated: auto_lightness,
+                ..Default::default()
+            };
+            assert_eq!(
+                options.is_middle_z_interpolated(space),
+                expected,
+                "{space:?} auto hue {auto_hue}, auto lightness {auto_lightness}"
+            );
+        }
     }
 
     #[test]

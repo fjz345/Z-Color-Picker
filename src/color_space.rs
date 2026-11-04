@@ -41,6 +41,10 @@ impl PickerSpace {
         !matches!(self, Self::Oklab { .. })
     }
 
+    pub fn has_lightness_axis(self) -> bool {
+        self.is_y_lightness() || !self.is_z_hue()
+    }
+
     pub fn can_leave_srgb(self) -> bool {
         matches!(self, Self::Oklch { .. } | Self::Oklab { .. })
     }

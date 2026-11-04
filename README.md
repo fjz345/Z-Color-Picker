@@ -29,16 +29,16 @@ To create a new preset, click the preset combo box and select `<NEW>`
 
 ## Controls
 
-- Double-click-M1: Add control-point
+- Double-click-M1: Add control-point; on the hue bar with the bar's color there, on the T strip with the gradient's color there
 - Drag-M1: Move a control-point, a Bezier tangent handle, a hue gizmo, or a middle point's T marker
-- Right-click-M2: Remove control-point
+- Right-click-M2: Remove control-point (on the square, its hue bar or T marker, or in the 3D view)
 - Drag-M1 on a middle previewer key color: move its point's T
 - Click the color readout or Ctrl+C: copy the selected point's color in the Copy-as format
 - Click a Hex/sRGB/HSL/Oklab/OkLCh row: copy the selected point's color in that row's Copy-as format (`hsl()`, `oklab()`, ...), with more decimals than the row shows
 - Middle-click: Copy screen color as the selected format, on previewer, copies image to clipboard
-- H/S/V/T fields (H/C/L/T in OkLCh, L/a/b/T in Oklab): drag, or click and type a value; Enter or Tab commits, Esc cancels. S, V and the HSL / OKHSL L are in % of the square; OkLCh and Oklab show absolute values with 3 decimals, typed in the same units: L from 0 to 1, chroma from 0 to the square's 0.33, a and b signed, 0 at gray. H is read-only for middle points under Auto hue, T for the first and last points; with Lock, S and V move every point
+- H/S/V/T fields (H/C/L/T in OkLCh, L/a/b/T in Oklab): drag, or click and type a value; Enter or Tab commits, Esc cancels. S, V and the HSL / OKHSL L are in % of the square; OkLCh and Oklab show absolute values with 3 decimals, typed in the same units: L from 0 to 1, chroma from 0 to the square's 0.33, a and b signed, 0 at gray. H is read-only for middle points under Auto hue, their V or L (Oklab: L) under Auto lightness, T for the first and last points; with Lock, S and V move every point
 - Click the log header (bottom of the window): expand or collapse the log; collapsed, it shows the last line; expanded, drag its top edge to resize it
-- 3D view: Drag-M1 on a point (or, in Bezier mode, on a handle of the selected point) moves it across the view, keeping its T and staying inside sRGB (under Auto hue a middle point keeps its hue and follows as near as it can); Drag-M1 elsewhere orbits; click a point to select it; scroll zooms, double-click away from the points resets the camera to fit the space; hover a point, handle or the curve for its hex color
+- 3D view: Drag-M1 on a point (or, in Bezier mode, on a handle of the selected point, unless Auto comb is on) moves it across the view, keeping its T and staying inside sRGB (under Auto hue a middle point keeps its hue and follows as near as it can; in Oklab that holds for its L under Auto lightness instead); Drag-M1 elsewhere orbits; click a point to select it; scroll zooms, double-click the curve adds a point there, double-click away from the points and the curve resets the camera to fit the space; the Zoom in / Zoom out sliders limit the scroll zoom; hover a point, handle or the curve for its hex color
 - F12: debug window with the control point values
 - Esc: quit (ignored while typing, or while a popup, dialog or the Create Preset window is open)
 
@@ -54,23 +54,26 @@ Groups, left to right: Preset and Copy as; Log at the right end.
 
 Picker (under the selected color's readout):
 - Space: Color space of the square and the hue bar: HSV, HSL, the perceptual OKHSV and OKHSL (built on Oklab), or OkLCh and Oklab themselves, which reach outside sRGB (shown with chroma reduced to fit). Switching converts every point and keeps its color, except middle points under Auto hue: their hues are re-interpolated in the new space; it is saved with the preset
-- Clip (OkLCh and Oklab): Clip to sRGB: colors outside sRGB are left blank on the square and bar, and every point or Bezier handle you move, type in or convert is pulled into sRGB by reducing its chroma; under Lock the group slides along the sRGB edge instead, keeping its shape. Dragging a hue or a handle on the square out of sRGB and back gives the chroma back. Turning it on pulls in every point and handle once. Saved with the space
+- Clip (OkLCh and Oklab, on by default): Clip to sRGB: colors outside sRGB are left blank on the square and bar, and every point or Bezier handle you move, type in or convert is pulled into sRGB by reducing its chroma; under Lock the group slides along the sRGB edge instead, keeping its shape. Dragging a hue or a handle on the square out of sRGB and back gives the chroma back. Turning it on pulls in every point and handle once. Saved with the space. In the other spaces it is faded but still toggles, and the choice applies when you switch to OkLCh or Oklab
+
+A checkbox that has no effect in the current mode (Clip, Show, Auto comb) is faded but keeps its state and still toggles.
 
 Points row (under the square):
 - Lock: Apply any control point coordinate translation to all control points
-- Clamp: Keep control points inside the S/V square and wrap hue into 0..1 (Oklab: clamp lightness into 0..1)
-- Auto hue: Select hue for start/end control points, middle control point's hue is interpolated by T (shown as markers on the hue bar); off in Oklab, which has no hue
+- Clamp: Keep control points inside the S/V square and wrap hue into 0..1 (Oklab: clamp lightness into 0..1). With Clip, also keep them inside sRGB on every pass, so a point that Auto hue or Auto lightness moves out of sRGB is pulled back in (its chroma is lost, not restored when it could fit again)
+- Auto hue: Select hue for start/end control points, middle control point's hue is interpolated by T (shown as markers on the hue bar). In Oklab each middle point turns about gray to the interpolated OkLCh hue, keeping its chroma and L; a gray end takes the other end's hue
+- Auto lightness (Auto luminance in HSV and OKHSV): middle points' Oklab L is interpolated by T between the first and last point's. A middle point keeps its hue and x and moves along y, stopping at the square's edge when its hue and x can't reach that L (Oklab: it keeps a and b, and its L on the bar shows as a marker)
 - Insert left/right: Side of the selected point where a new control point goes (start/end when none is selected)
 
 Curve row (under the Points row):
-- Spline: Linear, Bezier (drag the tangent handles) or Hermite (Catmull-Rom, automatic tangents, not drawn; the end segments follow the parabola through the three end points)
-- Blend: Color space the gradient is interpolated in: Picker (the square's coordinates and hue, default), sRGB, Linear RGB, Oklab, or OkLCh (hue takes the short way around; a gray takes its neighbour's hue). The points keep their colors and the ribbon on the square follows the blended colors; a blended color outside sRGB loses chroma but keeps its lightness and hue; it is saved with the preset. Any blend but Picker turns off the comb and Auto comb
+- Spline: Linear, Bezier (drag the tangent handles) or Hermite (Catmull-Rom, automatic tangents, not drawn; natural ends: the curve has zero curvature at the first and last point)
+- Blend: Color space the gradient is interpolated in: Picker (the square's coordinates and hue, default), sRGB, Linear RGB, Oklab, or OkLCh (hue takes the short way around; a gray takes its neighbour's hue). The points keep their colors and the ribbon on the square follows the blended colors; a blended color outside sRGB loses chroma but keeps its lightness and hue; it is saved with the preset. Any blend but Picker turns off Auto comb; the comb then follows the blended curve as drawn
 - Flip: Reverse the control point order (T is mirrored)
 
 Comb row (under the Curve row):
-- Show: Show the curvature comb (Bezier and Hermite, Picker blend)
+- Show: Show the curvature comb (Bezier and Hermite; in any other blend every spline, measured on the curve as drawn, where corners of the drawn path show as full-length spikes; faded for Linear in the Picker blend)
 - Scale: Length of the comb spikes
-- Auto comb: Solve the handle lengths so the comb is continuous at every point (Bezier only), keeping each point's curvature as close as it can. Moving a point keeps the other curvatures close (the dragged point gives way most); turning a handle turns its partner too; pulling a handle longer or shorter changes its point's curvature. Loading a preset recomputes curvatures its handles no longer match. `N unsolved` counts segments next to a point where no handle lengths inside the square make the comb continuous with the current handle directions, which are left as they were
+- Auto comb (Bezier, Picker blend): Set every handle from the smoothest curve through the points (C2 cubic, spaced by distance between the points, natural ends), so the comb is continuous at every point and the shape depends on the point positions alone: moving a point and back restores it exactly, and T only changes the color timing. Handles are shown but can't be dragged while it's on; turn it off to hand-tune them from where it left them. A handle that would leave the square is shortened along its direction
 
 Previewer:
 - Levels: Number of colors in the quantized gradient

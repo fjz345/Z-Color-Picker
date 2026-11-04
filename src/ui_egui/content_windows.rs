@@ -15,7 +15,7 @@ use crate::ui_egui::app::ZColorPickerOptions;
 use crate::ui_egui::color_picker::format_color_as;
 use crate::ui_egui::control_points::mirror_t;
 use crate::ui_egui::curvature::COMB_SCALE_RANGE;
-use crate::ui_egui::theme::{row_header, section_header, unbroken_group};
+use crate::ui_egui::theme::{row_header, section_header, setting_checkbox, unbroken_group};
 use crate::ui_egui::ui_common::ContentWindow;
 
 pub struct WindowPresetDrawResult {
@@ -60,9 +60,21 @@ impl Default for PresetDrawResult {
     }
 }
 
-pub fn picker_space_combo(ui: &mut Ui, picker_space: &mut PickerSpace) {
+pub fn picker_space_row(
+    ui: &mut Ui,
+    picker_space: &mut PickerSpace,
+    wants_clip_to_srgb: &mut bool,
+) {
+    // A preset brings its own Clip, so the choice follows any space that has one.
+    if picker_space.can_leave_srgb() {
+        *wants_clip_to_srgb = picker_space.clips_to_srgb();
+    }
+    picker_space_combo(ui, picker_space, *wants_clip_to_srgb);
+    clip_to_srgb_checkbox(ui, picker_space, wants_clip_to_srgb);
+}
+
+fn picker_space_combo(ui: &mut Ui, picker_space: &mut PickerSpace, clip_to_srgb: bool) {
     ui.label("Space");
-    let clip_to_srgb = picker_space.clips_to_srgb();
     egui::ComboBox::from_id_salt("picker_space")
         .selected_text(picker_space_label(*picker_space))
         .show_ui(ui, |ui| {
@@ -82,19 +94,29 @@ pub fn picker_space_combo(ui: &mut Ui, picker_space: &mut PickerSpace) {
         );
 }
 
-pub fn clip_to_srgb_checkbox(ui: &mut Ui, picker_space: &mut PickerSpace) {
-    let mut clip_to_srgb = picker_space.clips_to_srgb();
-    ui.add_enabled(
-        picker_space.can_leave_srgb(),
-        egui::Checkbox::new(&mut clip_to_srgb, "Clip"),
-    )
-    .on_hover_text(
+fn clip_to_srgb_checkbox(
+    ui: &mut Ui,
+    picker_space: &mut PickerSpace,
+    wants_clip_to_srgb: &mut bool,
+) {
+    let can_clip = picker_space.can_leave_srgb();
+    setting_checkbox(ui, wants_clip_to_srgb, "Clip", can_clip).on_hover_text(if can_clip {
         "Clip to sRGB: blank the colors outside sRGB, and pull every point and handle you edit \
          into sRGB by reducing its chroma; under Lock the group stops at the edge instead. \
-         Turning it on pulls in every point and handle once",
-    )
-    .on_disabled_hover_text("Only OkLCh and Oklab reach outside sRGB");
-    *picker_space = picker_space.with_clip_to_srgb(clip_to_srgb);
+         Turning it on pulls in every point and handle once"
+    } else {
+        "No effect here: only OkLCh and Oklab reach outside sRGB. \
+         The choice applies when you switch to one of them"
+    });
+    *picker_space = picker_space.with_clip_to_srgb(*wants_clip_to_srgb);
+}
+
+fn auto_lightness_label(picker_space: PickerSpace) -> &'static str {
+    if picker_space.has_lightness_axis() {
+        "Auto lightness"
+    } else {
+        "Auto luminance"
+    }
 }
 
 pub fn points_row(ui: &mut Ui, options: &mut ZColorPickerOptions, picker_space: PickerSpace) {
@@ -104,20 +126,24 @@ pub fn points_row(ui: &mut Ui, options: &mut ZColorPickerOptions, picker_space: 
             .on_hover_text("Move all control points together, also for S/V edits in the inspector");
         ui.checkbox(&mut options.is_window_lock, "Clamp")
             .on_hover_text(
-                "Keep points inside the square and wrap hue into 0..1 (Oklab: clamp L into 0..1)",
+                "Keep points inside the square and wrap hue into 0..1 (Oklab: clamp L into 0..1). \
+                 With Clip, keep them inside sRGB too",
             );
-        let mut auto_hue = options.is_auto_hue(picker_space);
-        let changed = ui
-            .add_enabled(
-                picker_space.is_z_hue(),
-                egui::Checkbox::new(&mut auto_hue, "Auto hue"),
-            )
-            .on_hover_text("Only the first and last hue are editable; middle hues are interpolated")
-            .on_disabled_hover_text("Oklab has no hue: its bar is lightness")
-            .changed();
-        if changed {
-            options.is_hue_middle_interpolated = auto_hue;
-        }
+        ui.checkbox(&mut options.is_hue_middle_interpolated, "Auto hue")
+            .on_hover_text(
+                "Only the first and last hue are editable; middle hues are interpolated by T. \
+                 Oklab: each middle point turns about gray to its OkLCh hue, keeping its \
+                 chroma and L",
+            );
+        ui.checkbox(
+            &mut options.is_lightness_middle_interpolated,
+            auto_lightness_label(picker_space),
+        )
+        .on_hover_text(
+            "Only the first and last points set the lightness: each middle point's Oklab L is \
+             interpolated by T. It keeps its hue and x and moves along y, up to the square's \
+             edge (Oklab: it keeps a and b and moves along the bar)",
+        );
         unbroken_group(ui, "insert", |ui| {
             ui.label("Insert");
             ui.radio_value(&mut options.is_insert_right, false, "left")
@@ -166,7 +192,8 @@ pub fn curve_row(ui: &mut Ui, spline_mode: &mut SplineMode, blend_space: &mut Bl
                 .response
                 .on_hover_text(
                     "Color space the gradient is interpolated in; the points keep their \
-                     colors. Any blend but Picker turns off the comb and Auto comb",
+                     colors. Any blend but Picker turns off Auto comb, and the comb follows \
+                     the blended curve as drawn",
                 );
         });
 
@@ -182,24 +209,26 @@ pub fn comb_row(
     options: &mut ZColorPickerOptions,
     spline_mode: SplineMode,
     blend_space: BlendSpace,
-    auto_comb_unsolved: usize,
 ) {
     let enabled = comb_controls_enabled(spline_mode, blend_space, options.is_show_curvature_comb);
     let is_picker_blend = blend_space == BlendSpace::Picker;
-    let straight_hint = "Linear segments are straight: there is no curvature to show";
-    let comb_off_hint = if is_picker_blend {
-        straight_hint
-    } else {
-        NON_PICKER_BLEND_COMB_HINT
-    };
+    let comb_off_hint = "Linear segments are straight: there is no curvature to show";
     ui.horizontal_wrapped(|ui| {
         row_header(ui, "Comb");
-        ui.add_enabled(
+        setting_checkbox(
+            ui,
+            &mut options.is_show_curvature_comb,
+            "Show",
             enabled.show,
-            egui::Checkbox::new(&mut options.is_show_curvature_comb, "Show"),
         )
-        .on_hover_text("Curvature comb: spikes show how sharply the curve bends")
-        .on_disabled_hover_text(comb_off_hint);
+        .on_hover_text(match (enabled.show, is_picker_blend) {
+            (false, _) => comb_off_hint,
+            (true, true) => "Curvature comb: spikes show how sharply the curve bends",
+            (true, false) => {
+                "Curvature comb of the curve as drawn: spikes show how sharply the blended \
+                 curve bends on the square, sampled along it"
+            }
+        });
         unbroken_group(ui, "scale", |ui| {
             ui.add_enabled_ui(enabled.scale, |ui| {
                 ui.label("Scale");
@@ -218,36 +247,25 @@ pub fn comb_row(
             });
         });
 
-        ui.add_enabled(
-            enabled.auto,
-            egui::Checkbox::new(&mut options.is_auto_comb, "Auto comb"),
-        )
-        .on_hover_text(
-            "Solve the handle lengths so the comb is continuous, keeping each point's \
-             curvature as close as it can. Turn a handle to turn its point; pull it longer \
-             or shorter to change the point's curvature",
-        )
-        .on_disabled_hover_text(if is_picker_blend {
-            "Auto comb only runs in Bezier mode"
-        } else {
-            NON_PICKER_BLEND_COMB_HINT
-        });
-        if enabled.auto && options.is_auto_comb && auto_comb_unsolved > 0 {
-            ui.colored_label(
-                ui.visuals().warn_fg_color,
-                format!("{auto_comb_unsolved} unsolved"),
-            )
-            .on_hover_text(
-                "Segments that keep their handle lengths: no lengths inside the square make \
-                 the comb continuous at their point with the current handle directions; \
-                 turn a handle there",
-            );
-        }
+        setting_checkbox(ui, &mut options.is_auto_comb, "Auto comb", enabled.auto).on_hover_text(
+            if !enabled.auto {
+                if is_picker_blend {
+                    "Auto comb only runs in Bezier mode"
+                } else {
+                    NON_PICKER_BLEND_COMB_HINT
+                }
+            } else {
+                "Set every handle from the smoothest curve through the points (C2, natural \
+                 ends): the comb is continuous at every point and the shape depends on the \
+                 points alone. Handles can't be dragged while it's on; turn it off to \
+                 hand-tune them from there"
+            },
+        );
     });
 }
 
 const NON_PICKER_BLEND_COMB_HINT: &str =
-    "Off while Blend is not Picker: the comb measures the curve on the square, \
+    "Off while Blend is not Picker: Auto comb solves the handles of the curve on the square, \
      and the gradient is blended in another space";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -262,11 +280,12 @@ pub fn comb_controls_enabled(
     blend_space: BlendSpace,
     is_shown: bool,
 ) -> CombControlsEnabled {
-    let is_picker_curve = spline_mode != SplineMode::Linear && blend_space == BlendSpace::Picker;
+    let is_picker_blend = blend_space == BlendSpace::Picker;
+    let can_bend = spline_mode != SplineMode::Linear || !is_picker_blend;
     CombControlsEnabled {
-        show: is_picker_curve,
-        scale: is_picker_curve && is_shown,
-        auto: spline_mode == SplineMode::Bezier && blend_space == BlendSpace::Picker,
+        show: can_bend,
+        scale: can_bend && is_shown,
+        auto: spline_mode == SplineMode::Bezier && is_picker_blend,
     }
 }
 
@@ -290,9 +309,6 @@ pub fn copy_format_combo(ui: &mut Ui, color_copy_format: &mut ColorStringCopy) {
 pub fn flip_control_points(points: &mut [ControlPoint], selected: &mut Option<usize>) {
     for cp in points.iter_mut() {
         cp.flip_tangents();
-        if let Some(k) = cp.curvature_mut() {
-            *k = -*k;
-        }
     }
     points.reverse();
     mirror_t(points);
@@ -480,6 +496,7 @@ fn apply_preset(
 enum PendingSwitchAction {
     SaveAndSwitch,
     Discard,
+    ReplaceTarget,
     Cancel,
 }
 
@@ -500,6 +517,10 @@ fn pending_switch_buttons(
         ],
         (false, _) => &[
             ("Discard", PendingSwitchAction::Discard),
+            (
+                "Replace the selected preset",
+                PendingSwitchAction::ReplaceTarget,
+            ),
             ("Cancel", PendingSwitchAction::Cancel),
         ],
     }
@@ -603,6 +624,21 @@ impl WindowPreset {
                     return None;
                 }
                 true
+            }
+            PendingSwitchAction::ReplaceTarget => {
+                let previous = preset_handler.preset_selected_index.replace(target);
+                self.save_selected(
+                    preset_handler,
+                    control_points,
+                    *spline_mode,
+                    *picker_space,
+                    *blend_space,
+                );
+                if self.save_error.is_some() {
+                    preset_handler.preset_selected_index = previous;
+                    return None;
+                }
+                false
             }
         };
         self.pending_switch = None;
@@ -714,23 +750,25 @@ impl WindowPreset {
                 .show_ui(ui, |ui| {
                     ui.set_min_width(60.0);
 
-                    if preset_handler.presets.is_empty() {
-                        ui.weak(no_presets_text(preset_handler.presets_dir()));
-                    }
-                    let rows = preset_handler
+                    let preset_rows = preset_handler
                         .presets
                         .iter()
                         .enumerate()
-                        .map(|(i, preset)| (PresetComboChoice::Preset(i), preset.name.as_str()))
-                        .chain([
-                            (PresetComboChoice::New, "<NEW>"),
-                            (PresetComboChoice::Clear, "<None>"),
-                        ]);
+                        .map(|(i, preset)| (PresetComboChoice::Preset(i), preset.name.as_str()));
+                    let rows = [
+                        (PresetComboChoice::New, "<NEW>"),
+                        (PresetComboChoice::Clear, "<None>"),
+                    ]
+                    .into_iter()
+                    .chain(preset_rows);
                     for (row, text) in rows {
                         let checked = is_combo_row_checked(row, selected_index);
                         if ui.selectable_label(checked, text).clicked() {
                             choice = Some(row);
                         }
+                    }
+                    if preset_handler.presets.is_empty() {
+                        ui.weak(no_presets_text(preset_handler.presets_dir()));
                     }
                 })
                 .response
@@ -1231,22 +1269,15 @@ mod tests {
             is_insert_right,
             ..Default::default()
         };
-        painted_option_texts(options, SplineMode::Linear, 0)
+        painted_option_texts(options, SplineMode::Linear)
     }
 
     fn painted_option_texts(
         mut options: ZColorPickerOptions,
         spline_mode: SplineMode,
-        auto_comb_unsolved: usize,
     ) -> Vec<String> {
         let ctx = egui::Context::default();
-        let output = draw_options_frame(
-            &ctx,
-            Vec::new(),
-            &mut options,
-            spline_mode,
-            auto_comb_unsolved,
-        );
+        let output = draw_options_frame(&ctx, Vec::new(), &mut options, spline_mode);
         output
             .shapes
             .iter()
@@ -1262,7 +1293,6 @@ mod tests {
         events: Vec<egui::Event>,
         options: &mut ZColorPickerOptions,
         spline_mode: SplineMode,
-        auto_comb_unsolved: usize,
     ) -> egui::FullOutput {
         let input = egui::RawInput {
             events,
@@ -1271,13 +1301,7 @@ mod tests {
         ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 points_row(ui, options, PickerSpace::Hsv);
-                comb_row(
-                    ui,
-                    options,
-                    spline_mode,
-                    BlendSpace::Picker,
-                    auto_comb_unsolved,
-                );
+                comb_row(ui, options, spline_mode, BlendSpace::Picker);
             });
         })
     }
@@ -1298,9 +1322,9 @@ mod tests {
     fn click_comb(spline_mode: SplineMode) -> ZColorPickerOptions {
         let ctx = egui::Context::default();
         let mut options = ZColorPickerOptions::default();
-        let output = draw_options_frame(&ctx, Vec::new(), &mut options, spline_mode, 0);
+        let output = draw_options_frame(&ctx, Vec::new(), &mut options, spline_mode);
         for events in primary_click(painted_text_center(&output, "Show")) {
-            draw_options_frame(&ctx, events, &mut options, spline_mode, 0);
+            draw_options_frame(&ctx, events, &mut options, spline_mode);
         }
         options
     }
@@ -1327,21 +1351,21 @@ mod tests {
     }
 
     #[test]
-    fn comb_controls_are_off_in_a_non_picker_blend() {
-        let off = CombControlsEnabled {
-            show: false,
-            scale: false,
-            auto: false,
-        };
+    fn comb_shows_in_every_mode_of_a_non_picker_blend_without_auto_comb() {
         for blend in BlendSpace::ALL {
             if blend == BlendSpace::Picker {
                 continue;
             }
             for mode in SplineMode::ALL {
                 for is_shown in [true, false] {
+                    let expected = CombControlsEnabled {
+                        show: true,
+                        scale: is_shown,
+                        auto: false,
+                    };
                     assert_eq!(
                         comb_controls_enabled(mode, blend, is_shown),
-                        off,
+                        expected,
                         "{blend:?} {mode:?} show={is_shown}"
                     );
                 }
@@ -1361,16 +1385,84 @@ mod tests {
     }
 
     #[test]
-    fn comb_checkbox_toggles_in_curved_modes_only() {
+    fn comb_checkbox_toggles_in_every_mode() {
         assert!(ZColorPickerOptions::default().is_show_curvature_comb);
-        for (mode, toggles) in [
-            (SplineMode::Bezier, true),
-            (SplineMode::HermiteBezier, true),
-            (SplineMode::Linear, false),
-        ] {
+        for mode in SplineMode::ALL {
             let options = click_comb(mode);
-            assert_eq!(options.is_show_curvature_comb, !toggles, "{mode:?}");
+            assert!(!options.is_show_curvature_comb, "{mode:?}");
         }
+    }
+
+    fn draw_space_row(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        space: &mut PickerSpace,
+        wants_clip_to_srgb: &mut bool,
+    ) -> egui::FullOutput {
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.horizontal(|ui| picker_space_row(ui, space, wants_clip_to_srgb));
+            });
+        })
+    }
+
+    fn click_space_row_text(
+        ctx: &egui::Context,
+        space: &mut PickerSpace,
+        wants_clip_to_srgb: &mut bool,
+        text: &str,
+    ) {
+        let output = draw_space_row(ctx, Vec::new(), space, wants_clip_to_srgb);
+        for events in primary_click(painted_text_center(&output, text)) {
+            draw_space_row(ctx, events, space, wants_clip_to_srgb);
+        }
+    }
+
+    fn choose_space(
+        ctx: &egui::Context,
+        space: &mut PickerSpace,
+        wants_clip_to_srgb: &mut bool,
+        label: &str,
+    ) {
+        let current = picker_space_label(*space);
+        click_space_row_text(ctx, space, wants_clip_to_srgb, current);
+        click_space_row_text(ctx, space, wants_clip_to_srgb, label);
+    }
+
+    #[test]
+    fn clip_choice_is_kept_and_toggleable_through_a_space_without_clip() {
+        let ctx = egui::Context::default();
+        let mut space = PickerSpace::Oklch { clip_to_srgb: true };
+        let mut wants_clip_to_srgb = false;
+
+        draw_space_row(&ctx, Vec::new(), &mut space, &mut wants_clip_to_srgb);
+        assert!(wants_clip_to_srgb, "follows the space's own clip");
+
+        choose_space(&ctx, &mut space, &mut wants_clip_to_srgb, "HSV");
+        assert_eq!(space, PickerSpace::Hsv);
+        assert!(wants_clip_to_srgb);
+
+        click_space_row_text(&ctx, &mut space, &mut wants_clip_to_srgb, "Clip");
+        assert_eq!(space, PickerSpace::Hsv);
+        assert!(!wants_clip_to_srgb);
+
+        choose_space(&ctx, &mut space, &mut wants_clip_to_srgb, "Oklab");
+        assert_eq!(
+            space,
+            PickerSpace::Oklab {
+                clip_to_srgb: false
+            }
+        );
+
+        click_space_row_text(&ctx, &mut space, &mut wants_clip_to_srgb, "Clip");
+        assert_eq!(space, PickerSpace::Oklab { clip_to_srgb: true });
+        choose_space(&ctx, &mut space, &mut wants_clip_to_srgb, "OKHSL");
+        choose_space(&ctx, &mut space, &mut wants_clip_to_srgb, "OkLCh");
+        assert_eq!(space, PickerSpace::Oklch { clip_to_srgb: true });
     }
 
     #[test]
@@ -1383,29 +1475,6 @@ mod tests {
                     "{side:?} not painted with is_insert_right={is_insert_right}: {texts:?}"
                 );
             }
-        }
-    }
-
-    #[test]
-    fn auto_comb_unsolved_count_shows_only_while_auto_comb_runs() {
-        let options = |is_auto_comb| ZColorPickerOptions {
-            is_auto_comb,
-            ..Default::default()
-        };
-        let cases = [
-            (SplineMode::Bezier, true, 2, true),
-            (SplineMode::Bezier, true, 0, false),
-            (SplineMode::Bezier, false, 2, false),
-            (SplineMode::Linear, true, 2, false),
-        ];
-        for (spline_mode, is_auto_comb, unsolved, is_shown) in cases {
-            let texts = painted_option_texts(options(is_auto_comb), spline_mode, unsolved);
-            assert!(texts.iter().any(|text| text == "Auto comb"), "{texts:?}");
-            assert_eq!(
-                texts.iter().any(|text| text == "2 unsolved"),
-                is_shown,
-                "{spline_mode:?} {is_auto_comb} {unsolved}: {texts:?}"
-            );
         }
     }
 
@@ -1519,7 +1588,6 @@ mod tests {
                         Some(ControlPointValue::new(0.05 * (f + 1.0), 0.0, 0.0)),
                         None,
                     ],
-                    curvature: None,
                 })
             })
             .collect()
@@ -2203,11 +2271,82 @@ mod tests {
     }
 
     #[test]
-    fn pending_switch_without_selection_offers_discard_and_cancel() {
+    fn pending_switch_without_selection_offers_discard_replace_and_cancel() {
         assert_eq!(
             button_actions(pending_switch_buttons(false, false)),
-            [PendingSwitchAction::Discard, PendingSwitchAction::Cancel]
+            [
+                PendingSwitchAction::Discard,
+                PendingSwitchAction::ReplaceTarget,
+                PendingSwitchAction::Cancel
+            ]
         );
+    }
+
+    #[test]
+    fn replace_without_selection_saves_the_points_into_the_target_and_selects_it() {
+        let tmp = TempDir::new().unwrap();
+        let (mut window, mut handler, mut points) = unselected_pending_switch_to_b(&tmp);
+        let edited = points.clone();
+        let mut mode = SplineMode::Linear;
+
+        let applied = window.resolve_pending_switch(
+            PendingSwitchAction::ReplaceTarget,
+            &mut handler,
+            &mut points,
+            &mut mode,
+            &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
+        );
+
+        assert!(applied.is_none());
+        assert_eq!(points, edited);
+        assert_eq!(mode, SplineMode::Linear);
+        assert_eq!(handler.preset_selected_index, Some(1));
+        let expected: AppDataCtx = (
+            edited,
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        )
+            .into();
+        let on_disk: AppDataCtx =
+            serde_json::from_str(&std::fs::read_to_string(tmp.path().join("B.json")).unwrap())
+                .unwrap();
+        assert_eq!(on_disk, expected);
+        assert_eq!(handler.presets[1].data, expected);
+        assert_eq!(window.pending_switch, None);
+        assert!(!has_unsaved_changes(
+            &handler,
+            &points,
+            mode,
+            PickerSpace::Hsv,
+            BlendSpace::Picker
+        ));
+    }
+
+    #[test]
+    fn failed_replace_keeps_the_modal_open_and_nothing_selected() {
+        let tmp = TempDir::new().unwrap();
+        let (mut window, mut handler, mut points) = unselected_pending_switch_to_b(&tmp);
+        std::fs::create_dir(tmp.path().join("B.json.tmp")).unwrap();
+        let edited = points.clone();
+        let saved = handler.presets[1].data.clone();
+
+        let applied = window.resolve_pending_switch(
+            PendingSwitchAction::ReplaceTarget,
+            &mut handler,
+            &mut points,
+            &mut SplineMode::Linear,
+            &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
+        );
+
+        assert!(applied.is_none());
+        assert!(window.save_error.is_some());
+        assert_eq!(window.pending_switch, Some(1));
+        assert_eq!(handler.preset_selected_index, None);
+        assert_eq!(handler.presets[1].data, saved);
+        assert_eq!(points, edited);
     }
 
     #[test]

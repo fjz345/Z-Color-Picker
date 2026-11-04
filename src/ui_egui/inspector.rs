@@ -146,12 +146,15 @@ impl FieldUnit {
 
 const EDIT_HINT: &str = "Drag, or click and type: Enter or Tab commits, Esc cancels";
 pub const AUTO_HUE_HINT: &str = "Auto hue: middle hues follow the end points";
+pub const AUTO_LIGHTNESS_HINT: &str = "Auto lightness: middle lightness follows the end points";
+pub const AUTO_LUMINANCE_HINT: &str = "Auto luminance: middle luminance follows the end points";
 pub const PINNED_T_HINT: &str = "The first and last points are pinned to T 0 and 1";
 pub const NO_ROOM_T_HINT: &str = "No room for T between the neighbouring points";
 
 #[derive(Clone, Copy, Debug)]
 pub struct InspectorOptions {
     pub is_hue_middle_interpolated: bool,
+    pub is_lightness_middle_interpolated: bool,
     pub is_curve_locked: bool,
     pub is_window_lock: bool,
     pub picker_space: PickerSpace,
@@ -188,6 +191,20 @@ pub fn inspector_fields(
             f32::NEG_INFINITY..=f32::INFINITY
         }
     };
+    let auto_lightness_reason = (opts.is_lightness_middle_interpolated && is_middle).then_some(
+        if opts.picker_space.has_lightness_axis() {
+            AUTO_LIGHTNESS_HINT
+        } else {
+            AUTO_LUMINANCE_HINT
+        },
+    );
+    let (z_reason, y_reason) = if opts.picker_space.is_z_hue() {
+        let auto_hue_reason =
+            (opts.is_hue_middle_interpolated && is_middle).then_some(AUTO_HUE_HINT);
+        (auto_hue_reason, auto_lightness_reason)
+    } else {
+        (auto_lightness_reason, None)
+    };
     let t_state = match t_drag_bounds(points, index) {
         Some((lo, hi)) => FieldState {
             value: Some(t),
@@ -208,8 +225,7 @@ pub fn inspector_fields(
         FieldState {
             value: Some(h_unit.shown(opts.picker_space.z_on_bar(val[2]))),
             range: h_unit.full_range(),
-            disabled_reason: (opts.is_hue_middle_interpolated && is_middle)
-                .then_some(AUTO_HUE_HINT),
+            disabled_reason: z_reason,
         },
         FieldState {
             value: Some(s_unit.shown(val[0])),
@@ -219,7 +235,7 @@ pub fn inspector_fields(
         FieldState {
             value: Some(v_unit.shown(val[1])),
             range: sv_range(v_unit),
-            disabled_reason: None,
+            disabled_reason: y_reason,
         },
         t_state,
     ]
@@ -353,6 +369,7 @@ mod tests {
 
     const FREE: InspectorOptions = InspectorOptions {
         is_hue_middle_interpolated: false,
+        is_lightness_middle_interpolated: false,
         is_curve_locked: false,
         is_window_lock: false,
         picker_space: PickerSpace::Hsv,
@@ -424,6 +441,50 @@ mod tests {
             assert_eq!(state(&points, end, auto_hue, H).disabled_reason, None);
         }
         assert_eq!(state(&points, 1, FREE, H).disabled_reason, None);
+    }
+
+    #[test]
+    fn lightness_of_middle_points_is_read_only_under_auto_lightness() {
+        let points = three_points();
+        let cases = [
+            (PickerSpace::Hsv, V, AUTO_LUMINANCE_HINT),
+            (PickerSpace::Okhsl, V, AUTO_LIGHTNESS_HINT),
+            (OKLCH, V, AUTO_LIGHTNESS_HINT),
+            (OKLAB, H, AUTO_LIGHTNESS_HINT),
+        ];
+        for (picker_space, lightness_field, hint) in cases {
+            let auto_lightness = InspectorOptions {
+                is_lightness_middle_interpolated: true,
+                picker_space,
+                ..FREE
+            };
+            for field in InspectorField::ALL {
+                let reason = state(&points, 1, auto_lightness, field).disabled_reason;
+                let expected = (field == lightness_field).then_some(hint);
+                assert_eq!(reason, expected, "{picker_space:?} {field:?}");
+                for end in [0, 2] {
+                    let end_state = state(&points, end, auto_lightness, field);
+                    assert_ne!(end_state.disabled_reason, Some(hint), "{picker_space:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn oklab_lightness_and_ab_stay_editable_under_auto_hue() {
+        let points = three_points();
+        let auto_hue = InspectorOptions {
+            is_hue_middle_interpolated: true,
+            picker_space: OKLAB,
+            ..FREE
+        };
+        for field in [H, S, V] {
+            assert_eq!(
+                state(&points, 1, auto_hue, field).disabled_reason,
+                None,
+                "{field:?}"
+            );
+        }
     }
 
     #[test]
@@ -944,6 +1005,7 @@ mod tests {
         };
         let all_on = InspectorOptions {
             is_hue_middle_interpolated: true,
+            is_lightness_middle_interpolated: true,
             is_curve_locked: true,
             is_window_lock: true,
             picker_space: PickerSpace::Okhsl,

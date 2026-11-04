@@ -3,8 +3,10 @@ use std::ops::RangeInclusive;
 use eframe::egui::{self, Color32, Pos2, Shape, Stroke, Ui, Vec2};
 use splines::Spline;
 
+use crate::color_space::{BlendSpace, PickerSpace};
 use crate::common::SplineMode;
 use crate::datatypes::control_point::{ControlPoint, ControlPointValue};
+use crate::ui_egui::blend::Gradient;
 use crate::ui_egui::control_points::{
     bezier_handle, control_point_pos, control_points_to_spline, value_pos,
 };
@@ -61,10 +63,12 @@ impl Cubic {
     }
 }
 
+#[cfg(test)]
 fn curvature(cubic: &Cubic, t: f32) -> Option<f32> {
-    let d1 = cubic.derivative(t);
-    let d2 = cubic.second_derivative(t);
+    curvature_from(cubic.derivative(t), cubic.second_derivative(t))
+}
 
+fn curvature_from(d1: Vec2, d2: Vec2) -> Option<f32> {
     let speed_squared = d1.length_sq();
     if !speed_squared.is_finite() {
         return None;
@@ -84,10 +88,7 @@ fn curvature(cubic: &Cubic, t: f32) -> Option<f32> {
     k.is_finite().then_some(k)
 }
 
-fn curvature_normal(cubic: &Cubic, t: f32) -> Option<Vec2> {
-    let d1 = cubic.derivative(t);
-    let d2 = cubic.second_derivative(t);
-
+fn curvature_normal(d1: Vec2, d2: Vec2) -> Option<Vec2> {
     let speed_squared = d1.length_sq();
     if !speed_squared.is_finite() {
         return None;
@@ -180,39 +181,97 @@ fn curvature_to_comb_length(k: f32, scale: f32) -> f32 {
     scaled_curvature.atan() * (2.0 * MAX_COMB_LENGTH / std::f32::consts::PI) * scale
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CombSample {
+    point: Pos2,
+    derivatives: Option<(Vec2, Vec2)>,
+}
+
+fn is_segment_sample(segment_index: usize, sample_index: usize) -> bool {
+    segment_index == 0 || sample_index > 0
+}
+
+fn cubic_comb_segments(cubics: &[Cubic]) -> Vec<Vec<CombSample>> {
+    (cubics.iter().enumerate())
+        .map(|(segment_index, cubic)| {
+            (0..=SAMPLES_PER_SEGMENT)
+                .filter(|&i| is_segment_sample(segment_index, i))
+                .map(|i| {
+                    let t = i as f32 / SAMPLES_PER_SEGMENT as f32;
+                    CombSample {
+                        point: cubic.eval(t),
+                        derivatives: Some((cubic.derivative(t), cubic.second_derivative(t))),
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+const SAMPLE_STENCIL: usize = 4;
+
+fn sampled_comb_segments(gradient: &Gradient, rect: egui::Rect) -> Vec<Vec<CombSample>> {
+    let step = SAMPLE_STENCIL as f32 / SAMPLES_PER_SEGMENT as f32;
+    (gradient.key_ts().windows(2).enumerate())
+        .map(|(segment_index, span)| {
+            let positions: Vec<Option<Vec2>> = (0..=SAMPLES_PER_SEGMENT)
+                .map(|i| {
+                    let x = egui::lerp(span[0]..=span[1], i as f32 / SAMPLES_PER_SEGMENT as f32);
+                    let value = gradient.picker_value_at(x)?;
+                    Some(normalized_to_screen(rect, value_pos(&value)).to_vec2())
+                })
+                .collect();
+            (0..=SAMPLES_PER_SEGMENT)
+                .filter(|&i| is_segment_sample(segment_index, i))
+                .filter_map(|i| {
+                    let center = i.clamp(SAMPLE_STENCIL, SAMPLES_PER_SEGMENT - SAMPLE_STENCIL);
+                    let stencil = [center - SAMPLE_STENCIL, center, center + SAMPLE_STENCIL]
+                        .map(|j| positions[j]);
+                    let derivatives = match stencil {
+                        [Some(before), Some(at), Some(after)] => Some((
+                            (after - before) / (2.0 * step),
+                            (after - at * 2.0 + before) / (step * step),
+                        )),
+                        _ => None,
+                    };
+                    Some(CombSample {
+                        point: positions[i]?.to_pos2(),
+                        derivatives,
+                    })
+                })
+                .collect()
+        })
+        .collect()
+}
+
 pub fn draw_curvature_comb(
     ui: &mut Ui,
     rect: egui::Rect,
     control_points: &[ControlPoint],
     spline_mode: SplineMode,
+    picker_space: PickerSpace,
+    blend_space: BlendSpace,
     scale: f32,
 ) {
+    if control_points.len() < 2 {
+        return;
+    }
+    let segments = if blend_space == BlendSpace::Picker {
+        cubic_comb_segments(&comb_cubics(control_points, spline_mode, rect))
+    } else {
+        let gradient = Gradient::new(control_points, spline_mode, picker_space, blend_space);
+        sampled_comb_segments(&gradient, rect)
+    };
     let tooth_color = Color32::from_rgba_unmultiplied(255, 255, 255, COMB_ALPHA);
     let outline_color = Color32::from_rgba_unmultiplied(255, 255, 255, COMB_OUTLINE_ALPHA);
-    let cubics = comb_cubics(control_points, spline_mode, rect);
-    let mut shapes = Vec::with_capacity(cubics.len() * (SAMPLES_PER_SEGMENT + 1) * 2);
-    for (segment_index, cubic) in cubics.iter().enumerate() {
+    let mut shapes = Vec::with_capacity(segments.len() * (SAMPLES_PER_SEGMENT + 1) * 2);
+    for samples in &segments {
         let mut outline_points = Vec::with_capacity(SAMPLES_PER_SEGMENT + 1);
 
-        for sample_index in 0..=SAMPLES_PER_SEGMENT {
-            if segment_index > 0 && sample_index == 0 {
-                continue;
-            }
-
-            let t = sample_index as f32 / SAMPLES_PER_SEGMENT as f32;
-            let point = cubic.eval(t);
-            let Some(k) = curvature(cubic, t) else {
-                if outline_points.len() >= 2 {
-                    shapes.push(Shape::line(
-                        outline_points.clone(),
-                        Stroke::new(COMB_OUTLINE_STROKE_WIDTH, outline_color),
-                    ));
-                }
-                outline_points.clear();
-                continue;
-            };
-
-            let Some(normal) = curvature_normal(cubic, t) else {
+        for &CombSample { point, derivatives } in samples {
+            let tooth = derivatives
+                .and_then(|(d1, d2)| Some((curvature_from(d1, d2)?, curvature_normal(d1, d2)?)));
+            let Some((k, normal)) = tooth else {
                 if outline_points.len() >= 2 {
                     shapes.push(Shape::line(
                         outline_points.clone(),
@@ -256,6 +315,7 @@ mod tests {
     use crate::datatypes::control_point::test_support::{
         point_with_tangent, RUNAWAY_POINT, RUNAWAY_TANGENT,
     };
+    use crate::datatypes::control_point::ControlPointStorage;
     use splines::{Interpolation, Key};
 
     const RECT: egui::Rect = egui::Rect {
@@ -379,11 +439,14 @@ mod tests {
         let even = [0.0, 0.25, 0.5, 0.75, 1.0];
         let degrees = [70.0, 130.0, 180.0, 250.0, 290.0];
         let by_angle = degrees.map(|d| (d - degrees[0]) / (degrees[4] - degrees[0]));
+        let semicircle = [0.0, 45.0, 90.0, 135.0, 180.0];
         for points in [
             c_shape(&[60.0, 120.0, 180.0, 240.0, 300.0], &even),
             c_shape(&degrees, &even),
             c_shape(&degrees, &by_angle),
             c_shape(&degrees[..4], &[0.0, 0.3, 0.6, 1.0]),
+            c_shape(&semicircle, &[0.0, 0.1, 0.5, 0.6, 1.0]),
+            c_shape(&semicircle, &[0.0, 0.4, 0.5, 0.9, 1.0]),
         ] {
             let cubics = comb_cubics(&points, SplineMode::HermiteBezier, RECT);
             assert_eq!(cubics.len(), points.len() - 1);
@@ -395,16 +458,130 @@ mod tests {
                 })
                 .collect();
             let sign = curvatures[curvatures.len() / 2].signum();
+            let last = curvatures.len() - 1;
             for (i, k) in curvatures.iter().enumerate() {
                 let segment = i / (SAMPLES_PER_SEGMENT + 1);
-                assert_eq!(
-                    k.signum(),
-                    sign,
-                    "{} points, segment {segment}: {k}",
-                    points.len()
-                );
+                let message = format!("{} points, segment {segment}: {k}", points.len());
+                if i == 0 || i == last {
+                    assert!(k.abs() < 1e-6, "{message}");
+                } else {
+                    assert_eq!(k.signum(), sign, "{message}");
+                }
             }
         }
+    }
+
+    #[test]
+    fn hermite_end_keys_have_zero_second_derivative() {
+        type SvAtT = (&'static [(f32, f32)], &'static [f32]);
+        let shapes: [SvAtT; 3] = [
+            (
+                &[(0.25, 0.33), (0.44, 0.38), (0.8, 0.6), (0.9, 0.8)],
+                &[0.0, 0.33, 0.66, 1.0],
+            ),
+            (&[(0.0, 0.0), (0.7, 0.3), (1.0, 1.0)], &[0.0, 0.2, 1.0]),
+            (
+                &[(0.1, 0.9), (0.3, 0.2), (0.6, 0.7), (0.8, 0.1), (0.95, 0.5)],
+                &[0.0, 0.1, 0.45, 0.6, 1.0],
+            ),
+        ];
+        for (sv, ts) in shapes {
+            let points: Vec<ControlPoint> = points_sv(sv)
+                .into_iter()
+                .zip(ts)
+                .map(|(mut cp, &t)| {
+                    *cp.t_mut() = t;
+                    cp
+                })
+                .collect();
+            let cubics = comb_cubics(&points, SplineMode::HermiteBezier, RECT);
+            let [first, last] = [cubics[0], cubics[cubics.len() - 1]];
+            for (end, second) in [
+                ("first", first.second_derivative(0.0)),
+                ("last", last.second_derivative(1.0)),
+            ] {
+                assert!(second.length() < 1e-2, "{sv:?} {end}: {second:?}");
+            }
+        }
+    }
+
+    fn curvatures_of(segments: &[Vec<CombSample>]) -> Vec<Vec<Option<f32>>> {
+        segments
+            .iter()
+            .map(|samples| {
+                samples
+                    .iter()
+                    .map(|sample| {
+                        sample
+                            .derivatives
+                            .and_then(|(d1, d2)| curvature_from(d1, d2))
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn sampled_comb_matches_the_cubic_comb_when_the_blend_is_affine_to_the_picker() {
+        let oklab = crate::color_space::PickerSpace::Oklab {
+            clip_to_srgb: false,
+        };
+        let points: Vec<ControlPoint> = [
+            ([0.45, 0.55, 0.5], [0.06, 0.04], 0.0),
+            ([0.62, 0.6, 0.6], [0.02, -0.05], 0.3),
+            ([0.55, 0.4, 0.7], [-0.05, -0.02], 0.7),
+            ([0.4, 0.46, 0.55], [-0.03, 0.05], 1.0),
+        ]
+        .into_iter()
+        .map(|(val, [ds, dv], t)| {
+            ControlPoint::ControlPointLeftRightTangent(ControlPointStorage {
+                val: val.into(),
+                t,
+                tangents: [
+                    Some(ControlPointValue::new(-ds, -dv, 0.0)),
+                    Some(ControlPointValue::new(ds, dv, 0.0)),
+                ],
+            })
+        })
+        .collect();
+        for mode in [SplineMode::Bezier, SplineMode::HermiteBezier] {
+            let gradient = Gradient::new(&points, mode, oklab, BlendSpace::Oklab);
+            let sampled = curvatures_of(&sampled_comb_segments(&gradient, RECT));
+            let exact = curvatures_of(&cubic_comb_segments(&comb_cubics(&points, mode, RECT)));
+            assert_eq!(sampled.len(), exact.len(), "{mode:?}");
+            for (segment, (sampled, exact)) in sampled.iter().zip(&exact).enumerate() {
+                assert_eq!(sampled.len(), exact.len(), "{mode:?} segment {segment}");
+                let inner = SAMPLE_STENCIL..sampled.len() - SAMPLE_STENCIL;
+                for (k_sampled, k_exact) in sampled[inner.clone()].iter().zip(&exact[inner]) {
+                    let [k_sampled, k_exact] = [k_sampled.unwrap(), k_exact.unwrap()];
+                    assert!(
+                        (k_sampled - k_exact).abs() <= 0.02 * k_exact.abs() + 1e-4,
+                        "{mode:?} segment {segment}: {k_sampled} vs {k_exact}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn linear_spline_blended_in_oklab_bends_on_the_hsv_square() {
+        let points = vec![
+            ControlPoint::new_simple(ControlPointValue::new(1.0, 1.0, 0.0), 0.0),
+            ControlPoint::new_simple(ControlPointValue::new(0.3, 0.5, 0.6), 1.0),
+        ];
+        let gradient = Gradient::new(
+            &points,
+            SplineMode::Linear,
+            crate::color_space::PickerSpace::Hsv,
+            BlendSpace::Oklab,
+        );
+        let curvatures = curvatures_of(&sampled_comb_segments(&gradient, RECT));
+        let bent = curvatures
+            .iter()
+            .flatten()
+            .flatten()
+            .any(|k| k.abs() > 1e-3);
+        assert!(bent, "{curvatures:?}");
     }
 
     #[test]
