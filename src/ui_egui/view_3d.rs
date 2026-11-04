@@ -767,6 +767,9 @@ const SCREEN_FIT_DIFFERENCE: f32 = 1e-3;
 const SCREEN_FIT_DAMPING: f32 = 1e-3;
 const SCREEN_FIT_FIRST_PATTERN_SIZE: f32 = 1.0 / 16.0;
 const SCREEN_FIT_LAST_PATTERN_SIZE: f32 = 1.0 / 4096.0;
+const SCREEN_FIT_ACCEPTED_PIXELS: f32 = 0.5;
+const SCREEN_FIT_SEED_STEPS: usize = 8;
+const SCREEN_FIT_SEEDS_SEARCHED: usize = 8;
 const SCREEN_FIT_PATTERN: [[f32; 2]; 8] = [
     [1.0, 0.0],
     [-1.0, 0.0],
@@ -823,22 +826,19 @@ fn first_nearer(
 
 // The pattern gets past what stalls Gauss-Newton: kinks (HSL at l = 0.5), the square's edges
 // and the flat run of chroma that gamut mapping puts on the sRGB edge.
-fn square_xy_nearest_on_screen(
+fn locally_nearest_on_screen(
     start: [f32; 2],
     target: Pos2,
-    screen_of: impl Fn([f32; 2]) -> Option<Pos2>,
-) -> [f32; 2] {
+    screen_of: &impl Fn([f32; 2]) -> Option<Pos2>,
+) -> Option<([f32; 2], f32)> {
     let mut xy = start.map(|c| c.clamp(0.0, 1.0));
-    let Some(screen) = screen_of(xy) else {
-        return start;
-    };
-    let mut best = screen.distance_sq(target);
+    let mut best = screen_of(xy)?.distance_sq(target);
     let mut pattern_size = SCREEN_FIT_FIRST_PATTERN_SIZE;
     for _ in 0..SCREEN_FIT_MOVES {
         if best <= SCREEN_FIT_PIXELS * SCREEN_FIT_PIXELS {
             break;
         }
-        let gauss_newton = gauss_newton_step(xy, target, &screen_of)
+        let gauss_newton = gauss_newton_step(xy, target, screen_of)
             .into_iter()
             .flat_map(move |step| {
                 (0..SCREEN_FIT_HALVINGS).map(move |halving| {
@@ -848,13 +848,56 @@ fn square_xy_nearest_on_screen(
             });
         let pattern = SCREEN_FIT_PATTERN
             .map(|[dx, dy]| [xy[0] + pattern_size * dx, xy[1] + pattern_size * dy]);
-        match first_nearer(target, best, gauss_newton.chain(pattern), &screen_of) {
+        match first_nearer(target, best, gauss_newton.chain(pattern), screen_of) {
             Some(nearer) => (xy, best) = nearer,
             None if pattern_size > SCREEN_FIT_LAST_PATTERN_SIZE => pattern_size *= 0.5,
             None => break,
         }
     }
-    xy
+    Some((xy, best))
+}
+
+fn grid_nearest_first_on_screen(
+    target: Pos2,
+    screen_of: &impl Fn([f32; 2]) -> Option<Pos2>,
+) -> Vec<[f32; 2]> {
+    let steps = SCREEN_FIT_SEED_STEPS;
+    let mut seeds: Vec<(f32, [f32; 2])> = (0..=steps)
+        .flat_map(|i| (0..=steps).map(move |j| [i, j].map(|k| k as f32 / steps as f32)))
+        .filter_map(|xy| Some((screen_of(xy)?.distance_sq(target), xy)))
+        .collect();
+    seeds.sort_by(|a, b| a.0.total_cmp(&b.0));
+    seeds.into_iter().map(|(_, xy)| xy).collect()
+}
+
+// From the start alone the search can stall in a local minimum, often tens of pixels off.
+fn square_xy_nearest_on_screen(
+    start: [f32; 2],
+    target: Pos2,
+    screen_of: impl Fn([f32; 2]) -> Option<Pos2>,
+) -> [f32; 2] {
+    let is_on_target = |(_, distance_sq): ([f32; 2], f32)| {
+        distance_sq <= SCREEN_FIT_ACCEPTED_PIXELS * SCREEN_FIT_ACCEPTED_PIXELS
+    };
+    let Some(mut nearest) = locally_nearest_on_screen(start, target, &screen_of) else {
+        return start;
+    };
+    if is_on_target(nearest) {
+        return nearest.0;
+    }
+    let seeds = grid_nearest_first_on_screen(target, &screen_of);
+    for seed in seeds.into_iter().take(SCREEN_FIT_SEEDS_SEARCHED) {
+        let Some(found) = locally_nearest_on_screen(seed, target, &screen_of) else {
+            continue;
+        };
+        if found.1 < nearest.1 {
+            nearest = found;
+        }
+        if is_on_target(nearest) {
+            break;
+        }
+    }
+    nearest.0
 }
 
 // Outside sRGB it moves by the shown color's offset, like picker_value_after_drag;
@@ -2471,6 +2514,44 @@ mod tests {
                     moved_miss < snapped_miss,
                     "{label}: {moved_miss} >= {snapped_miss}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn auto_hue_drag_from_any_start_lands_on_a_spot_its_hue_covers() {
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0));
+        let mut seed: u64 = 12345;
+        let mut next = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 40) as f32 / (1u64 << 24) as f32
+        };
+        let above_noisy_near_black = |y: f32| 0.1 + 0.9 * y;
+        let hue_spaces = PickerSpace::ALL
+            .into_iter()
+            .filter(|space| space.is_z_hue());
+        for picker_space in hue_spaces {
+            for space in View3dSpace::ALL {
+                let camera = OrbitCamera::fitted(space);
+                let screen_of = |value: ControlPointValue| {
+                    let linear = value.linear(picker_space);
+                    Some(camera.project(space.position(linear), rect)?.pos)
+                };
+                for _ in 0..40 {
+                    let z = next();
+                    let start = ControlPointValue::new(next(), next(), z);
+                    let start = start.clipped_to_srgb(picker_space);
+                    let covered = ControlPointValue::new(next(), above_noisy_near_black(next()), z);
+                    let target = screen_of(covered).unwrap();
+                    let moved = auto_hue_drag_value(start, target, picker_space, screen_of);
+                    let miss = screen_of(moved).unwrap().distance(target);
+                    assert!(
+                        miss < 0.5,
+                        "{picker_space:?} in {space:?} from {start:?} to {covered:?}: {miss}"
+                    );
+                }
             }
         }
     }
