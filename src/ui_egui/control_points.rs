@@ -305,7 +305,11 @@ pub fn insert_point(points: &mut Vec<ControlPoint>, index: usize, mut cp: Contro
 
 fn keep_min_t_gap(points: &mut [ControlPoint]) {
     let count = points.len();
-    if count < 3 || points.windows(2).all(|pair| pair[1].t() - pair[0].t() >= MIN_T_GAP) {
+    if count < 3
+        || points
+            .windows(2)
+            .all(|pair| pair[1].t() - pair[0].t() >= MIN_T_GAP)
+    {
         return;
     }
     if (count - 1) as f32 * MIN_T_GAP > 1.0 {

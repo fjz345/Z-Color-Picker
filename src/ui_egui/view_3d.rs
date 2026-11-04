@@ -1120,7 +1120,9 @@ pub struct CurveSettings {
 impl View3d {
     fn camera(&mut self) -> OrbitCamera {
         let space = self.space;
-        *self.camera.get_or_insert_with(|| OrbitCamera::fitted(space))
+        *self
+            .camera
+            .get_or_insert_with(|| OrbitCamera::fitted(space))
     }
 
     fn set_space(&mut self, space: View3dSpace) {
@@ -1841,7 +1843,12 @@ mod tests {
     fn screen_pos(pane: &View3dPane, rect: Rect, value: ControlPointValue) -> Pos2 {
         let linear = value.linear(pane.ctx.borrow().picker_space);
         let position = pane.view.space.position(linear);
-        pane.view.camera.unwrap().project(position, rect).unwrap().pos
+        pane.view
+            .camera
+            .unwrap()
+            .project(position, rect)
+            .unwrap()
+            .pos
     }
 
     fn primary(pos: Pos2, pressed: bool) -> egui::Event {
@@ -1929,7 +1936,10 @@ mod tests {
         for pressed in [true, false, true, false] {
             pane_frame(&egui_ctx, &mut pane, vec![primary(end, pressed)]);
         }
-        assert_eq!(pane.view.camera, Some(OrbitCamera::fitted(View3dSpace::Srgb)));
+        assert_eq!(
+            pane.view.camera,
+            Some(OrbitCamera::fitted(View3dSpace::Srgb))
+        );
         assert_eq!(ctx.borrow().control_points, points);
         assert_eq!(ctx.borrow().spline_mode, SplineMode::Bezier);
     }
@@ -2009,7 +2019,10 @@ mod tests {
         assert_eq!(color_picker.last_modifying_point_index, Some(0));
         assert_eq!(color_picker.dragging_index, Some(0));
         assert_eq!(color_picker.dragging_tangent, None);
-        assert_eq!(pane.view.camera, Some(OrbitCamera::fitted(View3dSpace::Srgb)));
+        assert_eq!(
+            pane.view.camera,
+            Some(OrbitCamera::fitted(View3dSpace::Srgb))
+        );
     }
 
     #[test]
@@ -2334,7 +2347,11 @@ mod tests {
             .map(|(s, v, t)| point_with_tangents([s, v, 0.3], t))
             .to_vec();
         let mut pane = pane_with(&points, SplineMode::Bezier, Some(1));
-        let rect = view_rect(&pane_frame(&egui::Context::default(), &mut pane, Vec::new()));
+        let rect = view_rect(&pane_frame(
+            &egui::Context::default(),
+            &mut pane,
+            Vec::new(),
+        ));
         let orbited = pane.view.camera.unwrap().orbited(Vec2::new(40.0, -25.0));
         pane.view.camera = Some(orbited);
         let point = screen_pos(&pane, rect, *points[1].val());
@@ -2422,7 +2439,9 @@ mod tests {
         ]
         .map(|(s, v, h, t)| ControlPoint::new_simple(ControlPointValue::new(s, v, h), t))
         .to_vec();
-        let hue_spaces = PickerSpace::ALL.into_iter().filter(|space| space.is_z_hue());
+        let hue_spaces = PickerSpace::ALL
+            .into_iter()
+            .filter(|space| space.is_z_hue());
         for picker_space in hue_spaces {
             for space in View3dSpace::ALL {
                 let mut pane = pane_with(&points, SplineMode::Linear, None);

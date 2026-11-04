@@ -2827,7 +2827,11 @@ mod tests {
             };
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    anchor = anchor.or(selected_color_readout(ui, color, ColorStringCopy::HexNoAlpha));
+                    anchor = anchor.or(selected_color_readout(
+                        ui,
+                        color,
+                        ColorStringCopy::HexNoAlpha,
+                    ));
                 });
             });
         }

@@ -952,7 +952,10 @@ mod tests {
         for name in ["b", "C", "a"] {
             create(&mut handler, name, SplineMode::Linear).unwrap();
         }
-        assert_eq!(names(&handler), names_of(&load_presets(&handler.presets_dir)));
+        assert_eq!(
+            names(&handler),
+            names_of(&load_presets(&handler.presets_dir))
+        );
         assert_eq!(names(&handler), ["a", "b", "C"]);
         assert_eq!(handler.preset_selected_index, Some(0));
     }
@@ -965,7 +968,10 @@ mod tests {
         }
         handler.preset_selected_index = Some(0);
         handler.rename_preset(0, "D").unwrap();
-        assert_eq!(names(&handler), names_of(&load_presets(&handler.presets_dir)));
+        assert_eq!(
+            names(&handler),
+            names_of(&load_presets(&handler.presets_dir))
+        );
         assert_eq!(names(&handler), ["B", "C", "D"]);
         assert_eq!(handler.preset_selected_index, Some(2));
     }

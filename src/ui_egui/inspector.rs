@@ -993,7 +993,12 @@ mod tests {
         let mut points = three_points();
 
         type_into(&ctx, &mut points, Some(1), S, "inf");
-        inspector_frame(&ctx, &mut points, Some(1), vec![key_press(egui::Key::Enter)]);
+        inspector_frame(
+            &ctx,
+            &mut points,
+            Some(1),
+            vec![key_press(egui::Key::Enter)],
+        );
         inspector_frame(&ctx, &mut points, Some(1), Vec::new());
 
         assert_eq!(points, three_points());
