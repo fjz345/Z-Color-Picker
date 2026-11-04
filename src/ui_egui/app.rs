@@ -1,5 +1,5 @@
 use arboard::ImageData;
-use eframe::egui::{self, containers::panel::PanelState, Layout, PointerButton, Rect, Ui};
+use eframe::egui::{self, Layout, PointerButton, Rect, Ui};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -230,6 +230,8 @@ pub struct ZApp {
     tree: egui_tiles::Tree<Pane>,
     #[serde(default)]
     is_log_expanded: bool,
+    #[serde(default = "default_log_drawer_height")]
+    log_drawer_height: f32,
     #[serde(default)]
     layout_version: u32,
     #[serde(skip)]
@@ -244,6 +246,10 @@ const UI_SCALE_REFERENCE_HEIGHT: f32 = 1080.0;
 const LOG_DRAWER_DEFAULT_HEIGHT: f32 = 200.0;
 const LOG_DRAWER_MIN_HEIGHT: f32 = 80.0;
 
+fn default_log_drawer_height() -> f32 {
+    LOG_DRAWER_DEFAULT_HEIGHT
+}
+
 fn usable_monitor_size(monitor_size_px: Option<Vec2>) -> Option<Vec2> {
     monitor_size_px.filter(|size| size.is_finite() && size.min_elem() > 0.0)
 }
@@ -251,6 +257,18 @@ fn usable_monitor_size(monitor_size_px: Option<Vec2>) -> Option<Vec2> {
 fn ui_scale(monitor_size_px: Option<Vec2>) -> f32 {
     let size = usable_monitor_size(monitor_size_px).unwrap_or(HARDCODED_MONITOR_SIZE);
     size.min_elem() / UI_SCALE_REFERENCE_HEIGHT
+}
+
+fn ui_scale_log_line(scale: f32, monitor_size_px: Option<Vec2>, native_ppp: Option<f32>) -> String {
+    let monitor = match usable_monitor_size(monitor_size_px) {
+        Some(size) => format!("monitor {:.0}x{:.0} px", size.x, size.y),
+        None => format!(
+            "monitor size {monitor_size_px:?} unusable, fallback {}x{} px",
+            HARDCODED_MONITOR_SIZE.x, HARDCODED_MONITOR_SIZE.y
+        ),
+    };
+    let native = native_ppp.map_or_else(|| "unknown".to_owned(), |ppp| format!("{ppp:.2}"));
+    format!("UI scale {scale:.2} from {monitor} (native pixels_per_point {native})")
 }
 
 impl ZApp {
@@ -268,6 +286,7 @@ impl ZApp {
             tree: Self::create_tree(app_ctx.clone()),
             app_ctx: app_ctx,
             is_log_expanded: false,
+            log_drawer_height: LOG_DRAWER_DEFAULT_HEIGHT,
             layout_version: LAYOUT_VERSION,
             log_buffer: log_buffer,
             had_keyboard_focus: false,
@@ -329,20 +348,11 @@ impl ZApp {
                 .monitor_size
                 .map(|size| size * i.pixels_per_point)
         });
-        ctx.set_pixels_per_point(ui_scale(monitor_size_px));
-        let monitor = match usable_monitor_size(monitor_size_px) {
-            Some(size) => format!("monitor {:.0}x{:.0} px", size.x, size.y),
-            None => format!(
-                "monitor size {monitor_size_px:?} unusable, fallback {}x{} px",
-                HARDCODED_MONITOR_SIZE.x, HARDCODED_MONITOR_SIZE.y
-            ),
-        };
-        let native = ctx
-            .native_pixels_per_point()
-            .map_or_else(|| "unknown".to_owned(), |ppp| format!("{ppp:.2}"));
+        let scale = ui_scale(monitor_size_px);
+        ctx.set_pixels_per_point(scale);
         log::info!(
-            "UI scale {:.2} from {monitor} (native pixels_per_point {native})",
-            ctx.pixels_per_point()
+            "{}",
+            ui_scale_log_line(scale, monitor_size_px, ctx.native_pixels_per_point())
         );
 
         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
@@ -518,18 +528,27 @@ impl ZApp {
 
     fn draw_log_drawer(&mut self, ctx: &egui::Context) {
         let is_expanded = self.is_log_expanded;
-        let expanded_id = egui::Id::new("log_drawer");
+        let grab_id = egui::Id::new("log_drawer_grab");
         let picker_min_height = picker_tile_min_size(&self.app_ctx.borrow()).y;
         let max_height = log_drawer_max_height(ctx, picker_min_height);
-        let height_limit = max_height.min(ctx.available_rect().height());
-        let dragged_height = PanelState::load(ctx, expanded_id)
-            .map_or(LOG_DRAWER_DEFAULT_HEIGHT, |state| state.rect.height());
+        // Read before the panel is laid out, so the drag has no frame of lag.
+        let dragged_to = ctx
+            .read_response(grab_id)
+            .filter(|grab| is_expanded && grab.dragged())
+            .and_then(|grab| grab.interact_pointer_pos());
+        if let Some(pointer) = dragged_to {
+            self.log_drawer_height = (ctx.available_rect().bottom() - pointer.y)
+                .min(max_height)
+                .max(LOG_DRAWER_MIN_HEIGHT);
+        }
         let panel = if is_expanded {
-            egui::TopBottomPanel::bottom(expanded_id)
-                .resizable(true)
-                .default_height(LOG_DRAWER_DEFAULT_HEIGHT)
-                .min_height(LOG_DRAWER_MIN_HEIGHT)
-                .max_height(max_height)
+            let height = self
+                .log_drawer_height
+                .max(LOG_DRAWER_MIN_HEIGHT)
+                .min(max_height);
+            egui::TopBottomPanel::bottom("log_drawer")
+                .resizable(false)
+                .exact_height(height)
         } else {
             egui::TopBottomPanel::bottom("log_drawer_collapsed")
         };
@@ -541,12 +560,8 @@ impl ZApp {
                 ui_log_window(ui, self.log_buffer.clone());
             }
         });
-        let shown = shown.response.rect;
-        let is_capped = shown.height() >= height_limit - 0.5;
-        if is_expanded && is_capped && dragged_height > shown.height() {
-            // The panel stores the height it shows; the cap is the window's, so a taller one gives the drag back.
-            let rect = shown.with_min_y(shown.bottom() - dragged_height);
-            ctx.data_mut(|data| data.insert_persisted(expanded_id, PanelState { rect }));
+        if is_expanded {
+            log_drawer_grab(ctx, grab_id, shown.response.rect);
         }
     }
 
@@ -758,6 +773,25 @@ fn log_drawer_max_height(ctx: &egui::Context, tile_area_min_height: f32) -> f32 
     let header_only =
         ctx.style().spacing.interact_size.y + theme::drawer_frame().total_margin().sum().y;
     (ctx.available_rect().height() - tile_area_margin - tile_area_min_height).max(header_only)
+}
+
+fn log_drawer_grab(ctx: &egui::Context, grab_id: egui::Id, drawer: Rect) {
+    let edge = Rect::from_x_y_ranges(drawer.x_range(), drawer.top()..=drawer.top());
+    let radius = ctx.style().interaction.resize_grab_radius_side;
+    let rect = edge.expand2(Vec2::new(0.0, radius));
+    let ui = Ui::new(
+        ctx.clone(),
+        grab_id.with("ui"),
+        egui::UiBuilder::new().max_rect(rect),
+    );
+    let grab = ui
+        .interact(rect, grab_id, egui::Sense::drag())
+        .on_hover_and_drag_cursor(egui::CursorIcon::ResizeVertical);
+    if grab.hovered() || grab.dragged() {
+        let stroke = ui.style().interact(&grab).fg_stroke;
+        ui.painter()
+            .hline(drawer.x_range(), drawer.top() + 0.5 * stroke.width, stroke);
+    }
 }
 
 struct ShareFloor {
@@ -1138,6 +1172,7 @@ mod tests {
             tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
             is_log_expanded: false,
+            log_drawer_height: LOG_DRAWER_DEFAULT_HEIGHT,
             layout_version: LAYOUT_VERSION,
             log_buffer,
             had_keyboard_focus: false,
@@ -1573,23 +1608,72 @@ mod tests {
     }
 
     #[test]
-    fn a_taller_window_gives_the_drawer_its_dragged_height_back() {
+    fn a_short_window_caps_the_drawer_without_lowering_its_stored_height() {
         let ctx = egui::Context::default();
         let mut app = expanded_app_laid_out(&ctx);
-        let dragged_top = DEFAULT_SCREEN.bottom() - 300.0;
-        drag_drawer_top(&mut app, &ctx, DEFAULT_SCREEN, dragged_top);
+        app.log_drawer_height = 300.0;
         laid_out_picker_tile(&mut app, &ctx, DEFAULT_SCREEN);
-        let dragged = drawer_height(&app, &ctx, DEFAULT_SCREEN);
+        let tall = drawer_height(&app, &ctx, DEFAULT_SCREEN);
 
         let short = screen_of_height(760.0);
         laid_out_picker_tile(&mut app, &ctx, short);
         let capped = drawer_height(&app, &ctx, short);
+        let stored_while_capped = app.log_drawer_height;
         laid_out_picker_tile(&mut app, &ctx, DEFAULT_SCREEN);
 
-        assert!((dragged - 300.0).abs() < 1.0, "{dragged}");
-        assert!(capped < dragged - 10.0, "{capped} vs {dragged}");
+        assert!((tall - 300.0).abs() < 1.0, "{tall}");
+        assert!(capped < tall - 10.0, "{capped} vs {tall}");
+        assert_eq!(stored_while_capped, 300.0);
         let restored = drawer_height(&app, &ctx, DEFAULT_SCREEN);
-        assert!((restored - dragged).abs() < 0.5, "{restored} vs {dragged}");
+        assert!((restored - tall).abs() < 0.5, "{restored} vs {tall}");
+        assert_eq!(round_trip(&app).log_drawer_height, 300.0);
+    }
+
+    #[test]
+    fn dragging_the_drawer_top_sets_its_stored_height_within_the_cap() {
+        let ctx = egui::Context::default();
+        let mut app = expanded_app_laid_out(&ctx);
+        let top = DEFAULT_SCREEN.bottom() - drawer_height(&app, &ctx, DEFAULT_SCREEN);
+        let hover = vec![egui::Event::PointerMoved(Pos2::new(100.0, top))];
+        let output = draw_on_screen(&mut app, &ctx, DEFAULT_SCREEN, hover);
+        assert_eq!(
+            output.platform_output.cursor_icon,
+            egui::CursorIcon::ResizeVertical
+        );
+
+        let dragged_top = DEFAULT_SCREEN.bottom() - 300.0;
+        drag_drawer_top(&mut app, &ctx, DEFAULT_SCREEN, dragged_top);
+        assert!(
+            (app.log_drawer_height - 300.0).abs() < 1.0,
+            "{}",
+            app.log_drawer_height
+        );
+
+        drag_drawer_top(&mut app, &ctx, DEFAULT_SCREEN, DEFAULT_SCREEN.bottom());
+        assert_eq!(app.log_drawer_height, LOG_DRAWER_MIN_HEIGHT);
+
+        drag_drawer_top(&mut app, &ctx, DEFAULT_SCREEN, 0.0);
+        laid_out_picker_tile(&mut app, &ctx, DEFAULT_SCREEN);
+        let capped = drawer_height(&app, &ctx, DEFAULT_SCREEN);
+        assert!(
+            (app.log_drawer_height - capped).abs() < 1.0,
+            "{} vs {capped}",
+            app.log_drawer_height
+        );
+    }
+
+    #[test]
+    fn zapp_json_without_a_drawer_height_uses_the_default() {
+        let mut json = serde_json::to_value(test_app()).unwrap();
+        assert!(json
+            .as_object_mut()
+            .unwrap()
+            .remove("log_drawer_height")
+            .is_some());
+
+        let restored: ZApp = serde_json::from_value(json).unwrap();
+
+        assert_eq!(restored.log_drawer_height, LOG_DRAWER_DEFAULT_HEIGHT);
     }
 
     #[test]
@@ -1717,6 +1801,19 @@ mod tests {
     }
 
     #[test]
+    fn ui_scale_log_line_names_the_scale_being_set() {
+        assert_eq!(
+            ui_scale_log_line(2.0, Some(Vec2::new(3840.0, 2160.0)), Some(1.5)),
+            "UI scale 2.00 from monitor 3840x2160 px (native pixels_per_point 1.50)"
+        );
+        assert_eq!(
+            ui_scale_log_line(ui_scale(None), None, None),
+            "UI scale 1.33 from monitor size None unusable, fallback 2560x1440 px \
+             (native pixels_per_point unknown)"
+        );
+    }
+
+    #[test]
     fn zapp_json_with_removed_scale_fields_still_loads() {
         let log_buffer = Arc::new(Mutex::new(Vec::new()));
         let app_ctx = Rc::new(RefCell::new(<ZColorPickerAppContext as Default>::default()));
@@ -1725,6 +1822,7 @@ mod tests {
             tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
             is_log_expanded: false,
+            log_drawer_height: LOG_DRAWER_DEFAULT_HEIGHT,
             layout_version: LAYOUT_VERSION,
             log_buffer,
             had_keyboard_focus: false,
@@ -1775,6 +1873,7 @@ mod tests {
             tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
             is_log_expanded: false,
+            log_drawer_height: LOG_DRAWER_DEFAULT_HEIGHT,
             layout_version: LAYOUT_VERSION,
             log_buffer,
             had_keyboard_focus: false,
@@ -1847,6 +1946,7 @@ mod tests {
             tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
             is_log_expanded: false,
+            log_drawer_height: LOG_DRAWER_DEFAULT_HEIGHT,
             layout_version: LAYOUT_VERSION,
             log_buffer: Arc::new(Mutex::new(Vec::new())),
             had_keyboard_focus: false,
@@ -1885,6 +1985,7 @@ mod tests {
             tree: ZApp::create_tree(app_ctx.clone()),
             app_ctx,
             is_log_expanded: false,
+            log_drawer_height: LOG_DRAWER_DEFAULT_HEIGHT,
             layout_version: LAYOUT_VERSION,
             log_buffer,
             had_keyboard_focus: false,
