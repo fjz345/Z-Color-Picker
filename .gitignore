@@ -18,3 +18,13 @@ Cargo.lock
 
 /target
 /presets
+/presets - Copy/
+
+# Claude Code: local settings, worktrees, project instructions and verification tests
+.claude/
+CLAUDE.md
+**/claude_*
+
+unreal/**/Binaries/
+unreal/**/Intermediate/
+unreal/packaged/
