@@ -7,15 +7,19 @@ use crate::{
     color_space::{BlendSpace, PickerSpace},
     common::{ColorStringCopy, SplineMode},
     datatypes::control_point::ControlPoint,
+    export::export_name,
     preset::PresetHandler,
     ui_egui::{
-        app::ZColorPickerAppContext,
+        app::{AppDataCtx, ZColorPickerAppContext},
+        clipboard::unreal_gradient_payload,
         color_picker::{is_auto_comb_running, ZColorPickerWrapper},
-        content_windows::copy_format_combo,
+        content_windows::{copy_format_combo, export_row, ExportRowClick},
         theme,
         view_3d::{CurveSettings, View3d, View3dItem},
     },
 };
+#[cfg(feature = "unreal-live")]
+use crate::ui_egui::content_windows::unreal_live_row;
 pub struct TileUi;
 
 impl egui_tiles::Behavior<Pane> for TileUi {
@@ -292,6 +296,9 @@ pub fn preset_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egu
             blend_space,
         );
     }
+    if let Some(saved) = presets_window.saved_preset.take() {
+        mut_ctx.export.export_saved_preset(&saved);
+    }
 
     mut_ctx.presets_window = presets_window;
     mut_ctx.control_points = control_points;
@@ -305,6 +312,50 @@ pub fn copy_format_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mu
     let mut color_copy_format = app_ctx.borrow().color_copy_format;
     copy_format_combo(ui, &mut color_copy_format);
     app_ctx.borrow_mut().color_copy_format = color_copy_format;
+}
+
+pub fn export_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egui::Ui) {
+    let mut settings = app_ctx.borrow().export.clone();
+    let click = export_row(ui, &mut settings);
+    let mut mut_ctx = app_ctx.borrow_mut();
+    if let Some(click) = click {
+        let ctx = &*mut_ctx;
+        let data: AppDataCtx = (
+            ctx.control_points.clone(),
+            ctx.spline_mode,
+            ctx.picker_space,
+            ctx.blend_space,
+        )
+            .into();
+        match click {
+            ExportRowClick::Export => {
+                let selected_name = ctx
+                    .preset_handler
+                    .preset_selected_index
+                    .and_then(|i| ctx.preset_handler.presets.get(i))
+                    .map(|preset| preset.name.as_str());
+                settings.export(export_name(selected_name), &data);
+            }
+            ExportRowClick::CopyUnrealArray(anchor) => {
+                mut_ctx.copy_to_clipboard(unreal_gradient_payload(&data), anchor);
+            }
+        }
+    }
+    mut_ctx.export = settings;
+}
+
+#[cfg(feature = "unreal-live")]
+pub fn unreal_live_bar_ui(app_ctx: &Rc<RefCell<ZColorPickerAppContext>>, ui: &mut egui::Ui) {
+    let (mut settings, status, asset_path) = {
+        let ctx = app_ctx.borrow();
+        (
+            ctx.unreal_live.clone(),
+            ctx.unreal_live_link.status(),
+            ctx.unreal_asset_path(),
+        )
+    };
+    unreal_live_row(ui, &mut settings, &status, &asset_path);
+    app_ctx.borrow_mut().unreal_live = settings;
 }
 
 fn normalize_applied_preset(

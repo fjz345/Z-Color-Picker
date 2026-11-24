@@ -9,6 +9,7 @@ use crate::common::SplineMode;
 use crate::datatypes::control_point::ControlPoint;
 use crate::egui::PointerButton;
 use crate::egui::Ui;
+use crate::export::{ExportSettings, CURVE_KEY_COUNT, DEFAULT_EXPORT_NAME};
 use crate::preset::PresetEntity;
 use crate::preset::PresetHandler;
 use crate::ui_egui::app::ZColorPickerOptions;
@@ -17,6 +18,8 @@ use crate::ui_egui::control_points::mirror_t;
 use crate::ui_egui::curvature::COMB_SCALE_RANGE;
 use crate::ui_egui::theme::{row_header, section_header, setting_checkbox, unbroken_group};
 use crate::ui_egui::ui_common::ContentWindow;
+#[cfg(feature = "unreal-live")]
+use crate::{export::UnrealLiveSettings, unreal_live::LiveStatus};
 
 pub struct WindowPresetDrawResult {
     pub preset_result: PresetDrawResult,
@@ -291,19 +294,218 @@ pub fn comb_controls_enabled(
 
 pub fn copy_format_combo(ui: &mut Ui, color_copy_format: &mut ColorStringCopy) {
     section_header(ui, "Copy as");
-    egui::ComboBox::from_id_salt("copy_format")
-        .selected_text(copy_format_label(*color_copy_format))
-        .show_ui(ui, |ui| {
-            ui.set_min_width(60.0);
-            for format in COPY_FORMATS {
-                ui.selectable_value(color_copy_format, format, copy_format_label(format));
+    ui.scope(|ui| {
+        ui.set_max_width(TOOLBAR_COMBO_MAX_WIDTH);
+        egui::ComboBox::from_id_salt("copy_format")
+            .selected_text(copy_format_label(*color_copy_format))
+            .truncate()
+            .show_ui(ui, |ui| {
+                ui.set_min_width(60.0);
+                for format in COPY_FORMATS {
+                    ui.selectable_value(color_copy_format, format, copy_format_label(format));
+                }
+            })
+            .response
+            .on_hover_text(
+                "Text format used when copying a color (readout click, Ctrl+C or \
+                 middle-click); the previewer strips are copied as images",
+            );
+    });
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ExportRowClick {
+    Export,
+    CopyUnrealArray(egui::Pos2),
+}
+
+pub fn export_row(ui: &mut Ui, settings: &mut ExportSettings) -> Option<ExportRowClick> {
+    section_header(ui, "Export");
+    let export_hint = format!(
+        "Write the current gradient into {}, named after the selected preset \
+         (else {DEFAULT_EXPORT_NAME})",
+        settings.folder.trim()
+    );
+    let should_export = ui
+        .add_enabled(settings.folder().is_some(), egui::Button::new("Export"))
+        .on_hover_text(export_hint)
+        .on_disabled_hover_text("Set an export folder first (Folder...)")
+        .clicked_by(PointerButton::Primary);
+    let folder_button = ui
+        .button("Folder...")
+        .on_hover_text("Export folder, and On save");
+    let popup_id = egui::Id::new(EXPORT_POPUP_ID);
+    if folder_button.clicked_by(PointerButton::Primary) {
+        ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+    }
+    egui::popup_below_widget(
+        ui,
+        popup_id,
+        &folder_button,
+        egui::PopupCloseBehavior::CloseOnClickOutside,
+        |ui| {
+            ui.set_min_width(EXPORT_POPUP_WIDTH);
+            ui.horizontal(|ui| {
+                ui.label("Folder");
+                ui.add(
+                    TextEdit::singleline(&mut settings.folder)
+                        .hint_text("Folder")
+                        .desired_width(EXPORT_FOLDER_WIDTH),
+                )
+                .on_hover_text("Folder the gradient files are written to");
+            });
+            ui.checkbox(&mut settings.on_save, "On save").on_hover_text(
+                "Export a preset each time it is written: Save, Create and Auto-save",
+            );
+        },
+    );
+    let copy_unreal_array = ui.button("Copy UE array").on_hover_text(format!(
+        "Copy the gradient as {CURVE_KEY_COUNT} linear colors, to paste on an Unreal \
+             Array of Linear Color property"
+    ));
+    if let Some(result) = &settings.last_result {
+        let label = match result {
+            Ok(paths) => {
+                let names: Vec<String> = paths
+                    .iter()
+                    .filter_map(|path| path.file_name())
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .collect();
+                egui::Label::new(names.join(", "))
             }
-        })
-        .response
-        .on_hover_text(
-            "Text format used when copying a color (readout click, Ctrl+C or \
-             middle-click); the previewer strips are copied as images",
-        );
+            Err(e) => egui::Label::new(egui::RichText::new(e).color(ui.visuals().error_fg_color)),
+        };
+        ui.scope(|ui| {
+            ui.set_max_width(EXPORT_RESULT_MAX_WIDTH);
+            ui.add(label.truncate());
+        });
+    }
+    if copy_unreal_array.clicked_by(PointerButton::Primary) {
+        Some(ExportRowClick::CopyUnrealArray(
+            copy_unreal_array.rect.left_bottom(),
+        ))
+    } else {
+        should_export.then_some(ExportRowClick::Export)
+    }
+}
+
+#[cfg(feature = "unreal-live")]
+pub fn unreal_live_row(
+    ui: &mut Ui,
+    settings: &mut UnrealLiveSettings,
+    status: &LiveStatus,
+    asset_path: &str,
+) {
+    section_header(ui, "Unreal");
+    let live_button = egui::Button::new("Live").selected(settings.enabled);
+    let live_hint = format!(
+        "Push the gradient to {asset_path} in the running Unreal editor on each change \
+         (ZColorPickerBridge plugin)"
+    );
+    if ui
+        .add(live_button)
+        .on_hover_text(live_hint)
+        .clicked_by(PointerButton::Primary)
+    {
+        settings.enabled = !settings.enabled;
+    }
+    let target_button = ui
+        .button("Target...")
+        .on_hover_text("Remote Control port and asset folder");
+    let popup_id = egui::Id::new("unreal_target_popup");
+    if target_button.clicked_by(PointerButton::Primary) {
+        ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+    }
+    // Buffers, so typing or dragging pushes nothing: every folder prefix or port passed would.
+    let folder_buffer_id = popup_id.with("asset_folder");
+    let port_buffer_id = popup_id.with("port");
+    let is_cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
+    egui::popup_below_widget(
+        ui,
+        popup_id,
+        &target_button,
+        egui::PopupCloseBehavior::CloseOnClickOutside,
+        |ui| {
+            ui.set_min_width(UNREAL_TARGET_POPUP_WIDTH);
+            ui.horizontal(|ui| {
+                ui.label("Port");
+                let mut port = ui
+                    .data(|d| d.get_temp::<u16>(port_buffer_id))
+                    .unwrap_or(settings.port);
+                let port_field = ui
+                    .add(
+                        egui::DragValue::new(&mut port)
+                            .range(1..=u16::MAX)
+                            .update_while_editing(false),
+                    )
+                    .on_hover_text(
+                        "Remote Control HTTP server port \
+                         (Project Settings > Plugins > Remote Control)",
+                    );
+                if port_field.dragged() {
+                    ui.data_mut(|d| d.insert_temp(port_buffer_id, port));
+                } else {
+                    if !is_cancelled {
+                        settings.port = port;
+                    }
+                    ui.data_mut(|d| d.remove::<u16>(port_buffer_id));
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Folder");
+                let mut folder = ui
+                    .data(|d| d.get_temp::<String>(folder_buffer_id))
+                    .unwrap_or_else(|| settings.asset_folder.clone());
+                let folder_field = ui
+                    .add(TextEdit::singleline(&mut folder).desired_width(EXPORT_FOLDER_WIDTH))
+                    .on_hover_text(
+                        "Content folder of the curve asset; applies on Enter, a click away \
+                         or when this popup closes; Esc cancels",
+                    );
+                if folder_field.lost_focus() {
+                    if !is_cancelled {
+                        settings.asset_folder = folder;
+                    }
+                    ui.data_mut(|d| d.remove::<String>(folder_buffer_id));
+                } else {
+                    ui.data_mut(|d| d.insert_temp(folder_buffer_id, folder));
+                }
+            });
+            ui.label(format!("Writes {asset_path}"));
+        },
+    );
+    if !ui.memory(|mem| mem.is_popup_open(popup_id)) {
+        let folder = ui.data_mut(|d| d.remove_temp::<String>(folder_buffer_id));
+        let port = ui.data_mut(|d| d.remove_temp::<u16>(port_buffer_id));
+        if !is_cancelled {
+            if let Some(folder) = folder {
+                settings.asset_folder = folder;
+            }
+            if let Some(port) = port {
+                settings.port = port;
+            }
+        }
+    }
+    if settings.enabled {
+        ui.scope(|ui| {
+            ui.set_max_width(UNREAL_STATUS_MAX_WIDTH);
+            match (&status.error, status.last_success) {
+                (Some(error), _) => {
+                    let text = egui::RichText::new(error).color(ui.visuals().error_fg_color);
+                    ui.add(egui::Label::new(text).truncate());
+                }
+                (None, Some(pushed_at)) => {
+                    ui.label("Pushed").on_hover_text(format!(
+                        "Last push {} s ago, to {asset_path}",
+                        pushed_at.elapsed().as_secs()
+                    ));
+                }
+                (None, None) => {
+                    ui.label("Connecting...");
+                }
+            }
+        });
+    }
 }
 
 pub fn flip_control_points(points: &mut [ControlPoint], selected: &mut Option<usize>) {
@@ -325,11 +527,12 @@ pub struct WindowPreset {
     pub create_error: Option<String>,
     pub rename_error: Option<String>,
     pub save_error: Option<String>,
+    pub saved_preset: Option<PresetEntity>,
     last_selection: Option<usize>,
     pending_switch: Option<usize>,
 }
 
-const COPY_FORMATS: [ColorStringCopy; 14] = [
+const COPY_FORMATS: [ColorStringCopy; 16] = [
     ColorStringCopy::Hex,
     ColorStringCopy::HexNoAlpha,
     ColorStringCopy::SrgbHex,
@@ -344,12 +547,24 @@ const COPY_FORMATS: [ColorStringCopy; 14] = [
     ColorStringCopy::Hsl,
     ColorStringCopy::Oklab,
     ColorStringCopy::Oklch,
+    ColorStringCopy::UnrealLinearColor,
+    ColorStringCopy::UnrealColor,
 ];
 
 const COPY_FORMAT_SAMPLE: egui::Color32 = egui::Color32::from_rgb(255, 128, 0);
 
 const RENAME_POPUP_ID: &str = "rename_preset_popup";
+const RENAME_POPUP_WIDTH: f32 = 270.0;
 const SAVE_ERROR_MAX_WIDTH: f32 = 320.0;
+const EXPORT_FOLDER_WIDTH: f32 = 180.0;
+const EXPORT_POPUP_ID: &str = "export_folder_popup";
+const EXPORT_POPUP_WIDTH: f32 = 260.0;
+const TOOLBAR_COMBO_MAX_WIDTH: f32 = 200.0;
+const EXPORT_RESULT_MAX_WIDTH: f32 = 110.0;
+#[cfg(feature = "unreal-live")]
+const UNREAL_TARGET_POPUP_WIDTH: f32 = 260.0;
+#[cfg(feature = "unreal-live")]
+const UNREAL_STATUS_MAX_WIDTH: f32 = 100.0;
 
 fn copy_format_label(format: ColorStringCopy) -> String {
     let sample = format_color_as(COPY_FORMAT_SAMPLE, format, None);
@@ -552,6 +767,7 @@ impl WindowPreset {
             create_error: None,
             rename_error: None,
             save_error: None,
+            saved_preset: None,
             last_selection: None,
             pending_switch: None,
         }
@@ -675,6 +891,7 @@ impl WindowPreset {
             Ok(()) => {
                 log::info!("Saved preset [{name}]");
                 self.save_error = None;
+                self.saved_preset = selected_preset(preset_handler).cloned();
             }
             Err(e) => {
                 log::error!("{e}");
@@ -745,37 +962,44 @@ impl WindowPreset {
             let selected_index = preset_handler.preset_selected_index;
             let mut choice = None;
             section_header(ui, "Preset");
-            let _combobox_response = egui::ComboBox::new(1232313, "")
-                .selected_text(combobox_selected_text_to_show)
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(60.0);
+            ui.scope(|ui| {
+                ui.set_max_width(TOOLBAR_COMBO_MAX_WIDTH);
+                egui::ComboBox::new(1232313, "")
+                    .selected_text(combobox_selected_text_to_show)
+                    .truncate()
+                    .show_ui(ui, |ui| {
+                        ui.set_min_width(60.0);
 
-                    let preset_rows = preset_handler
-                        .presets
-                        .iter()
-                        .enumerate()
-                        .map(|(i, preset)| (PresetComboChoice::Preset(i), preset.name.as_str()));
-                    let rows = [
-                        (PresetComboChoice::New, "<NEW>"),
-                        (PresetComboChoice::Clear, "<None>"),
-                    ]
-                    .into_iter()
-                    .chain(preset_rows);
-                    for (row, text) in rows {
-                        let checked = is_combo_row_checked(row, selected_index);
-                        if ui.selectable_label(checked, text).clicked() {
-                            choice = Some(row);
+                        let preset_rows =
+                            preset_handler
+                                .presets
+                                .iter()
+                                .enumerate()
+                                .map(|(i, preset)| {
+                                    (PresetComboChoice::Preset(i), preset.name.as_str())
+                                });
+                        let rows = [
+                            (PresetComboChoice::New, "<NEW>"),
+                            (PresetComboChoice::Clear, "<None>"),
+                        ]
+                        .into_iter()
+                        .chain(preset_rows);
+                        for (row, text) in rows {
+                            let checked = is_combo_row_checked(row, selected_index);
+                            if ui.selectable_label(checked, text).clicked() {
+                                choice = Some(row);
+                            }
                         }
-                    }
-                    if preset_handler.presets.is_empty() {
-                        ui.weak(no_presets_text(preset_handler.presets_dir()));
-                    }
-                })
-                .response
-                .on_hover_text(format!(
-                    "Presets in {}",
-                    preset_handler.presets_dir().display()
-                ));
+                        if preset_handler.presets.is_empty() {
+                            ui.weak(no_presets_text(preset_handler.presets_dir()));
+                        }
+                    })
+                    .response
+                    .on_hover_text(format!(
+                        "Presets in {}",
+                        preset_handler.presets_dir().display()
+                    ));
+            });
 
             match choice {
                 Some(PresetComboChoice::New) => self.open_create_window(),
@@ -838,6 +1062,7 @@ impl WindowPreset {
                 &rename_button,
                 egui::PopupCloseBehavior::CloseOnClickOutside,
                 |ui| {
+                    ui.set_min_width(RENAME_POPUP_WIDTH);
                     self.draw_rename_popup(
                         ui,
                         preset_handler,
@@ -1213,8 +1438,22 @@ mod tests {
         assert_eq!(
             labels,
             [
-                "HEX", "HEXNOA", "SRGBHEX", "HSV", "HSVA", "INT", "FLOAT", "RGB", "SRGB", "RGBA",
-                "SRGBA", "HSL", "OKLAB", "OKLCH"
+                "HEX",
+                "HEXNOA",
+                "SRGBHEX",
+                "HSV",
+                "HSVA",
+                "INT",
+                "FLOAT",
+                "RGB",
+                "SRGB",
+                "RGBA",
+                "SRGBA",
+                "HSL",
+                "OKLAB",
+                "OKLCH",
+                "UE LinearColor",
+                "UE Color"
             ]
         );
     }
@@ -1317,6 +1556,168 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("{wanted:?} not painted"))
+    }
+
+    fn draw_export_row(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        settings: &mut ExportSettings,
+    ) -> (egui::FullOutput, Option<ExportRowClick>) {
+        let mut click = None;
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let output = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.horizontal(|ui| click = export_row(ui, settings));
+            });
+        });
+        (output, click)
+    }
+
+    #[test]
+    fn copy_ue_array_needs_no_export_folder() {
+        let ctx = egui::Context::default();
+        let mut settings = ExportSettings::default();
+        let (output, _) = draw_export_row(&ctx, Vec::new(), &mut settings);
+
+        let clicks: Vec<Option<ExportRowClick>> =
+            primary_click(painted_text_center(&output, "Copy UE array"))
+                .into_iter()
+                .map(|events| draw_export_row(&ctx, events, &mut settings).1)
+                .collect();
+
+        assert!(
+            matches!(clicks[..], [None, Some(ExportRowClick::CopyUnrealArray(_))]),
+            "{clicks:?}"
+        );
+    }
+
+    #[test]
+    fn folder_popup_holds_the_export_folder_and_on_save() {
+        let ctx = egui::Context::default();
+        let mut settings = ExportSettings::default();
+        let (output, _) = draw_export_row(&ctx, Vec::new(), &mut settings);
+        assert!(!output.shapes.iter().any(|s| matches!(&s.shape,
+            egui::epaint::Shape::Text(t) if t.galley.text() == "On save")));
+
+        for events in primary_click(painted_text_center(&output, "Folder...")) {
+            draw_export_row(&ctx, events, &mut settings);
+        }
+        let (output, _) = draw_export_row(&ctx, Vec::new(), &mut settings);
+        assert!(ctx.memory(|m| m.any_popup_open()));
+        for events in primary_click(painted_text_center(&output, "On save")) {
+            draw_export_row(&ctx, events, &mut settings);
+        }
+
+        assert!(settings.on_save);
+    }
+
+    #[cfg(feature = "unreal-live")]
+    fn draw_live_row(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        settings: &mut UnrealLiveSettings,
+    ) -> egui::FullOutput {
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    unreal_live_row(ui, settings, &LiveStatus::default(), "/Game/Z/Gradient")
+                });
+            });
+        })
+    }
+
+    #[cfg(feature = "unreal-live")]
+    fn open_target_popup(
+        ctx: &egui::Context,
+        settings: &mut UnrealLiveSettings,
+    ) -> egui::FullOutput {
+        let output = draw_live_row(ctx, Vec::new(), settings);
+        for events in primary_click(painted_text_center(&output, "Target...")) {
+            draw_live_row(ctx, events, settings);
+        }
+        draw_live_row(ctx, Vec::new(), settings)
+    }
+
+    #[cfg(feature = "unreal-live")]
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }
+    }
+
+    #[cfg(feature = "unreal-live")]
+    #[test]
+    fn typed_asset_folder_commits_on_enter_and_escape_cancels() {
+        for (pressed, expected) in [
+            (egui::Key::Enter, "/Game/ZColorPicker/Typo"),
+            (egui::Key::Escape, "/Game/ZColorPicker"),
+        ] {
+            let ctx = egui::Context::default();
+            let mut settings = UnrealLiveSettings::default();
+            let output = open_target_popup(&ctx, &mut settings);
+            for events in primary_click(painted_text_center(&output, "/Game/ZColorPicker")) {
+                draw_live_row(&ctx, events, &mut settings);
+            }
+            draw_live_row(&ctx, vec![key(egui::Key::End)], &mut settings);
+            draw_live_row(&ctx, vec![egui::Event::Text("/Typo".into())], &mut settings);
+            assert_eq!(
+                settings.asset_folder, "/Game/ZColorPicker",
+                "{pressed:?}: typing"
+            );
+
+            draw_live_row(&ctx, vec![key(pressed)], &mut settings);
+            draw_live_row(&ctx, Vec::new(), &mut settings);
+            if pressed == egui::Key::Enter {
+                draw_live_row(&ctx, vec![key(egui::Key::Escape)], &mut settings);
+            }
+
+            assert_eq!(settings.asset_folder, expected, "{pressed:?}");
+            assert!(!ctx.memory(|mem| mem.any_popup_open()), "{pressed:?}");
+        }
+    }
+
+    #[cfg(feature = "unreal-live")]
+    #[test]
+    fn dragged_port_applies_on_release_and_escape_cancels() {
+        for ends_with_escape in [false, true] {
+            let ctx = egui::Context::default();
+            let mut settings = UnrealLiveSettings::default();
+            let output = open_target_popup(&ctx, &mut settings);
+            let start = painted_text_center(&output, "30010");
+            let button = |dx, pressed| egui::Event::PointerButton {
+                pos: start + egui::vec2(dx, 0.0),
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            let press = vec![egui::Event::PointerMoved(start), button(0.0, true)];
+            draw_live_row(&ctx, press, &mut settings);
+            for dx in [10.0, 20.0, 30.0] {
+                let moved = egui::Event::PointerMoved(start + egui::vec2(dx, 0.0));
+                draw_live_row(&ctx, vec![moved], &mut settings);
+                assert_eq!(settings.port, 30010, "pushed while dragging");
+            }
+
+            if ends_with_escape {
+                draw_live_row(&ctx, vec![key(egui::Key::Escape)], &mut settings);
+            }
+            draw_live_row(&ctx, vec![button(30.0, false)], &mut settings);
+            draw_live_row(&ctx, Vec::new(), &mut settings);
+
+            let is_kept = settings.port == 30010;
+            assert_eq!(is_kept, ends_with_escape, "port {}", settings.port);
+        }
     }
 
     fn click_comb(spline_mode: SplineMode) -> ZColorPickerOptions {
@@ -2347,6 +2748,60 @@ mod tests {
         assert_eq!(handler.preset_selected_index, None);
         assert_eq!(handler.presets[1].data, saved);
         assert_eq!(points, edited);
+        assert!(window.saved_preset.is_none());
+    }
+
+    #[test]
+    fn save_and_switch_records_the_preset_it_wrote_not_the_target() {
+        let tmp = TempDir::new().unwrap();
+        let (mut window, mut handler, mut points) = pending_switch_to_b(&tmp);
+        let expected: AppDataCtx = (
+            points.clone(),
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        )
+            .into();
+
+        window.resolve_pending_switch(
+            PendingSwitchAction::SaveAndSwitch,
+            &mut handler,
+            &mut points,
+            &mut SplineMode::Linear,
+            &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
+        );
+
+        assert_eq!(handler.preset_selected_index, Some(1));
+        let saved = window.saved_preset.expect("the write is recorded");
+        assert_eq!(saved.name, "A");
+        assert_eq!(saved.data, expected);
+    }
+
+    #[test]
+    fn replace_records_the_target_it_wrote() {
+        let tmp = TempDir::new().unwrap();
+        let (mut window, mut handler, mut points) = unselected_pending_switch_to_b(&tmp);
+        let expected: AppDataCtx = (
+            points.clone(),
+            SplineMode::Linear,
+            PickerSpace::Hsv,
+            BlendSpace::Picker,
+        )
+            .into();
+
+        window.resolve_pending_switch(
+            PendingSwitchAction::ReplaceTarget,
+            &mut handler,
+            &mut points,
+            &mut SplineMode::Linear,
+            &mut PickerSpace::Hsv,
+            &mut BlendSpace::Picker,
+        );
+
+        let saved = window.saved_preset.expect("the write is recorded");
+        assert_eq!(saved.name, "B");
+        assert_eq!(saved.data, expected);
     }
 
     #[test]

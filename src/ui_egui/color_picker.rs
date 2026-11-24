@@ -8,6 +8,7 @@ use crate::{
         control_point::{create_tangent_for_control_point, ControlPoint},
         hsv_key_value::HsvKeyValue,
     },
+    export::unreal_linear_color,
     ui_egui::{
         app::ZColorPickerOptions,
         auto_comb::apply_auto_comb,
@@ -567,6 +568,11 @@ pub fn format_color_as(
             let [l, c, h] = [css_number(l, 5), css_number(c, 5), css_number(h * 360.0, 2)];
             format!("oklch({l} {c} {h})")
         }
+        ColorStringCopy::UnrealLinearColor => {
+            unreal_linear_color([linear_r, linear_g, linear_b, alpha])
+        }
+        // FColor's members are declared B, G, R, A; Unreal's property copy keeps that order.
+        ColorStringCopy::UnrealColor => format!("(B={b},G={g},R={r},A={a})"),
     }
 }
 
@@ -3203,6 +3209,30 @@ mod tests {
         );
         assert_eq!(format_rgb([0; 3], ColorStringCopy::Oklch), "oklch(0 0 0)");
         assert_eq!(format_rgb([255; 3], ColorStringCopy::Oklch), "oklch(1 0 0)");
+    }
+
+    #[test]
+    fn format_color_as_unreal_linear_color() {
+        assert_eq!(
+            format_color_as(
+                Color32::from_rgba_unmultiplied(255, 102, 51, 204),
+                ColorStringCopy::UnrealLinearColor,
+                None
+            ),
+            "(R=1.000000,G=0.132868,B=0.033105,A=0.800000)"
+        );
+    }
+
+    #[test]
+    fn format_color_as_unreal_color() {
+        assert_eq!(
+            format_color_as(
+                Color32::from_rgba_unmultiplied(255, 102, 51, 204),
+                ColorStringCopy::UnrealColor,
+                None
+            ),
+            "(B=51,G=102,R=255,A=204)"
+        );
     }
 
     fn with_handles(mut points: Vec<ControlPoint>, handles: &[[[f32; 2]; 2]]) -> Vec<ControlPoint> {

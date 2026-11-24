@@ -31,6 +31,10 @@ pub enum ColorStringCopy {
     Oklab,
     #[serde(rename = "OKLCH")]
     Oklch,
+    #[serde(rename = "UE_LINEARCOLOR")]
+    UnrealLinearColor,
+    #[serde(rename = "UE_COLOR")]
+    UnrealColor,
 }
 
 impl ColorStringCopy {
@@ -50,6 +54,8 @@ impl ColorStringCopy {
             ColorStringCopy::Hsl => "HSL",
             ColorStringCopy::Oklab => "OKLAB",
             ColorStringCopy::Oklch => "OKLCH",
+            ColorStringCopy::UnrealLinearColor => "UE LinearColor",
+            ColorStringCopy::UnrealColor => "UE Color",
         }
     }
 }
@@ -90,6 +96,8 @@ mod tests {
             ColorStringCopy::Hsl => "HSL",
             ColorStringCopy::Oklab => "OKLAB",
             ColorStringCopy::Oklch => "OKLCH",
+            ColorStringCopy::UnrealLinearColor => "UE_LINEARCOLOR",
+            ColorStringCopy::UnrealColor => "UE_COLOR",
         }
     }
 
@@ -118,10 +126,12 @@ mod tests {
             ColorStringCopy::Hsl,
             ColorStringCopy::Oklab,
             ColorStringCopy::Oklch,
+            ColorStringCopy::UnrealLinearColor,
+            ColorStringCopy::UnrealColor,
         ];
         let distinct: std::collections::HashSet<_> =
             all.iter().map(|&f| copy_format_json_name(f)).collect();
-        assert_eq!(distinct.len(), 14);
+        assert_eq!(distinct.len(), 16);
 
         for f in all {
             let json = format!("\"{}\"", copy_format_json_name(f));

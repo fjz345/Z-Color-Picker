@@ -1,0 +1,22 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Z Color Picker Bridge",
+	"Description": "Receives gradients from the Z-Color-Picker app over Remote Control and writes them into Curve Linear Color assets.",
+	"Category": "Editor",
+	"CanContainContent": false,
+	"Modules": [
+		{
+			"Name": "ZColorPickerBridge",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "RemoteControl",
+			"Enabled": true
+		}
+	]
+}

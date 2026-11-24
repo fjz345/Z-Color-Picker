@@ -16,6 +16,7 @@ use crate::{
     datatypes::control_point::{
         ControlPoint, ControlPointStorage, ControlPointTangent, ControlPointValue,
     },
+    export::{ExportSettings, UnrealLiveSettings},
     logger::{ui_log_header, ui_log_window, LogCollector},
     preset::{PresetHandler, PresetNameError},
     ui_egui::{
@@ -30,14 +31,20 @@ use crate::{
         control_points::normalize_t,
         debug_windows::DebugWindowControlPoints,
         panes::{
-            copy_format_bar_ui, preset_bar_ui, ColorPickerPane, Pane, PreviewerPane, TileUi,
-            View3dPane, ZAppPane,
+            copy_format_bar_ui, export_bar_ui, preset_bar_ui, ColorPickerPane, Pane,
+            PreviewerPane, TileUi, View3dPane, ZAppPane,
         },
         previewer::{PreviewerUiResponses, ZPreviewer},
         theme,
         ui_common::ContentWindow,
         view_3d::View3d,
     },
+};
+#[cfg(feature = "unreal-live")]
+use crate::{
+    export::export_name,
+    ui_egui::panes::unreal_live_bar_ui,
+    unreal_live::{asset_path, UnrealLiveLink},
 };
 use eframe::epaint::{Pos2, Vec2};
 use egui_tiles::{Behavior, Container, Linear, LinearDir, Shares, Tile, TileId};
@@ -125,6 +132,13 @@ pub struct ZColorPickerAppContext {
     pub z_color_picker: Rc<RefCell<ZColorPickerWrapper>>,
     pub previewer: ZPreviewer,
     pub color_copy_format: ColorStringCopy,
+    #[serde(default)]
+    pub export: ExportSettings,
+    #[serde(default)]
+    pub unreal_live: UnrealLiveSettings,
+    #[cfg(feature = "unreal-live")]
+    #[serde(skip)]
+    pub unreal_live_link: UnrealLiveLink,
     #[serde(skip)]
     debug_window_control_points: DebugWindowControlPoints,
     #[serde(skip)]
@@ -217,6 +231,10 @@ impl ZColorPickerAppContext {
             z_color_picker: Rc::new(RefCell::new(z_color_picker_wrapper)),
             previewer: ZPreviewer::default(),
             color_copy_format: ColorStringCopy::default(),
+            export: ExportSettings::default(),
+            unreal_live: UnrealLiveSettings::default(),
+            #[cfg(feature = "unreal-live")]
+            unreal_live_link: UnrealLiveLink::default(),
             debug_window_control_points: DebugWindowControlPoints::new(),
             pending_screenshot_target: None,
             clipboard_event: None,
@@ -230,6 +248,53 @@ impl ZColorPickerAppContext {
             open_tabs: HashSet::default(),
             presets_window: WindowPreset::new(),
         }
+    }
+
+    fn export_selected_preset_on_save(&mut self) {
+        let selected = self
+            .preset_handler
+            .preset_selected_index
+            .and_then(|i| self.preset_handler.presets.get(i));
+        if let Some(preset) = selected {
+            self.export.export_saved_preset(preset);
+        }
+    }
+
+    pub fn copy_to_clipboard(&mut self, payload: Option<ClipboardPayload>, anchor: Pos2) {
+        let (status_text, popup_seconds) = write_payload_to_clipboard(payload);
+        self.clipboard_copy_window.set_text(&status_text);
+        self.clipboard_copy_window.open(anchor, popup_seconds);
+    }
+
+    #[cfg(feature = "unreal-live")]
+    pub fn unreal_asset_path(&self) -> String {
+        let selected_name = self
+            .preset_handler
+            .preset_selected_index
+            .and_then(|i| self.preset_handler.presets.get(i))
+            .map(|preset| preset.name.as_str());
+        asset_path(&self.unreal_live.asset_folder, export_name(selected_name))
+    }
+
+    #[cfg(feature = "unreal-live")]
+    fn sync_unreal_live(&mut self, egui_ctx: &egui::Context) {
+        if !self.unreal_live.enabled {
+            self.unreal_live_link.stop();
+            return;
+        }
+        let data: AppDataCtx = (
+            self.control_points.clone(),
+            self.spline_mode,
+            self.picker_space,
+            self.blend_space,
+        )
+            .into();
+        let asset_path = self.unreal_asset_path();
+        let egui_ctx = egui_ctx.clone();
+        self.unreal_live_link
+            .sync(&self.unreal_live, asset_path, &data, move || {
+                egui_ctx.request_repaint()
+            });
     }
 }
 
@@ -505,6 +570,7 @@ impl ZApp {
                     ctx_write.presets_window.new_preset_is_open = false;
                     ctx_write.presets_window.new_preset_window_text.clear();
                     ctx_write.presets_window.create_error = None;
+                    ctx_write.export_selected_preset_on_save();
                 }
                 Err(e) => {
                     log::error!("{e}");
@@ -521,6 +587,13 @@ impl ZApp {
                 preset_bar_ui(&self.app_ctx, ui);
                 theme::group_separator(ui);
                 copy_format_bar_ui(&self.app_ctx, ui);
+                theme::group_separator(ui);
+                export_bar_ui(&self.app_ctx, ui);
+                #[cfg(feature = "unreal-live")]
+                {
+                    theme::group_separator(ui);
+                    unreal_live_bar_ui(&self.app_ctx, ui);
+                }
                 ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                     let hint = if self.is_log_expanded {
                         "Collapse the log"
@@ -615,7 +688,10 @@ impl ZApp {
                     app_ctx.picker_space,
                     app_ctx.blend_space,
                 ) {
-                    Ok(true) => app_ctx.presets_window.save_error = None,
+                    Ok(true) => {
+                        app_ctx.presets_window.save_error = None;
+                        app_ctx.export_selected_preset_on_save();
+                    }
                     Ok(false) => {}
                     Err(e) => {
                         let message = format!("Auto-save failed: {e}");
@@ -626,6 +702,8 @@ impl ZApp {
                 }
             }
         });
+        #[cfg(feature = "unreal-live")]
+        self.app_ctx.borrow_mut().sync_unreal_live(ctx);
     }
 
     fn draw_tree(&mut self, ui: &mut Ui) {
@@ -948,10 +1026,14 @@ fn write_payload_to_clipboard(payload: Option<ClipboardPayload>) -> (String, f32
         return (text.to_string(), FAILED_COPY_POPUP_SECONDS);
     };
     let (result, success_text) = match payload {
-        ClipboardPayload::Text(text) => {
-            let success_text = format!("Copied {text}");
-            (write_string_to_clipboard(text), success_text)
-        }
+        ClipboardPayload::Text(text) => (
+            write_string_to_clipboard(&text, &text),
+            format!("Copied {text}"),
+        ),
+        ClipboardPayload::Summarized { text, summary } => (
+            write_string_to_clipboard(&text, &summary),
+            format!("Copied {summary}"),
+        ),
         ClipboardPayload::Image {
             width,
             height,
@@ -1304,7 +1386,7 @@ mod tests {
     }
 
     #[test]
-    fn toolbar_groups_run_preset_copy_then_log_and_the_curve_row_is_in_the_picker() {
+    fn toolbar_groups_run_preset_copy_export_then_log_and_the_curve_row_is_in_the_picker() {
         let mut app = test_app();
         let ctx = egui::Context::default();
         laid_out_picker_height(&mut app, &ctx);
@@ -1317,7 +1399,7 @@ mod tests {
             assert!(centers[0].y < toolbar_height, "{text:?}");
             centers[0].x
         };
-        let order = ["PRESET", "COPY AS", "Log"];
+        let order = ["PRESET", "COPY AS", "EXPORT", "Log"];
         let xs = order.map(toolbar_x);
         assert!(
             xs.windows(2).all(|pair| pair[0] < pair[1]),
@@ -1329,6 +1411,122 @@ mod tests {
             assert_eq!(centers.len(), 1, "{text:?} at {centers:?}");
             assert!(picker.contains(centers[0]), "{text:?} outside {picker:?}");
         }
+    }
+
+    #[test]
+    fn toolbar_export_writes_the_current_gradient_once_a_folder_is_set() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut app = test_app();
+        app.app_ctx.borrow_mut().control_points =
+            ZColorPickerAppContext::DEFAULT_STARTUP_CONTROL_POINTS.to_vec();
+        let ctx = egui::Context::default();
+        laid_out_picker_height(&mut app, &ctx);
+        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
+        let export_button = text_centers(&output, "Export")[0];
+
+        click(&mut app, &ctx, export_button);
+        assert!(app.app_ctx.borrow().export.last_result.is_none());
+
+        app.app_ctx.borrow_mut().export.folder = tmp.path().to_str().unwrap().to_string();
+        draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
+        click(&mut app, &ctx, export_button);
+
+        let result = app.app_ctx.borrow().export.last_result.clone();
+        assert!(matches!(result, Some(Ok(_))), "{result:?}");
+        assert_eq!(
+            sorted_file_names(tmp.path()),
+            [
+                "Gradient.ase",
+                "Gradient.csv",
+                "Gradient.grd",
+                "Gradient.png"
+            ]
+        );
+    }
+
+    #[test]
+    fn toolbar_copy_ue_array_without_points_shows_nothing_to_copy_without_a_folder() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        laid_out_picker_height(&mut app, &ctx);
+        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
+        assert!(app.app_ctx.borrow().control_points.is_empty());
+        assert!(app.app_ctx.borrow().export.folder().is_none());
+        assert!(!app.app_ctx.borrow().clipboard_copy_window.open);
+
+        click(&mut app, &ctx, text_centers(&output, "Copy UE array")[0]);
+
+        let app_ctx = app.app_ctx.borrow();
+        assert!(app_ctx.clipboard_copy_window.open);
+        assert_eq!(app_ctx.clipboard_copy_window.text, "Nothing to copy");
+        assert!(app_ctx.export.last_result.is_none());
+    }
+
+    fn sorted_file_names(dir: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn app_with_selected_preset_exporting_on_save(
+        presets: &std::path::Path,
+        exports: &std::path::Path,
+    ) -> ZApp {
+        let app = test_app();
+        {
+            let mut ctx = app.app_ctx.borrow_mut();
+            let points = ZColorPickerAppContext::DEFAULT_STARTUP_CONTROL_POINTS.to_vec();
+            let mut handler = PresetHandler::new(presets.to_path_buf());
+            handler
+                .create_preset(
+                    &"Warm".to_string(),
+                    &points,
+                    &ctx.spline_mode,
+                    ctx.picker_space,
+                    ctx.blend_space,
+                )
+                .unwrap();
+            ctx.preset_handler = handler;
+            ctx.control_points = points;
+            ctx.export.on_save = true;
+            ctx.export.folder = exports.to_str().unwrap().to_string();
+        }
+        app
+    }
+
+    #[test]
+    fn toolbar_save_with_on_save_exports_the_written_preset() {
+        let presets = tempfile::TempDir::new().unwrap();
+        let exports = tempfile::TempDir::new().unwrap();
+        let mut app = app_with_selected_preset_exporting_on_save(presets.path(), exports.path());
+        let ctx = egui::Context::default();
+        laid_out_picker_height(&mut app, &ctx);
+        let output = draw_toolbar_and_tree(&mut app, &ctx, Vec::new());
+        assert!(sorted_file_names(exports.path()).is_empty());
+
+        click(&mut app, &ctx, text_centers(&output, "Save")[0]);
+
+        assert_eq!(
+            sorted_file_names(exports.path()),
+            ["Warm.ase", "Warm.csv", "Warm.grd", "Warm.png"]
+        );
+    }
+
+    #[test]
+    fn export_selected_preset_on_save_writes_the_selected_preset_files() {
+        let presets = tempfile::TempDir::new().unwrap();
+        let exports = tempfile::TempDir::new().unwrap();
+        let app = app_with_selected_preset_exporting_on_save(presets.path(), exports.path());
+
+        app.app_ctx.borrow_mut().export_selected_preset_on_save();
+
+        assert_eq!(
+            sorted_file_names(exports.path()),
+            ["Warm.ase", "Warm.csv", "Warm.grd", "Warm.png"]
+        );
     }
 
     #[test]

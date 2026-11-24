@@ -4,15 +4,19 @@ use arboard::{Clipboard, ImageData};
 use eframe::egui::{self, pos2, vec2, Color32, ColorImage, Pos2, Rect, Vec2};
 
 use crate::{
-    color_space::PickerSpace, common::ColorStringCopy, datatypes::control_point::ControlPoint,
-    error::Result, ui_egui::color_picker::format_color_as,
+    color_space::PickerSpace,
+    common::ColorStringCopy,
+    datatypes::control_point::ControlPoint,
+    error::Result,
+    export::{unreal_gradient_array, CURVE_KEY_COUNT},
+    ui_egui::{app::AppDataCtx, color_picker::format_color_as},
 };
 
-pub fn write_string_to_clipboard(text: String) -> Result<()> {
+pub fn write_string_to_clipboard(text: &str, summary: &str) -> Result<()> {
     let mut clipboard = Clipboard::new()?;
-    clipboard.set_text(&text)?;
+    clipboard.set_text(text)?;
 
-    log::info!("Clipboard set to: {}", text);
+    log::info!("Clipboard set to: {}", summary);
     Ok(())
 }
 
@@ -203,6 +207,10 @@ pub const FAILED_COPY_POPUP_SECONDS: f32 = 3.0;
 #[derive(Debug, PartialEq)]
 pub enum ClipboardPayload {
     Text(String),
+    Summarized {
+        text: String,
+        summary: String,
+    },
     Image {
         width: usize,
         height: usize,
@@ -243,10 +251,26 @@ pub fn selected_color_payload(
     )))
 }
 
+pub fn unreal_gradient_payload(data: &AppDataCtx) -> Option<ClipboardPayload> {
+    match unreal_gradient_array(data) {
+        Ok(text) => Some(ClipboardPayload::Summarized {
+            text,
+            summary: format!("UE array of {CURVE_KEY_COUNT} colors"),
+        }),
+        Err(e) => {
+            log::warn!("Cannot copy the gradient as a UE array: {e}");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{datatypes::control_point::ControlPointValue, error::ZError};
+    use crate::{
+        color_space::BlendSpace, common::SplineMode, datatypes::control_point::ControlPointValue,
+        error::ZError,
+    };
     use ecolor::Color32;
     use std::time::Duration;
 
@@ -586,5 +610,33 @@ mod tests {
             ),
             Some(ClipboardPayload::Text("FF0000".to_string()))
         );
+    }
+
+    fn red_to_green(control_points: Vec<ControlPoint>) -> AppDataCtx {
+        AppDataCtx {
+            spline_mode: SplineMode::Linear,
+            control_points,
+            picker_space: PickerSpace::Hsv,
+            blend_space: BlendSpace::Picker,
+        }
+    }
+
+    #[test]
+    fn unreal_gradient_payload_carries_the_whole_array_text() {
+        let data = red_to_green(red_and_green_points());
+        let expected = unreal_gradient_array(&data).unwrap();
+
+        let payload = unreal_gradient_payload(&data);
+
+        assert!(
+            matches!(&payload, Some(ClipboardPayload::Summarized { text, summary })
+                if *text == expected && summary.len() < 40),
+            "{payload:?}"
+        );
+    }
+
+    #[test]
+    fn unreal_gradient_payload_without_points_is_none() {
+        assert_eq!(unreal_gradient_payload(&red_to_green(Vec::new())), None);
     }
 }

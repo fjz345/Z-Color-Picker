@@ -3,9 +3,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub fn write_string_to_file(in_string: &String, file_path: &Path) -> Result<()> {
+    write_bytes_to_file(in_string.as_bytes(), file_path)
+}
+
+pub fn write_bytes_to_file(bytes: &[u8], file_path: &Path) -> Result<()> {
     let temp_path = temp_path_for(file_path)?;
     if let Err(e) =
-        fs::write(&temp_path, in_string).and_then(|()| fs::rename(&temp_path, file_path))
+        fs::write(&temp_path, bytes).and_then(|()| fs::rename(&temp_path, file_path))
     {
         let _ = fs::remove_file(&temp_path);
         return Err(e.into());
